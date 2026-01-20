@@ -5577,4 +5577,3 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
 
 export default AccountingDashboard;
 -e 
-export default AccountingDashboard;
