@@ -579,8 +579,6 @@ const AccountingDashboard = () => {
           <VATReconView 
             vatTransactions={vatTransactions}
             saveVatTransactions={saveVatTransactions}
-            invoices={invoices}
-            bankStatements={bankStatements}
             company={clients[0]}
             accounts={accounts}
           />
@@ -4175,7 +4173,9 @@ Rules:
 };
 
 // ==================== VAT RECONCILIATION VIEW ====================
-const VATReconView = ({ vatTransactions, saveVatTransactions, invoices = [], bankStatements = [], company, accounts }) => {
+// VAT Recon only uses manually added transactions and imported tax boxes
+// It does NOT pull from invoices or bank statements
+const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts }) => {
   const fileInputRef = React.useRef(null);
   const [saveMessage, setSaveMessage] = useState('');
   const [periodStart, setPeriodStart] = useState(`${new Date().getFullYear()}-01-01`);
@@ -4183,101 +4183,608 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, invoices = [], ban
   const [downloadLink, setDownloadLink] = useState(null);
   const [pdfDownloadLink, setPdfDownloadLink] = useState(null);
   const [generating, setGenerating] = useState(false);
-  const [viewMode, setViewMode] = useState('invoices'); // 'invoices' or 'manual'
 
   // Helper to check if a rate is standard (15%)
   const isStandardRate = (rate) => {
     return rate && (rate.includes('15.00%') || rate === 'Standard 15%' || rate.includes('15%'));
   };
 
-  // Get VAT rate decimal
-  const getVATRateDecimal = (vatType) => {
-    if (!vatType || vatType === 'No VAT') return 0;
-    const rate = VAT_RATES.find(r => r.value === vatType || r.label === vatType);
-    return rate ? rate.rate : 0;
-  };
-
-  // INVOICE-BASED VAT CALCULATION
-  // Output VAT = From Customer Invoices (Sales)
-  const customerInvoices = invoices.filter(inv => 
-    inv.invoiceType === 'client' || inv.invoiceType === undefined
-  ).filter(inv => {
+  // Filter transactions by period
+  const filteredTransactions = vatTransactions.filter(t => {
     if (!periodStart || !periodEnd) return true;
-    return inv.date >= periodStart && inv.date <= periodEnd;
+    return t.date >= periodStart && t.date <= periodEnd;
   });
 
-  // Input VAT = From Supplier Invoices (Purchases)
-  const supplierInvoices = invoices.filter(inv => 
-    inv.invoiceType === 'supplier'
-  ).filter(inv => {
-    if (!periodStart || !periodEnd) return true;
-    return inv.date >= periodStart && inv.date <= periodEnd;
+  // Filter transactions by type and rate (from manual/imported transactions ONLY)
+  const standardOutputTxns = filteredTransactions.filter(t => t.vatType === 'output' && isStandardRate(t.vatRate));
+  const zeroOutputTxns = filteredTransactions.filter(t => t.vatType === 'output' && !isStandardRate(t.vatRate));
+  const standardInputTxns = filteredTransactions.filter(t => t.vatType === 'input' && isStandardRate(t.vatRate));
+  const zeroInputTxns = filteredTransactions.filter(t => t.vatType === 'input' && !isStandardRate(t.vatRate));
+
+  // All output and input transactions
+  const outputTransactions = filteredTransactions.filter(t => t.vatType === 'output');
+  const inputTransactions = filteredTransactions.filter(t => t.vatType === 'input');
+
+  // Calculate totals
+  const calcTotals = (txns) => ({
+    exclusive: txns.reduce((s, t) => s + (parseFloat(t.exclusive) || 0), 0),
+    vat: txns.reduce((s, t) => s + (parseFloat(t.vat) || 0), 0),
+    inclusive: txns.reduce((s, t) => s + (parseFloat(t.inclusive) || 0), 0)
   });
 
-  // Bank transactions with VAT (only Account type - NOT Customer/Supplier to avoid duplicates)
-  // ALSO exclude any bank transaction that has been linked/converted to an invoice
-  const bankVatTransactions = bankStatements.filter(stmt => {
-    // Exclude Customer/Supplier type as their VAT comes from invoices
-    if (stmt.type === 'Customer' || stmt.type === 'Supplier') return false;
-    // Exclude transactions that have been linked or converted to invoices
-    if (stmt.linkedInvoice) return false;
-    // Only include transactions with VAT
-    if (!stmt.vatRate || stmt.vatRate === 'No VAT') return false;
-    // Filter by period
-    if (!periodStart || !periodEnd) return true;
-    return stmt.date >= periodStart && stmt.date <= periodEnd;
-  });
+  const standardOutputTotals = calcTotals(standardOutputTxns);
+  const zeroOutputTotals = calcTotals(zeroOutputTxns);
+  const standardInputTotals = calcTotals(standardInputTxns);
+  const zeroInputTotals = calcTotals(zeroInputTxns);
 
-  // Calculate invoice totals
-  const calcInvoiceTotals = (invs, type) => {
-    let totalExclusive = 0;
-    let totalVat = 0;
-    let totalInclusive = 0;
-    
-    invs.forEach(inv => {
-      totalExclusive += parseFloat(inv.subtotal) || 0;
-      totalVat += parseFloat(inv.vat) || 0;
-      totalInclusive += parseFloat(inv.amount) || 0;
-    });
-    
-    return { exclusive: totalExclusive, vat: totalVat, inclusive: totalInclusive };
-  };
-
-  // Calculate bank transaction totals (amounts are VAT inclusive, need to extract)
-  const calcBankVatTotals = (stmts, isSpent) => {
-    let totalExclusive = 0;
-    let totalVat = 0;
-    let totalInclusive = 0;
-    
-    stmts.forEach(stmt => {
-      const amount = isSpent ? (stmt.spent || 0) : (stmt.received || 0);
-      if (amount > 0) {
-        const vatRate = getVATRateDecimal(stmt.vatRate);
-        const exclusive = vatRate > 0 ? amount / (1 + vatRate) : amount;
-        const vat = amount - exclusive;
-        totalExclusive += exclusive;
-        totalVat += vat;
-        totalInclusive += amount;
-      }
-    });
-    
-    return { exclusive: totalExclusive, vat: totalVat, inclusive: totalInclusive };
-  };
-
-  // Output VAT (Sales - Customer Invoices)
-  const outputFromInvoices = calcInvoiceTotals(customerInvoices, 'output');
-  
-  // Input VAT (Purchases - Supplier Invoices + Bank Expenses with VAT)
-  const inputFromInvoices = calcInvoiceTotals(supplierInvoices, 'input');
-  const inputFromBank = calcBankVatTotals(bankVatTransactions, true); // Spent amounts
-  
-  const totalInputExclusive = inputFromInvoices.exclusive + inputFromBank.exclusive;
-  const totalInputVat = inputFromInvoices.vat + inputFromBank.vat;
-  const totalInputInclusive = inputFromInvoices.inclusive + inputFromBank.inclusive;
-
-  const totalOutputVAT = outputFromInvoices.vat;
-  const totalInputVAT = totalInputVat;
+  const totalOutputVAT = standardOutputTotals.vat;
+  const totalInputVAT = standardInputTotals.vat;
   const netVAT = totalOutputVAT - totalInputVAT;
+
+  const formatAmount = (amt) => `R ${(parseFloat(amt) || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
+
+  // Handle Excel/CSV import
+  const handleFileImport = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result;
+      const lines = text.split('\n').filter(line => line.trim());
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+      
+      const newTransactions = lines.slice(1).map((line, idx) => {
+        const values = [];
+        let current = '';
+        let inQuotes = false;
+        for (let char of line) {
+          if (char === '"') {
+            inQuotes = !inQuotes;
+          } else if (char === ',' && !inQuotes) {
+            values.push(current.trim());
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        values.push(current.trim());
+        
+        const row = {};
+        headers.forEach((h, i) => row[h] = values[i] || '');
+        
+        const date = row.date || row.transactiondate || row.invoicedate || new Date().toISOString().split('T')[0];
+        const reference = row.reference || row.ref || row.invoiceno || row.documentno || '';
+        const description = row.description || row.desc || row.details || row.name || '';
+        const account = row.account || row.accountname || row.category || '';
+        const exclusive = parseFloat(row.exclusive || row.excl || row.nett || row.amount || 0);
+        const vat = parseFloat(row.vat || row.vatamount || row.tax || 0);
+        const inclusive = parseFloat(row.inclusive || row.incl || row.total || 0) || (exclusive + vat);
+        const vatType = (row.vattype || row.type || '').toLowerCase().includes('input') ? 'input' : 'output';
+        const vatRate = row.vatrate || row.rate || (vat > 0 ? 'Standard 15%' : 'Zero Rated');
+
+        return {
+          id: Date.now() + idx,
+          date,
+          reference,
+          description,
+          account,
+          exclusive: exclusive || (inclusive - vat),
+          vat,
+          inclusive: inclusive || (exclusive + vat),
+          vatType,
+          vatRate
+        };
+      }).filter(t => t.description || t.reference || t.exclusive > 0 || t.vat > 0);
+      
+      saveVatTransactions([...vatTransactions, ...newTransactions]);
+      setSaveMessage(`${newTransactions.length} transactions imported!`);
+      setTimeout(() => setSaveMessage(''), 3000);
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
+  // Add new transaction manually
+  const addTransaction = (vatType, vatRate = 'Standard Rate (15.00%)') => {
+    const newTransaction = {
+      id: Date.now(),
+      date: new Date().toISOString().split('T')[0],
+      reference: '',
+      description: '',
+      account: '',
+      exclusive: 0,
+      vat: 0,
+      inclusive: 0,
+      vatType,
+      vatRate
+    };
+    saveVatTransactions([...vatTransactions, newTransaction]);
+  };
+
+  // Update transaction
+  const updateTransaction = (id, field, value) => {
+    const updated = vatTransactions.map(t => {
+      if (t.id === id) {
+        return { ...t, [field]: value };
+      }
+      return t;
+    });
+    saveVatTransactions(updated);
+  };
+
+  // Delete transaction
+  const deleteTransaction = (id) => {
+    saveVatTransactions(vatTransactions.filter(t => t.id !== id));
+  };
+
+  // Clear all transactions
+  const clearAll = () => {
+    if (vatTransactions.length > 0) {
+      saveVatTransactions([]);
+      setSaveMessage('All transactions cleared');
+      setTimeout(() => setSaveMessage(''), 3000);
+    }
+  };
+
+  // Export to Excel (CSV format)
+  const exportToExcel = () => {
+    const fmt = (val) => (parseFloat(val) || 0).toFixed(2);
+    
+    let csv = 'VAT Reconciliation Report\n';
+    csv += `Period: ${periodStart} to ${periodEnd}\n\n`;
+    
+    csv += 'VAT SUMMARY\n';
+    csv += 'Category,Exclusive,VAT,Inclusive\n';
+    csv += `Standard Rate Output,${fmt(standardOutputTotals.exclusive)},${fmt(standardOutputTotals.vat)},${fmt(standardOutputTotals.inclusive)}\n`;
+    csv += `Zero Rate Output,${fmt(zeroOutputTotals.exclusive)},0.00,${fmt(zeroOutputTotals.inclusive)}\n`;
+    csv += `Total Output,${fmt(standardOutputTotals.exclusive + zeroOutputTotals.exclusive)},${fmt(totalOutputVAT)},${fmt(standardOutputTotals.inclusive + zeroOutputTotals.inclusive)}\n`;
+    csv += `Standard Rate Input,${fmt(standardInputTotals.exclusive)},${fmt(standardInputTotals.vat)},${fmt(standardInputTotals.inclusive)}\n`;
+    csv += `Zero Rate Input,${fmt(zeroInputTotals.exclusive)},0.00,${fmt(zeroInputTotals.inclusive)}\n`;
+    csv += `Total Input,${fmt(standardInputTotals.exclusive + zeroInputTotals.exclusive)},${fmt(totalInputVAT)},${fmt(standardInputTotals.inclusive + zeroInputTotals.inclusive)}\n`;
+    csv += `\n${netVAT >= 0 ? 'VAT Payable' : 'VAT Refundable'},,${fmt(Math.abs(netVAT))},\n\n`;
+
+    csv += 'OUTPUT VAT TRANSACTIONS\n';
+    csv += 'Date,Reference,Account,Description,VAT Rate,Exclusive,VAT,Inclusive\n';
+    outputTransactions.forEach(t => {
+      csv += `${t.date},"${t.reference || ''}","${t.account || ''}","${t.description || ''}","${t.vatRate || ''}",${fmt(t.exclusive)},${fmt(t.vat)},${fmt(t.inclusive)}\n`;
+    });
+
+    csv += '\nINPUT VAT TRANSACTIONS\n';
+    csv += 'Date,Reference,Account,Description,VAT Rate,Exclusive,VAT,Inclusive\n';
+    inputTransactions.forEach(t => {
+      csv += `${t.date},"${t.reference || ''}","${t.account || ''}","${t.description || ''}","${t.vatRate || ''}",${fmt(t.exclusive)},${fmt(t.vat)},${fmt(t.inclusive)}\n`;
+    });
+
+    const fileName = `VAT_Recon_${periodStart}_to_${periodEnd}.csv`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Generate PDF Download
+  const generatePDFDownload = () => {
+    setGenerating(true);
+    const fmtAmt = (amt) => `R ${(parseFloat(amt) || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    
+    const generateTableRows = (txns) => {
+      if (txns.length === 0) return '<tr><td colspan="7" style="text-align:center;padding:15px;color:#64748b;">No transactions</td></tr>';
+      return txns.map(t => `
+        <tr>
+          <td style="padding:6px;border:1px solid #d1d5db;">${t.date}</td>
+          <td style="padding:6px;border:1px solid #d1d5db;">${t.reference || ''}</td>
+          <td style="padding:6px;border:1px solid #d1d5db;">${t.account || ''}</td>
+          <td style="padding:6px;border:1px solid #d1d5db;">${t.description || ''}</td>
+          <td style="padding:6px;border:1px solid #d1d5db;text-align:right;">${fmtAmt(t.exclusive)}</td>
+          <td style="padding:6px;border:1px solid #d1d5db;text-align:right;">${fmtAmt(t.vat)}</td>
+          <td style="padding:6px;border:1px solid #d1d5db;text-align:right;">${fmtAmt(t.inclusive)}</td>
+        </tr>
+      `).join('');
+    };
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>VAT Reconciliation Report</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; padding: 30px; font-size: 11px; }
+          h1 { font-size: 18px; margin-bottom: 10px; }
+          h2 { font-size: 14px; margin: 20px 0 10px; padding: 8px; background: #f0f0f0; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+          th { background: #e5e7eb; padding: 8px; text-align: left; border: 1px solid #d1d5db; }
+          td { padding: 6px; border: 1px solid #d1d5db; }
+          .text-right { text-align: right; }
+          .summary { background: #f8fafc; font-weight: bold; }
+          .total-row { background: ${netVAT >= 0 ? '#fee2e2' : '#dcfce7'}; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <h1>VAT Reconciliation Report</h1>
+        <p>Period: ${periodStart} to ${periodEnd}</p>
+        <p style="margin-bottom:20px;">${company?.name || 'Company Name'}</p>
+
+        <h2>VAT Summary</h2>
+        <table>
+          <tr class="summary"><td colspan="4"><strong>OUTPUT VAT (Sales)</strong></td></tr>
+          <tr><td>Standard Rate (15%)</td><td class="text-right">${fmtAmt(standardOutputTotals.exclusive)}</td><td class="text-right">${fmtAmt(standardOutputTotals.vat)}</td><td class="text-right">${fmtAmt(standardOutputTotals.inclusive)}</td></tr>
+          <tr><td>Zero Rate</td><td class="text-right">${fmtAmt(zeroOutputTotals.exclusive)}</td><td class="text-right">R 0.00</td><td class="text-right">${fmtAmt(zeroOutputTotals.inclusive)}</td></tr>
+          <tr class="summary"><td colspan="4"><strong>INPUT VAT (Purchases)</strong></td></tr>
+          <tr><td>Standard Rate (15%)</td><td class="text-right">${fmtAmt(standardInputTotals.exclusive)}</td><td class="text-right">${fmtAmt(standardInputTotals.vat)}</td><td class="text-right">${fmtAmt(standardInputTotals.inclusive)}</td></tr>
+          <tr><td>Zero Rate</td><td class="text-right">${fmtAmt(zeroInputTotals.exclusive)}</td><td class="text-right">R 0.00</td><td class="text-right">${fmtAmt(zeroInputTotals.inclusive)}</td></tr>
+          <tr class="total-row"><td>${netVAT >= 0 ? 'VAT PAYABLE TO SARS' : 'VAT REFUNDABLE FROM SARS'}</td><td></td><td class="text-right">${fmtAmt(Math.abs(netVAT))}</td><td></td></tr>
+        </table>
+
+        <h2>Output VAT Transactions</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr></thead>
+          <tbody>${generateTableRows(outputTransactions)}</tbody>
+        </table>
+
+        <h2>Input VAT Transactions</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr></thead>
+          <tbody>${generateTableRows(inputTransactions)}</tbody>
+        </table>
+
+        <p style="margin-top:30px;color:#6b7280;font-size:10px;">Generated on ${new Date().toLocaleDateString()} - Open in browser and press Ctrl+P to save as PDF</p>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const fileName = `VAT_Recon_${periodStart}_to_${periodEnd}.html`;
+    setPdfDownloadLink({ url, name: fileName });
+    setGenerating(false);
+  };
+
+  // Transaction Row Component
+  const TransactionRow = ({ t }) => {
+    const [localExcl, setLocalExcl] = useState(t.exclusive ?? '');
+    const [localVat, setLocalVat] = useState(t.vat ?? '');
+    const [localIncl, setLocalIncl] = useState(t.inclusive ?? '');
+
+    React.useEffect(() => {
+      setLocalExcl(t.exclusive ?? '');
+      setLocalVat(t.vat ?? '');
+      setLocalIncl(t.inclusive ?? '');
+    }, [t.id]);
+
+    const handleExclBlur = () => {
+      const excl = parseFloat(localExcl) || 0;
+      const rate = getVATRate(t.vatRate);
+      const vat = excl * rate;
+      const incl = excl + vat;
+      setLocalVat(vat.toFixed(2));
+      setLocalIncl(incl.toFixed(2));
+      saveVatTransactions(vatTransactions.map(tx => 
+        tx.id === t.id ? { ...tx, exclusive: excl.toFixed(2), vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
+      ));
+    };
+
+    const handleVatBlur = () => {
+      const vat = parseFloat(localVat) || 0;
+      const excl = parseFloat(localExcl) || 0;
+      const incl = excl + vat;
+      setLocalIncl(incl.toFixed(2));
+      saveVatTransactions(vatTransactions.map(tx => 
+        tx.id === t.id ? { ...tx, vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
+      ));
+    };
+
+    const handleInclBlur = () => {
+      const incl = parseFloat(localIncl) || 0;
+      const rate = getVATRate(t.vatRate);
+      const excl = rate > 0 ? incl / (1 + rate) : incl;
+      const vat = incl - excl;
+      setLocalExcl(excl.toFixed(2));
+      setLocalVat(vat.toFixed(2));
+      saveVatTransactions(vatTransactions.map(tx => 
+        tx.id === t.id ? { ...tx, exclusive: excl.toFixed(2), vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
+      ));
+    };
+
+    const handleVatRateChange = (newRate) => {
+      const excl = parseFloat(localExcl) || 0;
+      const rate = getVATRate(newRate);
+      const vat = excl * rate;
+      const incl = excl + vat;
+      setLocalVat(vat.toFixed(2));
+      setLocalIncl(incl.toFixed(2));
+      saveVatTransactions(vatTransactions.map(tx => 
+        tx.id === t.id ? { ...tx, vatRate: newRate, vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
+      ));
+    };
+
+    return (
+      <tr className="border-t hover:bg-slate-50">
+        <td className="px-2 py-1">
+          <input type="date" value={t.date} onChange={(e) => updateTransaction(t.id, 'date', e.target.value)}
+            className="border rounded px-2 py-1 text-sm w-full" />
+        </td>
+        <td className="px-2 py-1">
+          <input type="text" value={t.reference || ''} onChange={(e) => updateTransaction(t.id, 'reference', e.target.value)}
+            className="border rounded px-2 py-1 text-sm w-full" placeholder="Ref" />
+        </td>
+        <td className="px-2 py-1">
+          <select value={t.account || ''} onChange={(e) => updateTransaction(t.id, 'account', e.target.value)}
+            className="border rounded px-2 py-1 text-sm w-full">
+            <option value="">Select Account</option>
+            {accounts.filter(a => a.active !== false).map(acc => (
+              <option key={acc.id} value={acc.name}>{acc.name}</option>
+            ))}
+          </select>
+        </td>
+        <td className="px-2 py-1">
+          <input type="text" value={t.description || ''} onChange={(e) => updateTransaction(t.id, 'description', e.target.value)}
+            className="border rounded px-2 py-1 text-sm w-full" placeholder="Description" />
+        </td>
+        <td className="px-2 py-1">
+          <select value={t.vatRate || 'Standard Rate (15.00%)'} onChange={(e) => handleVatRateChange(e.target.value)}
+            className="border rounded px-2 py-1 text-sm w-full">
+            {VAT_RATES.map(vat => <option key={vat.value} value={vat.value}>{vat.label}</option>)}
+          </select>
+        </td>
+        <td className="px-2 py-1">
+          <input type="text" value={localExcl} onChange={(e) => setLocalExcl(e.target.value)} onBlur={handleExclBlur}
+            className="border rounded px-2 py-1 text-sm w-full text-right" placeholder="0.00" />
+        </td>
+        <td className="px-2 py-1">
+          <input type="text" value={localVat} onChange={(e) => setLocalVat(e.target.value)} onBlur={handleVatBlur}
+            className="border rounded px-2 py-1 text-sm w-full text-right" placeholder="0.00" />
+        </td>
+        <td className="px-2 py-1">
+          <input type="text" value={localIncl} onChange={(e) => setLocalIncl(e.target.value)} onBlur={handleInclBlur}
+            className="border rounded px-2 py-1 text-sm w-full text-right" placeholder="0.00" />
+        </td>
+        <td className="px-2 py-1">
+          <button onClick={() => deleteTransaction(t.id)} className="p-1 text-red-500 hover:bg-red-50 rounded">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </td>
+      </tr>
+    );
+  };
+
+  // Transaction Table Component
+  const TransactionTable = ({ transactions, title, bgColor, textColor, vatType }) => (
+    <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+      <div className={`p-4 ${bgColor} border-b flex justify-between items-center`}>
+        <h3 className={`font-semibold ${textColor}`}>{title}</h3>
+        <button onClick={() => addTransaction(vatType)} className={`text-sm ${textColor} hover:underline flex items-center gap-1`}>
+          <Plus className="w-4 h-4" /> Add Transaction
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-100">
+            <tr>
+              <th className="text-left px-2 py-2 font-medium text-slate-600 w-28">Date</th>
+              <th className="text-left px-2 py-2 font-medium text-slate-600 w-24">Reference</th>
+              <th className="text-left px-2 py-2 font-medium text-slate-600 w-32">Account</th>
+              <th className="text-left px-2 py-2 font-medium text-slate-600">Description</th>
+              <th className="text-left px-2 py-2 font-medium text-slate-600 w-36">VAT Rate</th>
+              <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">Exclusive</th>
+              <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">VAT</th>
+              <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">Inclusive</th>
+              <th className="w-10"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {transactions.length > 0 ? transactions.map(t => (
+              <TransactionRow key={t.id} t={t} />
+            )) : (
+              <tr>
+                <td colSpan={9} className="text-center py-8 text-slate-500">
+                  No transactions. Click "Add Transaction" or import a CSV file.
+                </td>
+              </tr>
+            )}
+          </tbody>
+          {transactions.length > 0 && (
+            <tfoot className={bgColor}>
+              <tr>
+                <td colSpan={5} className={`px-3 py-2 text-right ${textColor} font-semibold`}>Subtotal:</td>
+                <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).exclusive)}</td>
+                <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).vat)}</td>
+                <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).inclusive)}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-800">VAT Reconciliation</h2>
+          <p className="text-sm text-slate-500">Import tax boxes or manually add VAT transactions</p>
+        </div>
+        <div className="flex gap-2">
+          <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".csv,.txt" className="hidden" />
+          <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 border px-4 py-2 rounded-lg hover:bg-slate-50 text-sm">
+            <Upload className="w-4 h-4" /> Import CSV
+          </button>
+          <button onClick={clearAll} className="flex items-center gap-2 border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 text-sm">
+            <Trash2 className="w-4 h-4" /> Clear All
+          </button>
+        </div>
+      </div>
+
+      {/* Period Selection */}
+      <div className="bg-white rounded-lg border shadow-sm p-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-slate-600">Period:</label>
+              <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)}
+                className="border rounded px-3 py-2 text-sm" />
+              <span className="text-slate-400">to</span>
+              <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)}
+                className="border rounded px-3 py-2 text-sm" />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={generatePDFDownload} disabled={generating}
+              className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 text-sm font-medium">
+              <Download className="w-4 h-4" /> {generating ? 'Generating...' : 'Download PDF'}
+            </button>
+            <button onClick={exportToExcel}
+              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm font-medium">
+              <Download className="w-4 h-4" /> Download Excel
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* PDF Download Link */}
+      {pdfDownloadLink && (
+        <div className="bg-red-50 border border-red-300 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Download className="w-5 h-5 text-red-600" />
+              <div>
+                <span className="text-red-800 font-medium">Your PDF report is ready!</span>
+                <p className="text-xs text-red-600">Open the file in your browser and press Ctrl+P to save as PDF</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <a href={pdfDownloadLink.url} download={pdfDownloadLink.name}
+                className="px-4 py-2 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 inline-flex items-center gap-2">
+                <Download className="w-4 h-4" /> {pdfDownloadLink.name}
+              </a>
+              <button onClick={() => setPdfDownloadLink(null)} className="p-2 text-red-600 hover:bg-red-100 rounded">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {saveMessage && (
+        <div className="p-3 bg-green-100 border border-green-300 text-green-800 rounded text-center text-sm font-medium">
+          {saveMessage}
+        </div>
+      )}
+
+      {/* VAT Summary Table */}
+      <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+        <div className="p-4 bg-emerald-50 border-b">
+          <h3 className="font-semibold text-emerald-800">VAT Summary (Manual/Imported Transactions Only)</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100">
+              <tr>
+                <th className="text-left px-4 py-3 font-medium text-slate-600">Category</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">Exclusive</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">VAT</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">Inclusive</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t bg-blue-50">
+                <td className="px-4 py-2 font-medium text-blue-800" colSpan={4}>OUTPUT VAT (Sales)</td>
+              </tr>
+              <tr className="border-t">
+                <td className="px-4 py-2 pl-8">Standard Rate (15%)</td>
+                <td className="px-4 py-2 text-right">{formatAmount(standardOutputTotals.exclusive)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(standardOutputTotals.vat)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(standardOutputTotals.inclusive)}</td>
+              </tr>
+              <tr className="border-t">
+                <td className="px-4 py-2 pl-8">Zero Rate (0%)</td>
+                <td className="px-4 py-2 text-right">{formatAmount(zeroOutputTotals.exclusive)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(0)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(zeroOutputTotals.inclusive)}</td>
+              </tr>
+              <tr className="border-t bg-blue-100 font-semibold">
+                <td className="px-4 py-2 text-blue-800">Total Output VAT</td>
+                <td className="px-4 py-2 text-right text-blue-800">{formatAmount(standardOutputTotals.exclusive + zeroOutputTotals.exclusive)}</td>
+                <td className="px-4 py-2 text-right text-blue-800">{formatAmount(totalOutputVAT)}</td>
+                <td className="px-4 py-2 text-right text-blue-800">{formatAmount(standardOutputTotals.inclusive + zeroOutputTotals.inclusive)}</td>
+              </tr>
+              <tr className="border-t bg-orange-50">
+                <td className="px-4 py-2 font-medium text-orange-800" colSpan={4}>INPUT VAT (Purchases)</td>
+              </tr>
+              <tr className="border-t">
+                <td className="px-4 py-2 pl-8">Standard Rate (15%)</td>
+                <td className="px-4 py-2 text-right">{formatAmount(standardInputTotals.exclusive)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(standardInputTotals.vat)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(standardInputTotals.inclusive)}</td>
+              </tr>
+              <tr className="border-t">
+                <td className="px-4 py-2 pl-8">Zero Rate (0%)</td>
+                <td className="px-4 py-2 text-right">{formatAmount(zeroInputTotals.exclusive)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(0)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(zeroInputTotals.inclusive)}</td>
+              </tr>
+              <tr className="border-t bg-orange-100 font-semibold">
+                <td className="px-4 py-2 text-orange-800">Total Input VAT</td>
+                <td className="px-4 py-2 text-right text-orange-800">{formatAmount(standardInputTotals.exclusive + zeroInputTotals.exclusive)}</td>
+                <td className="px-4 py-2 text-right text-orange-800">{formatAmount(totalInputVAT)}</td>
+                <td className="px-4 py-2 text-right text-orange-800">{formatAmount(standardInputTotals.inclusive + zeroInputTotals.inclusive)}</td>
+              </tr>
+              <tr className={`border-t-2 border-slate-300 ${netVAT >= 0 ? 'bg-red-100' : 'bg-green-100'}`}>
+                <td className={`px-4 py-3 font-bold ${netVAT >= 0 ? 'text-red-800' : 'text-green-800'}`}>
+                  {netVAT >= 0 ? 'VAT PAYABLE TO SARS' : 'VAT REFUNDABLE FROM SARS'}
+                </td>
+                <td className="px-4 py-3"></td>
+                <td className={`px-4 py-3 text-right font-bold text-lg ${netVAT >= 0 ? 'text-red-800' : 'text-green-800'}`}>
+                  {formatAmount(Math.abs(netVAT))}
+                </td>
+                <td className="px-4 py-3"></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Output VAT Transactions */}
+      <TransactionTable 
+        transactions={outputTransactions}
+        title="OUTPUT VAT (Sales)"
+        bgColor="bg-blue-50"
+        textColor="text-blue-800"
+        vatType="output"
+      />
+
+      {/* Input VAT Transactions */}
+      <TransactionTable 
+        transactions={inputTransactions}
+        title="INPUT VAT (Purchases)"
+        bgColor="bg-orange-50"
+        textColor="text-orange-800"
+        vatType="input"
+      />
+
+      {/* Import Instructions */}
+      <div className="bg-slate-50 rounded-lg border p-4">
+        <h4 className="font-medium text-slate-700 mb-2">CSV Import Format</h4>
+        <p className="text-sm text-slate-600 mb-2">
+          Your CSV should have: Date, Reference, Account, Description, Exclusive, VAT, Inclusive, VAT Type (output/input), VAT Rate
+        </p>
+        <p className="text-xs text-slate-500">
+          Supported columns: date, reference, description, account, exclusive, vat, inclusive, vattype, vatrate
+        </p>
+      </div>
+    </div>
+  );
+};
 
   const formatAmount = (amt) => `R ${(parseFloat(amt) || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
 
@@ -5021,138 +5528,6 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, invoices = [], ban
         </div>
       </div>
 
-      {/* Invoice-Based VAT Details */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Customer Invoices (Output VAT) */}
-        <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
-          <div className="p-4 bg-blue-50 border-b flex justify-between items-center">
-            <h3 className="font-semibold text-blue-800">Customer Invoices (Output VAT)</h3>
-            <span className="text-sm text-blue-600">{customerInvoices.length} invoices</span>
-          </div>
-          <div className="overflow-x-auto max-h-80">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 sticky top-0">
-                <tr>
-                  <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
-                  <th className="text-left px-3 py-2 font-medium text-slate-600">Invoice No.</th>
-                  <th className="text-left px-3 py-2 font-medium text-slate-600">Customer</th>
-                  <th className="text-right px-3 py-2 font-medium text-slate-600">Ex VAT</th>
-                  <th className="text-right px-3 py-2 font-medium text-slate-600">VAT</th>
-                  <th className="text-right px-3 py-2 font-medium text-slate-600">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {customerInvoices.length > 0 ? customerInvoices.map(inv => (
-                  <tr key={inv.id} className="border-t hover:bg-slate-50">
-                    <td className="px-3 py-2">{inv.date}</td>
-                    <td className="px-3 py-2 font-medium">{inv.externalInvoiceNo || inv.documentNo}</td>
-                    <td className="px-3 py-2">{inv.customer}</td>
-                    <td className="px-3 py-2 text-right">{formatAmount(inv.subtotal)}</td>
-                    <td className="px-3 py-2 text-right">{formatAmount(inv.vat)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{formatAmount(inv.amount)}</td>
-                  </tr>
-                )) : (
-                  <tr><td colSpan={6} className="px-3 py-4 text-center text-slate-500">No customer invoices in this period</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Supplier Invoices (Input VAT) */}
-        <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
-          <div className="p-4 bg-orange-50 border-b flex justify-between items-center">
-            <h3 className="font-semibold text-orange-800">Supplier Invoices (Input VAT)</h3>
-            <span className="text-sm text-orange-600">{supplierInvoices.length} invoices</span>
-          </div>
-          <div className="overflow-x-auto max-h-80">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 sticky top-0">
-                <tr>
-                  <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
-                  <th className="text-left px-3 py-2 font-medium text-slate-600">Invoice No.</th>
-                  <th className="text-left px-3 py-2 font-medium text-slate-600">Supplier</th>
-                  <th className="text-right px-3 py-2 font-medium text-slate-600">Ex VAT</th>
-                  <th className="text-right px-3 py-2 font-medium text-slate-600">VAT</th>
-                  <th className="text-right px-3 py-2 font-medium text-slate-600">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {supplierInvoices.length > 0 ? supplierInvoices.map(inv => (
-                  <tr key={inv.id} className="border-t hover:bg-slate-50">
-                    <td className="px-3 py-2">{inv.date}</td>
-                    <td className="px-3 py-2 font-medium">{inv.externalInvoiceNo || inv.documentNo}</td>
-                    <td className="px-3 py-2">{inv.supplier}</td>
-                    <td className="px-3 py-2 text-right">{formatAmount(inv.subtotal)}</td>
-                    <td className="px-3 py-2 text-right">{formatAmount(inv.vat)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{formatAmount(inv.amount)}</td>
-                  </tr>
-                )) : (
-                  <tr><td colSpan={6} className="px-3 py-4 text-center text-slate-500">No supplier invoices in this period</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* Bank Expenses with VAT */}
-      <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
-        <div className="p-4 bg-purple-50 border-b flex justify-between items-center">
-          <h3 className="font-semibold text-purple-800">Bank Expenses with VAT (Input VAT - Direct from Banking)</h3>
-          <span className="text-sm text-purple-600">{bankVatTransactions.length} transactions</span>
-        </div>
-        <div className="overflow-x-auto max-h-80">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 sticky top-0">
-              <tr>
-                <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
-                <th className="text-left px-3 py-2 font-medium text-slate-600">Description</th>
-                <th className="text-left px-3 py-2 font-medium text-slate-600">Category</th>
-                <th className="text-left px-3 py-2 font-medium text-slate-600">VAT Rate</th>
-                <th className="text-right px-3 py-2 font-medium text-slate-600">Amount (Inc)</th>
-                <th className="text-right px-3 py-2 font-medium text-slate-600">Ex VAT</th>
-                <th className="text-right px-3 py-2 font-medium text-slate-600">VAT</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bankVatTransactions.length > 0 ? bankVatTransactions.map(stmt => {
-                const amount = stmt.spent || stmt.received || 0;
-                const vatRate = getVATRateDecimal(stmt.vatRate);
-                const exVat = vatRate > 0 ? amount / (1 + vatRate) : amount;
-                const vatAmt = amount - exVat;
-                return (
-                  <tr key={stmt.id} className="border-t hover:bg-slate-50">
-                    <td className="px-3 py-2">{stmt.date}</td>
-                    <td className="px-3 py-2">{stmt.description}</td>
-                    <td className="px-3 py-2">{stmt.selection}</td>
-                    <td className="px-3 py-2">{stmt.vatRate}</td>
-                    <td className="px-3 py-2 text-right">{formatAmount(amount)}</td>
-                    <td className="px-3 py-2 text-right">{formatAmount(exVat)}</td>
-                    <td className="px-3 py-2 text-right">{formatAmount(vatAmt)}</td>
-                  </tr>
-                );
-              }) : (
-                <tr><td colSpan={7} className="px-3 py-4 text-center text-slate-500">No bank expenses with VAT in this period</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Import Instructions */}
-      <div className="bg-slate-50 rounded-lg border p-4">
-        <h4 className="font-medium text-slate-700 mb-2">CSV Import Format</h4>
-        <p className="text-sm text-slate-600 mb-2">
-          Your CSV should have: Date, Reference, Account, Description, Exclusive, VAT, Inclusive, VAT Type (output/input), VAT Rate
-        </p>
-        <p className="text-xs text-slate-500">
-          Supported columns: date, reference, description, account, exclusive, vat, inclusive, vattype, vatrate
-        </p>
-      </div>
-    </div>
-  );
-};
 
 // ==================== REPORTS VIEW ====================
 const ReportsView = ({ bankStatements, invoices, company }) => {
