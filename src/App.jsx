@@ -949,7 +949,27 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-5 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Customer Invoice No.</label>
+                  <input 
+                    type="text" 
+                    value={newInvoice.externalInvoiceNo || ''}
+                    onChange={(e) => setNewInvoice({...newInvoice, externalInvoiceNo: e.target.value})}
+                    placeholder="Actual invoice number"
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Customer VAT No.</label>
+                  <input 
+                    type="text" 
+                    value={newInvoice.customerVatNo || ''}
+                    onChange={(e) => setNewInvoice({...newInvoice, customerVatNo: e.target.value})}
+                    placeholder="VAT number"
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Customer Reference</label>
                   <input 
@@ -1322,7 +1342,13 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
 
 // Print Preview Component
 const PrintPreview = ({ invoice, onClose, company }) => {
-  const handlePrint = () => window.print();
+  const handlePrint = () => {
+    // Set document title for save as PDF
+    const originalTitle = document.title;
+    document.title = invoice.documentNo || 'Invoice';
+    window.print();
+    document.title = originalTitle;
+  };
   
   // Calculate item totals with VAT
   const calculateItemTotal = (item) => {
@@ -1336,13 +1362,14 @@ const PrintPreview = ({ invoice, onClose, company }) => {
   };
   
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[95vh] overflow-y-auto">
-        <div className="p-4 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
-          <h3 className="font-semibold">Print Preview</h3>
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+      <div className="bg-white shadow-xl w-full h-full max-w-[210mm] max-h-[297mm] overflow-y-auto print:max-w-none print:max-h-none print:overflow-visible">
+        {/* Print Controls - Hidden when printing */}
+        <div className="p-3 border-b flex justify-between items-center bg-slate-50 print:hidden sticky top-0 z-10">
+          <h3 className="font-semibold">Print Preview - {invoice.documentNo}</h3>
           <div className="flex gap-2">
             <button onClick={handlePrint} className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded text-sm">
-              <Printer className="w-4 h-4" /> Print
+              <Printer className="w-4 h-4" /> Print / Save PDF
             </button>
             <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded">
               <X className="w-5 h-5" />
@@ -1350,20 +1377,21 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           </div>
         </div>
         
-        <div className="p-8 print:p-4" id="invoice-print">
+        {/* Invoice Content - A4 Size */}
+        <div className="p-8 min-h-[297mm] print:p-12" id="invoice-print">
           {/* Header with Logo and Invoice Details */}
           <div className="flex justify-between items-start mb-8">
             {/* Left side - Logo */}
             <div className="flex-shrink-0">
               {company?.logo ? (
-                <img src={company.logo} alt="Company Logo" className="w-40 h-auto object-contain" />
+                <img src={company.logo} alt="Company Logo" className="w-48 h-auto object-contain" />
               ) : (
-                <div className="text-2xl font-bold text-emerald-700">
-                  {company?.name || 'Your Company'}
+                <div>
+                  <div className="text-2xl font-bold text-slate-800">{company?.name || 'Your Company'}</div>
+                  {company?.tradingName && (
+                    <p className="text-sm text-slate-500">{company.tradingName}</p>
+                  )}
                 </div>
-              )}
-              {company?.tradingName && (
-                <p className="text-sm text-slate-500 mt-1">{company.tradingName}</p>
               )}
             </div>
             
@@ -1372,29 +1400,29 @@ const PrintPreview = ({ invoice, onClose, company }) => {
               <h1 className="text-3xl font-bold text-slate-800 mb-4">
                 {invoice.invoiceType === 'supplier' ? 'SUPPLIER INVOICE' : 'INVOICE'}
               </h1>
-              <div className="text-sm space-y-1">
+              <div className="text-sm space-y-1 border p-4 rounded bg-slate-50">
                 <div className="flex justify-between gap-8">
                   <span className="text-slate-500">NUMBER:</span>
-                  <span className="font-semibold">{invoice.documentNo}</span>
+                  <span className="font-bold">{invoice.documentNo}</span>
                 </div>
                 {invoice.externalInvoiceNo && (
                   <div className="flex justify-between gap-8">
                     <span className="text-slate-500">REFERENCE:</span>
-                    <span className="font-semibold">{invoice.externalInvoiceNo}</span>
+                    <span className="font-bold">{invoice.externalInvoiceNo}</span>
                   </div>
                 )}
                 <div className="flex justify-between gap-8">
                   <span className="text-slate-500">DATE:</span>
-                  <span className="font-semibold">{invoice.date}</span>
+                  <span className="font-bold">{invoice.date}</span>
                 </div>
                 <div className="flex justify-between gap-8">
                   <span className="text-slate-500">DUE DATE:</span>
-                  <span className="font-semibold">{invoice.dueDate}</span>
+                  <span className="font-bold">{invoice.dueDate}</span>
                 </div>
                 {invoice.salesRep && (
                   <div className="flex justify-between gap-8">
                     <span className="text-slate-500">SALES REP:</span>
-                    <span className="font-semibold">{invoice.salesRep}</span>
+                    <span className="font-bold">{invoice.salesRep}</span>
                   </div>
                 )}
                 <div className="flex justify-between gap-8">
@@ -1406,26 +1434,26 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           </div>
           
           {/* FROM and TO Section */}
-          <div className="grid grid-cols-2 gap-8 mb-8 border-t border-b py-6">
+          <div className="grid grid-cols-2 gap-8 mb-8 border-t border-b border-slate-300 py-6">
             {/* FROM - Company Details */}
             <div>
-              <p className="text-xs text-slate-500 font-semibold mb-2">FROM</p>
+              <p className="text-xs text-slate-500 font-bold mb-2 uppercase">From</p>
               <h3 className="text-lg font-bold text-slate-800 mb-3">{company?.name || 'Your Company'}</h3>
               
               {company?.vatNo && (
-                <p className="text-sm mb-3"><span className="text-slate-500">VAT NO:</span> {company.vatNo}</p>
+                <p className="text-sm mb-3"><span className="text-slate-500 font-medium">VAT NO:</span> {company.vatNo}</p>
               )}
               
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <p className="text-xs text-slate-500 font-semibold mb-1">POSTAL ADDRESS:</p>
+                  <p className="text-xs text-slate-500 font-bold mb-1 uppercase">Postal Address:</p>
                   {company?.address && <p>{company.address}</p>}
                   {company?.city && <p>{company.city}</p>}
                   {company?.postalCode && <p>{company.postalCode}</p>}
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 font-semibold mb-1">PHYSICAL ADDRESS:</p>
-                  {company?.physicalAddress || company?.address && <p>{company.physicalAddress || company.address}</p>}
+                  <p className="text-xs text-slate-500 font-bold mb-1 uppercase">Physical Address:</p>
+                  {(company?.physicalAddress || company?.address) && <p>{company.physicalAddress || company.address}</p>}
                   {company?.city && <p>{company.city}</p>}
                   {company?.postalCode && <p>{company.postalCode}</p>}
                 </div>
@@ -1434,14 +1462,14 @@ const PrintPreview = ({ invoice, onClose, company }) => {
             
             {/* TO - Customer/Supplier Details */}
             <div>
-              <p className="text-xs text-slate-500 font-semibold mb-2">TO</p>
+              <p className="text-xs text-slate-500 font-bold mb-2 uppercase">To</p>
               <h3 className="text-lg font-bold text-slate-800 mb-3">
                 {invoice.invoiceType === 'supplier' ? invoice.supplier : invoice.customer}
               </h3>
               
               {(invoice.customerVatNo || invoice.supplierVatNo) && (
                 <p className="text-sm mb-3">
-                  <span className="text-slate-500">
+                  <span className="text-slate-500 font-medium">
                     {invoice.invoiceType === 'supplier' ? 'SUPPLIER VAT NO:' : 'CUSTOMER VAT NO:'}
                   </span> {invoice.supplierVatNo || invoice.customerVatNo}
                 </p>
@@ -1449,11 +1477,11 @@ const PrintPreview = ({ invoice, onClose, company }) => {
               
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <p className="text-xs text-slate-500 font-semibold mb-1">POSTAL ADDRESS:</p>
+                  <p className="text-xs text-slate-500 font-bold mb-1 uppercase">Postal Address:</p>
                   {invoice.postalAddress?.filter(Boolean).map((line, i) => <p key={i}>{line}</p>)}
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 font-semibold mb-1">PHYSICAL ADDRESS:</p>
+                  <p className="text-xs text-slate-500 font-bold mb-1 uppercase">Physical Address:</p>
                   {invoice.deliveryAddress?.filter(Boolean).map((line, i) => <p key={i}>{line}</p>)}
                 </div>
               </div>
@@ -1463,14 +1491,14 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           {/* Line Items Table */}
           <table className="w-full mb-8 text-sm">
             <thead>
-              <tr className="border-b-2 border-slate-300">
-                <th className="text-left py-3 font-semibold text-slate-600">Description</th>
-                <th className="text-center py-3 font-semibold text-slate-600 w-20">Quantity</th>
-                <th className="text-right py-3 font-semibold text-slate-600 w-28">Unit Price</th>
-                <th className="text-center py-3 font-semibold text-slate-600 w-16">Disc %</th>
-                <th className="text-center py-3 font-semibold text-slate-600 w-16">VAT %</th>
-                <th className="text-right py-3 font-semibold text-slate-600 w-28">Excl. Total</th>
-                <th className="text-right py-3 font-semibold text-slate-600 w-28">Incl. Total</th>
+              <tr className="border-b-2 border-slate-400 bg-slate-100">
+                <th className="text-left py-3 px-2 font-bold text-slate-700">Description</th>
+                <th className="text-center py-3 px-2 font-bold text-slate-700 w-20">Quantity</th>
+                <th className="text-right py-3 px-2 font-bold text-slate-700 w-28">Unit Price</th>
+                <th className="text-center py-3 px-2 font-bold text-slate-700 w-16">Disc %</th>
+                <th className="text-center py-3 px-2 font-bold text-slate-700 w-16">VAT %</th>
+                <th className="text-right py-3 px-2 font-bold text-slate-700 w-28">Excl. Total</th>
+                <th className="text-right py-3 px-2 font-bold text-slate-700 w-28">Incl. Total</th>
               </tr>
             </thead>
             <tbody>
@@ -1478,13 +1506,13 @@ const PrintPreview = ({ invoice, onClose, company }) => {
                 const calc = calculateItemTotal(item);
                 return (
                   <tr key={idx} className="border-b border-slate-200">
-                    <td className="py-3">{item.description || 'Item'}</td>
-                    <td className="py-3 text-center">{item.qty || 1}</td>
-                    <td className="py-3 text-right">R{(item.price || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="py-3 text-center">{(item.discPercent || 0).toFixed(2)}%</td>
-                    <td className="py-3 text-center">{(calc.vatRate * 100).toFixed(2)}%</td>
-                    <td className="py-3 text-right">R{calc.afterDiscount.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="py-3 text-right font-semibold">R{calc.inclusive.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="py-3 px-2">{item.description || 'Item'}</td>
+                    <td className="py-3 px-2 text-center">{item.qty || 1}</td>
+                    <td className="py-3 px-2 text-right">R{(item.price || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="py-3 px-2 text-center">{(item.discPercent || 0).toFixed(2)}%</td>
+                    <td className="py-3 px-2 text-center">{(calc.vatRate * 100).toFixed(2)}%</td>
+                    <td className="py-3 px-2 text-right">R{calc.afterDiscount.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="py-3 px-2 text-right font-semibold">R{calc.inclusive.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   </tr>
                 );
               })}
@@ -1492,22 +1520,23 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           </table>
           
           {/* Banking Details and Totals */}
-          <div className="flex justify-between items-end">
+          <div className="flex justify-between items-end mt-auto">
             {/* Banking Details - Left */}
-            <div className="text-sm">
+            <div className="text-sm max-w-xs">
               {company?.bankName && (
-                <>
-                  <p className="font-semibold text-slate-700">{company.bankName}</p>
-                  {company?.bankAccountNo && <p>Account No.{company.bankAccountNo}</p>}
-                  {company?.bankBranchCode && <p>Branch code.{company.bankBranchCode}</p>}
-                  <p className="mt-4 text-xs text-slate-500 italic">N.B DEPOSIT OF 50% IS REQUIRED BEFORE COMMENCING WORK.</p>
-                </>
+                <div className="border rounded p-4 bg-slate-50">
+                  <p className="font-bold text-slate-700 mb-2">Banking Details</p>
+                  <p className="font-semibold">{company.bankName}</p>
+                  {company?.bankAccountNo && <p>Account No. {company.bankAccountNo}</p>}
+                  {company?.bankBranchCode && <p>Branch Code: {company.bankBranchCode}</p>}
+                </div>
               )}
+              <p className="mt-4 text-xs text-slate-500 italic">N.B DEPOSIT OF 50% IS REQUIRED BEFORE COMMENCING WORK.</p>
             </div>
             
             {/* Totals - Right */}
-            <div className="w-72">
-              <div className="space-y-2 text-sm">
+            <div className="w-80">
+              <div className="space-y-2 text-sm border rounded p-4">
                 <div className="flex justify-between">
                   <span className="text-slate-600">Total Discount:</span>
                   <span>R{(invoice.totalDiscount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -1520,20 +1549,20 @@ const PrintPreview = ({ invoice, onClose, company }) => {
                   <span className="text-slate-600">Total VAT:</span>
                   <span>R{(invoice.vat || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between border-t pt-2">
                   <span className="text-slate-600">Sub Total:</span>
                   <span className="font-semibold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
-                <div className="flex justify-between pt-2 border-t">
-                  <span className="text-slate-600">Grand Total:</span>
-                  <span className="font-bold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <div className="flex justify-between pt-1">
+                  <span className="text-slate-600 font-bold">Grand Total:</span>
+                  <span className="font-bold text-lg">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               </div>
               
               {/* Balance Due Box */}
-              <div className="mt-4 pt-4 border-t-2 border-slate-800">
-                <p className="text-right text-sm text-slate-600">BALANCE DUE</p>
-                <p className="text-right text-2xl font-bold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <div className="mt-4 pt-4 border-t-4 border-slate-800 text-right">
+                <p className="text-sm text-slate-600 font-medium">BALANCE DUE</p>
+                <p className="text-3xl font-bold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
             </div>
           </div>
@@ -3758,17 +3787,19 @@ Rules:
                   </td>
                   <td className="px-3 py-2">
                     <select
-                      value={stmt.type}
+                      value={stmt.type || 'Account'}
                       onChange={(e) => {
-                        updateStatement(stmt.id, 'type', e.target.value);
-                        // Reset selection when type changes
-                        if (e.target.value === 'Customer') {
-                          updateStatement(stmt.id, 'selection', clients[0]?.name || '');
-                        } else if (e.target.value === 'Supplier') {
-                          updateStatement(stmt.id, 'selection', suppliers[0]?.name || '');
-                        } else {
-                          updateStatement(stmt.id, 'selection', 'Unallocated Expen');
+                        const newType = e.target.value;
+                        let newSelection = 'Unallocated Expen';
+                        if (newType === 'Customer' && clients.length > 0) {
+                          newSelection = clients[0].name;
+                        } else if (newType === 'Supplier' && suppliers.length > 0) {
+                          newSelection = suppliers[0].name;
                         }
+                        // Update both fields together
+                        saveBankStatements(bankStatements.map(s => 
+                          s.id === stmt.id ? { ...s, type: newType, selection: newSelection } : s
+                        ));
                       }}
                       className="border rounded px-2 py-1 text-sm w-full"
                     >
@@ -3781,7 +3812,7 @@ Rules:
                   </td>
                   <td className="px-3 py-2">
                     <select
-                      value={stmt.selection}
+                      value={stmt.selection || ''}
                       onChange={(e) => updateStatement(stmt.id, 'selection', e.target.value)}
                       className="border rounded px-2 py-1 text-sm w-full"
                     >
