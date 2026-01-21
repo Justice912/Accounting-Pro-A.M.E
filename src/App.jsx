@@ -3897,9 +3897,14 @@ Rules:
                   <td className="px-3 py-2">
                     {stmt.linkedInvoice ? (
                       <div className="flex items-center gap-1">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${stmt.linkedType === 'client' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {stmt.linkedInvoiceNo || 'Linked'}
-                        </span>
+                        <div className="flex flex-col">
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${stmt.linkedType === 'client' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                            ✓ {stmt.linkedInvoiceNo || 'Linked'}
+                          </span>
+                          {stmt.externalInvoiceNo && (
+                            <span className="text-xs text-slate-500 mt-1">Ref: {stmt.externalInvoiceNo}</span>
+                          )}
+                        </div>
                         <button 
                           onClick={() => handleUnlinkInvoice(stmt.id)}
                           className="p-1 text-red-500 hover:bg-red-50 rounded"
@@ -4179,11 +4184,15 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, invoices = [], ban
   });
 
   // Bank transactions with VAT (only Account type - NOT Customer/Supplier to avoid duplicates)
+  // ALSO exclude any bank transaction that has been linked/converted to an invoice
   const bankVatTransactions = bankStatements.filter(stmt => {
-    // Only include Account type transactions with VAT (expenses like insurance, bank charges)
-    // Exclude Customer/Supplier as their VAT comes from invoices
+    // Exclude Customer/Supplier type as their VAT comes from invoices
     if (stmt.type === 'Customer' || stmt.type === 'Supplier') return false;
+    // Exclude transactions that have been linked or converted to invoices
+    if (stmt.linkedInvoice) return false;
+    // Only include transactions with VAT
     if (!stmt.vatRate || stmt.vatRate === 'No VAT') return false;
+    // Filter by period
     if (!periodStart || !periodEnd) return true;
     return stmt.date >= periodStart && stmt.date <= periodEnd;
   });
