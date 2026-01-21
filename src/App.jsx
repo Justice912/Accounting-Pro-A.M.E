@@ -4170,17 +4170,6 @@ Rules:
           </div>
         </div>
       )}
-            <div className="p-4 border-t bg-slate-50 flex justify-end">
-              <button 
-                onClick={() => { setShowConvertModal(false); setActiveStatement(null); }}
-                className="px-4 py-2 border rounded text-sm hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
