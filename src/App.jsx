@@ -5172,57 +5172,177 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
   };
 
   const generateTrialBalance = () => {
-    const filtered = filterByDateRange(bankStatements);
+    const filteredInvoices = filterByDateRange(invoices);
+    const filteredBankStatements = filterByDateRange(bankStatements);
     const categories = {};
     
-    filtered.forEach(stmt => {
+    // Track VAT separately to calculate net position
+    let totalVatOutput = 0; // VAT collected on sales (liability)
+    let totalVatInput = 0;  // VAT paid on purchases (asset)
+    
+    // Categories that should come from Banking only (not invoices)
+    const bankOnlyCategories = [
+      'Bank Charges', 
+      'Insurance', 
+      'Salaries', 
+      'Wages',
+      'Loans Received', 
+      'Loans Paid', 
+      'Loan Repayment',
+      'Transfer', 
+      'Transfers',
+      'Bank',
+      'Interest Received',
+      'Interest Paid',
+      'Drawings',
+      'Capital'
+    ];
+    
+    // Helper to check if category is bank-only
+    const isBankOnlyCategory = (cat) => {
+      if (!cat) return false;
+      const catLower = cat.toLowerCase();
+      return bankOnlyCategories.some(bc => catLower.includes(bc.toLowerCase()));
+    };
+    
+    // 1. Process CUSTOMER INVOICES (Sales/Income) - Credit side
+    filteredInvoices.filter(inv => inv.invoiceType !== 'supplier').forEach(inv => {
+      // Calculate Ex VAT amount from items if available, otherwise use subtotal
+      let exVatAmount = 0;
+      let vatAmount = 0;
+      
+      if (inv.items && inv.items.length > 0) {
+        // Recalculate from items to ensure accuracy
+        inv.items.forEach(item => {
+          const itemExclusive = (item.qty || 1) * (item.price || 0);
+          const discountAmt = itemExclusive * ((item.discPercent || 0) / 100);
+          const afterDiscount = itemExclusive - discountAmt;
+          const itemVatRate = getVATRate(item.vatType);
+          const itemVat = afterDiscount * itemVatRate;
+          
+          exVatAmount += afterDiscount;
+          vatAmount += itemVat;
+        });
+      } else {
+        // Fallback to stored values
+        exVatAmount = parseFloat(inv.subtotal) || 0;
+        vatAmount = parseFloat(inv.vat) || 0;
+      }
+      
+      // Credit Sales account with Ex VAT amount
+      const salesAccount = 'Sales';
+      if (!categories[salesAccount]) categories[salesAccount] = { debit: 0, credit: 0 };
+      categories[salesAccount].credit += exVatAmount;
+      
+      // Debit Trade Receivables (Debtors) with full amount (Inc VAT)
+      const debtorsAccount = 'Trade Receivables';
+      if (!categories[debtorsAccount]) categories[debtorsAccount] = { debit: 0, credit: 0 };
+      categories[debtorsAccount].debit += exVatAmount + vatAmount;
+      
+      // Track VAT Output (collected from customers)
+      totalVatOutput += vatAmount;
+    });
+    
+    // 2. Process SUPPLIER INVOICES (Purchases/Expenses) - Debit side
+    filteredInvoices.filter(inv => inv.invoiceType === 'supplier').forEach(inv => {
+      // Calculate Ex VAT amount from items if available, otherwise use subtotal
+      let exVatAmount = 0;
+      let vatAmount = 0;
+      
+      if (inv.items && inv.items.length > 0) {
+        // Recalculate from items to ensure accuracy
+        inv.items.forEach(item => {
+          const itemExclusive = (item.qty || 1) * (item.price || 0);
+          const discountAmt = itemExclusive * ((item.discPercent || 0) / 100);
+          const afterDiscount = itemExclusive - discountAmt;
+          const itemVatRate = getVATRate(item.vatType);
+          const itemVat = afterDiscount * itemVatRate;
+          
+          exVatAmount += afterDiscount;
+          vatAmount += itemVat;
+        });
+      } else {
+        // Fallback to stored values
+        exVatAmount = parseFloat(inv.subtotal) || 0;
+        vatAmount = parseFloat(inv.vat) || 0;
+      }
+      
+      // Debit Purchases/Expenses account with Ex VAT amount
+      const purchasesAccount = 'Purchases';
+      if (!categories[purchasesAccount]) categories[purchasesAccount] = { debit: 0, credit: 0 };
+      categories[purchasesAccount].debit += exVatAmount;
+      
+      // Credit Trade Payables (Creditors) with full amount (Inc VAT)
+      const creditorsAccount = 'Trade Payables';
+      if (!categories[creditorsAccount]) categories[creditorsAccount] = { debit: 0, credit: 0 };
+      categories[creditorsAccount].credit += exVatAmount + vatAmount;
+      
+      // Track VAT Input (paid to suppliers)
+      totalVatInput += vatAmount;
+    });
+    
+    // 3. Process BANK STATEMENTS - Only specific categories
+    filteredBankStatements.forEach(stmt => {
       const cat = stmt.selection || 'Unallocated';
-      if (!categories[cat]) categories[cat] = { debit: 0, credit: 0 };
       
-      // Calculate Ex VAT amount if VAT rate is selected
-      // If no VAT or Zero rate, use full amount
-      const vatRate = getVATRate(stmt.vatRate);
-      
-      // For spent amounts (debits)
-      if (stmt.spent > 0) {
-        // If VAT rate > 0, calculate Ex VAT amount
-        // Amount entered is VAT inclusive, so Ex VAT = Amount / (1 + rate)
-        const exVatSpent = vatRate > 0 ? stmt.spent / (1 + vatRate) : stmt.spent;
-        categories[cat].debit += exVatSpent;
-      }
-      
-      // For received amounts (credits)
-      if (stmt.received > 0) {
-        // If VAT rate > 0, calculate Ex VAT amount
-        const exVatReceived = vatRate > 0 ? stmt.received / (1 + vatRate) : stmt.received;
-        categories[cat].credit += exVatReceived;
-      }
-    });
-
-    // Also add VAT account for total VAT
-    let totalVatInput = 0;
-    let totalVatOutput = 0;
-    
-    filtered.forEach(stmt => {
-      const vatRate = getVATRate(stmt.vatRate);
-      if (vatRate > 0) {
+      // Only process bank-only categories OR transfers
+      // Also exclude linked transactions (already in invoices)
+      if ((isBankOnlyCategory(cat) || stmt.type === 'Transfer') && !stmt.linkedInvoice) {
+        if (!categories[cat]) categories[cat] = { debit: 0, credit: 0 };
+        
+        // Calculate Ex VAT amount
+        const vatRate = getVATRate(stmt.vatRate);
+        
+        // For spent amounts (debits) - Bank Charges, Insurance, Salaries, Loan Payments
         if (stmt.spent > 0) {
-          const vatAmount = stmt.spent - (stmt.spent / (1 + vatRate));
-          totalVatInput += vatAmount;
+          const exVatSpent = vatRate > 0 ? stmt.spent / (1 + vatRate) : stmt.spent;
+          categories[cat].debit += exVatSpent;
+          
+          // Track VAT Input if applicable
+          if (vatRate > 0) {
+            totalVatInput += stmt.spent - exVatSpent;
+          }
         }
+        
+        // For received amounts (credits) - Loans Received, Interest Received
         if (stmt.received > 0) {
-          const vatAmount = stmt.received - (stmt.received / (1 + vatRate));
-          totalVatOutput += vatAmount;
+          const exVatReceived = vatRate > 0 ? stmt.received / (1 + vatRate) : stmt.received;
+          categories[cat].credit += exVatReceived;
+          
+          // Track VAT Output if applicable
+          if (vatRate > 0) {
+            totalVatOutput += stmt.received - exVatReceived;
+          }
         }
       }
     });
     
-    // Add VAT accounts if there's any VAT
-    if (totalVatInput > 0 || totalVatOutput > 0) {
-      if (!categories['VAT Input']) categories['VAT Input'] = { debit: 0, credit: 0 };
-      if (!categories['VAT Output']) categories['VAT Output'] = { debit: 0, credit: 0 };
-      categories['VAT Input'].debit += totalVatInput;
-      categories['VAT Output'].credit += totalVatOutput;
+    // 4. Add Bank account balance from all bank transactions
+    let bankDebit = 0;
+    let bankCredit = 0;
+    filteredBankStatements.forEach(stmt => {
+      bankDebit += stmt.received || 0; // Money in = Debit Bank
+      bankCredit += stmt.spent || 0;   // Money out = Credit Bank
+    });
+    if (bankDebit > 0 || bankCredit > 0) {
+      if (!categories['Bank']) categories['Bank'] = { debit: 0, credit: 0 };
+      categories['Bank'].debit += bankDebit;
+      categories['Bank'].credit += bankCredit;
+    }
+    
+    // 5. Add VAT Control account - Net position from VAT Report
+    // VAT Payable = Output VAT - Input VAT (if positive, we owe SARS)
+    // VAT Receivable = Input VAT - Output VAT (if positive, SARS owes us)
+    const netVat = totalVatOutput - totalVatInput;
+    if (netVat !== 0) {
+      categories['VAT Control'] = { debit: 0, credit: 0 };
+      if (netVat > 0) {
+        // VAT Payable to SARS - Credit balance (liability)
+        categories['VAT Control'].credit = netVat;
+      } else {
+        // VAT Receivable from SARS - Debit balance (asset)
+        categories['VAT Control'].debit = Math.abs(netVat);
+      }
     }
 
     return Object.entries(categories).map(([name, values]) => ({
@@ -5230,7 +5350,7 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
       debit: values.debit,
       credit: values.credit,
       balance: values.debit - values.credit
-    }));
+    })).sort((a, b) => a.name.localeCompare(b.name));
   };
 
   const generateVATReport = () => {
