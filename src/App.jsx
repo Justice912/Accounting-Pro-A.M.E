@@ -579,6 +579,8 @@ const AccountingDashboard = () => {
           <VATReconView 
             vatTransactions={vatTransactions}
             saveVatTransactions={saveVatTransactions}
+            invoices={invoices}
+            bankStatements={bankStatements}
             company={clients[0]}
             accounts={accounts}
           />
@@ -3504,14 +3506,21 @@ Rules:
   // Convert to invoice
   const handleConvertToInvoice = (type) => {
     if (activeStatement && saveInvoices) {
-      const amount = type === 'client' ? (activeStatement.received || 0) : (activeStatement.spent || 0);
+      const amountInclVat = type === 'client' ? (activeStatement.received || 0) : (activeStatement.spent || 0);
+      const vatRateValue = getVATRate(activeStatement.vatRate || 'Standard Rate (15.00%)');
+      
+      // Calculate Ex VAT amount (amount entered is VAT inclusive)
+      const amountExVat = vatRateValue > 0 ? amountInclVat / (1 + vatRateValue) : amountInclVat;
+      const vatAmount = amountInclVat - amountExVat;
+      
       const newInvoice = {
         id: Date.now(),
         documentNo: type === 'client' ? `INV-${Date.now()}` : `SINV-${Date.now()}`,
+        externalInvoiceNo: activeStatement.externalInvoiceNo || '', // Actual invoice number from bank
         date: activeStatement.date,
         dueDate: activeStatement.date,
-        customer: type === 'client' ? (activeStatement.description || 'Client') : '',
-        supplier: type === 'supplier' ? (activeStatement.description || 'Supplier') : '',
+        customer: type === 'client' ? (activeStatement.selection || activeStatement.description || 'Client') : '',
+        supplier: type === 'supplier' ? (activeStatement.selection || activeStatement.description || 'Supplier') : '',
         customerRef: activeStatement.reference || '',
         invoiceType: type,
         items: [{
@@ -3520,11 +3529,14 @@ Rules:
           description: activeStatement.description || 'Payment',
           unit: '',
           qty: 1,
-          price: amount,
+          price: amountExVat, // Store Ex VAT price
           vatType: activeStatement.vatRate || 'Standard Rate (15.00%)',
           discPercent: 0
         }],
-        amount: amount,
+        amount: amountInclVat, // Total including VAT
+        subtotal: amountExVat, // Ex VAT amount
+        vat: vatAmount, // VAT amount
+        totalDiscount: 0,
         status: 'Paid',
         createdFromBank: true
       };
@@ -3747,14 +3759,15 @@ Rules:
                 </th>
                 <th className="text-left px-3 py-3 font-medium text-slate-600 w-28">Date</th>
                 <th className="text-left px-3 py-3 font-medium text-slate-600">Description</th>
-                <th className="text-left px-3 py-3 font-medium text-slate-600 w-32">Type</th>
-                <th className="text-left px-3 py-3 font-medium text-slate-600 w-36">Category</th>
+                <th className="text-left px-3 py-3 font-medium text-slate-600 w-28">Invoice No.</th>
+                <th className="text-left px-3 py-3 font-medium text-slate-600 w-28">Type</th>
+                <th className="text-left px-3 py-3 font-medium text-slate-600 w-32">Category</th>
                 <th className="text-left px-3 py-3 font-medium text-slate-600 w-28">VAT Rate</th>
-                <th className="text-right px-3 py-3 font-medium text-slate-600 w-32">Spent</th>
-                <th className="text-right px-3 py-3 font-medium text-slate-600 w-32">Received</th>
-                <th className="text-left px-3 py-3 font-medium text-slate-600 w-56">Link / Convert</th>
+                <th className="text-right px-3 py-3 font-medium text-slate-600 w-28">Spent</th>
+                <th className="text-right px-3 py-3 font-medium text-slate-600 w-28">Received</th>
+                <th className="text-left px-3 py-3 font-medium text-slate-600 w-48">Link / Convert</th>
                 <th className="text-center px-3 py-3 font-medium text-slate-600 w-12">Rec.</th>
-                <th className="w-12"></th>
+                <th className="w-10"></th>
               </tr>
             </thead>
             <tbody>
@@ -3786,19 +3799,31 @@ Rules:
                     />
                   </td>
                   <td className="px-3 py-2">
+                    <input
+                      type="text"
+                      value={stmt.externalInvoiceNo || ''}
+                      onChange={(e) => updateStatement(stmt.id, 'externalInvoiceNo', e.target.value)}
+                      className="border rounded px-2 py-1 text-sm w-full"
+                      placeholder="Inv. No."
+                    />
+                  </td>
+                  <td className="px-3 py-2">
                     <select
                       value={stmt.type || 'Account'}
                       onChange={(e) => {
                         const newType = e.target.value;
                         let newSelection = 'Unallocated Expen';
+                        let newVatRate = stmt.vatRate;
                         if (newType === 'Customer' && clients.length > 0) {
                           newSelection = clients[0].name;
+                          newVatRate = 'No VAT'; // VAT comes from invoice
                         } else if (newType === 'Supplier' && suppliers.length > 0) {
                           newSelection = suppliers[0].name;
+                          newVatRate = 'No VAT'; // VAT comes from invoice
                         }
-                        // Update both fields together
+                        // Update fields together
                         saveBankStatements(bankStatements.map(s => 
-                          s.id === stmt.id ? { ...s, type: newType, selection: newSelection } : s
+                          s.id === stmt.id ? { ...s, type: newType, selection: newSelection, vatRate: newVatRate } : s
                         ));
                       }}
                       className="border rounded px-2 py-1 text-sm w-full"
@@ -3833,9 +3858,11 @@ Rules:
                   </td>
                   <td className="px-3 py-2">
                     <select
-                      value={stmt.vatRate}
+                      value={stmt.vatRate || 'No VAT'}
                       onChange={(e) => updateStatement(stmt.id, 'vatRate', e.target.value)}
-                      className="border rounded px-2 py-1 text-sm w-full"
+                      disabled={stmt.type === 'Customer' || stmt.type === 'Supplier'}
+                      className={`border rounded px-2 py-1 text-sm w-full ${(stmt.type === 'Customer' || stmt.type === 'Supplier') ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`}
+                      title={stmt.type === 'Customer' || stmt.type === 'Supplier' ? 'VAT is taken from the invoice' : ''}
                     >
                       {VAT_RATES.map(vat => <option key={vat.value} value={vat.value}>{vat.label}</option>)}
                     </select>
@@ -4044,11 +4071,17 @@ Rules:
                 <div className="space-y-1 text-sm">
                   <p><span className="text-slate-500">Date:</span> {activeStatement.date}</p>
                   <p><span className="text-slate-500">Description:</span> {activeStatement.description || 'N/A'}</p>
+                  {activeStatement.externalInvoiceNo && (
+                    <p><span className="text-slate-500">Invoice No.:</span> <span className="font-semibold">{activeStatement.externalInvoiceNo}</span></p>
+                  )}
                   {activeStatement.spent > 0 && (
-                    <p><span className="text-slate-500">Amount Spent:</span> <span className="font-semibold text-red-600">R {activeStatement.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></p>
+                    <p><span className="text-slate-500">Amount Spent (Inc VAT):</span> <span className="font-semibold text-red-600">R {activeStatement.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></p>
                   )}
                   {activeStatement.received > 0 && (
-                    <p><span className="text-slate-500">Amount Received:</span> <span className="font-semibold text-emerald-600">R {activeStatement.received.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></p>
+                    <p><span className="text-slate-500">Amount Received (Inc VAT):</span> <span className="font-semibold text-emerald-600">R {activeStatement.received.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></p>
+                  )}
+                  {activeStatement.vatRate && activeStatement.vatRate !== 'No VAT' && (
+                    <p className="text-xs text-slate-500 italic mt-2">VAT will be calculated from the inclusive amount</p>
                   )}
                 </div>
               </div>
@@ -4106,7 +4139,7 @@ Rules:
 };
 
 // ==================== VAT RECONCILIATION VIEW ====================
-const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts }) => {
+const VATReconView = ({ vatTransactions, saveVatTransactions, invoices = [], bankStatements = [], company, accounts }) => {
   const fileInputRef = React.useRef(null);
   const [saveMessage, setSaveMessage] = useState('');
   const [periodStart, setPeriodStart] = useState(`${new Date().getFullYear()}-01-01`);
@@ -4114,36 +4147,96 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
   const [downloadLink, setDownloadLink] = useState(null);
   const [pdfDownloadLink, setPdfDownloadLink] = useState(null);
   const [generating, setGenerating] = useState(false);
+  const [viewMode, setViewMode] = useState('invoices'); // 'invoices' or 'manual'
 
   // Helper to check if a rate is standard (15%)
   const isStandardRate = (rate) => {
     return rate && (rate.includes('15.00%') || rate === 'Standard 15%' || rate.includes('15%'));
   };
 
-  // Filter transactions by type and rate
-  const standardOutputTxns = vatTransactions.filter(t => t.vatType === 'output' && isStandardRate(t.vatRate));
-  const zeroOutputTxns = vatTransactions.filter(t => t.vatType === 'output' && !isStandardRate(t.vatRate));
-  const standardInputTxns = vatTransactions.filter(t => t.vatType === 'input' && isStandardRate(t.vatRate));
-  const zeroInputTxns = vatTransactions.filter(t => t.vatType === 'input' && !isStandardRate(t.vatRate));
+  // Get VAT rate decimal
+  const getVATRateDecimal = (vatType) => {
+    if (!vatType || vatType === 'No VAT') return 0;
+    const rate = VAT_RATES.find(r => r.value === vatType || r.label === vatType);
+    return rate ? rate.rate : 0;
+  };
 
-  // All output and input transactions
-  const outputTransactions = vatTransactions.filter(t => t.vatType === 'output');
-  const inputTransactions = vatTransactions.filter(t => t.vatType === 'input');
-
-  // Calculate totals
-  const calcTotals = (txns) => ({
-    exclusive: txns.reduce((s, t) => s + (parseFloat(t.exclusive) || 0), 0),
-    vat: txns.reduce((s, t) => s + (parseFloat(t.vat) || 0), 0),
-    inclusive: txns.reduce((s, t) => s + (parseFloat(t.inclusive) || 0), 0)
+  // INVOICE-BASED VAT CALCULATION
+  // Output VAT = From Customer Invoices (Sales)
+  const customerInvoices = invoices.filter(inv => 
+    inv.invoiceType === 'client' || inv.invoiceType === undefined
+  ).filter(inv => {
+    if (!periodStart || !periodEnd) return true;
+    return inv.date >= periodStart && inv.date <= periodEnd;
   });
 
-  const standardOutputTotals = calcTotals(standardOutputTxns);
-  const zeroOutputTotals = calcTotals(zeroOutputTxns);
-  const standardInputTotals = calcTotals(standardInputTxns);
-  const zeroInputTotals = calcTotals(zeroInputTxns);
+  // Input VAT = From Supplier Invoices (Purchases)
+  const supplierInvoices = invoices.filter(inv => 
+    inv.invoiceType === 'supplier'
+  ).filter(inv => {
+    if (!periodStart || !periodEnd) return true;
+    return inv.date >= periodStart && inv.date <= periodEnd;
+  });
 
-  const totalOutputVAT = standardOutputTotals.vat;
-  const totalInputVAT = standardInputTotals.vat;
+  // Bank transactions with VAT (only Account type - NOT Customer/Supplier to avoid duplicates)
+  const bankVatTransactions = bankStatements.filter(stmt => {
+    // Only include Account type transactions with VAT (expenses like insurance, bank charges)
+    // Exclude Customer/Supplier as their VAT comes from invoices
+    if (stmt.type === 'Customer' || stmt.type === 'Supplier') return false;
+    if (!stmt.vatRate || stmt.vatRate === 'No VAT') return false;
+    if (!periodStart || !periodEnd) return true;
+    return stmt.date >= periodStart && stmt.date <= periodEnd;
+  });
+
+  // Calculate invoice totals
+  const calcInvoiceTotals = (invs, type) => {
+    let totalExclusive = 0;
+    let totalVat = 0;
+    let totalInclusive = 0;
+    
+    invs.forEach(inv => {
+      totalExclusive += parseFloat(inv.subtotal) || 0;
+      totalVat += parseFloat(inv.vat) || 0;
+      totalInclusive += parseFloat(inv.amount) || 0;
+    });
+    
+    return { exclusive: totalExclusive, vat: totalVat, inclusive: totalInclusive };
+  };
+
+  // Calculate bank transaction totals (amounts are VAT inclusive, need to extract)
+  const calcBankVatTotals = (stmts, isSpent) => {
+    let totalExclusive = 0;
+    let totalVat = 0;
+    let totalInclusive = 0;
+    
+    stmts.forEach(stmt => {
+      const amount = isSpent ? (stmt.spent || 0) : (stmt.received || 0);
+      if (amount > 0) {
+        const vatRate = getVATRateDecimal(stmt.vatRate);
+        const exclusive = vatRate > 0 ? amount / (1 + vatRate) : amount;
+        const vat = amount - exclusive;
+        totalExclusive += exclusive;
+        totalVat += vat;
+        totalInclusive += amount;
+      }
+    });
+    
+    return { exclusive: totalExclusive, vat: totalVat, inclusive: totalInclusive };
+  };
+
+  // Output VAT (Sales - Customer Invoices)
+  const outputFromInvoices = calcInvoiceTotals(customerInvoices, 'output');
+  
+  // Input VAT (Purchases - Supplier Invoices + Bank Expenses with VAT)
+  const inputFromInvoices = calcInvoiceTotals(supplierInvoices, 'input');
+  const inputFromBank = calcBankVatTotals(bankVatTransactions, true); // Spent amounts
+  
+  const totalInputExclusive = inputFromInvoices.exclusive + inputFromBank.exclusive;
+  const totalInputVat = inputFromInvoices.vat + inputFromBank.vat;
+  const totalInputInclusive = inputFromInvoices.inclusive + inputFromBank.inclusive;
+
+  const totalOutputVAT = outputFromInvoices.vat;
+  const totalInputVAT = totalInputVat;
   const netVAT = totalOutputVAT - totalInputVAT;
 
   const formatAmount = (amt) => `R ${(parseFloat(amt) || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
@@ -4813,63 +4906,64 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
         </div>
       )}
 
-      {/* VAT Summary Table */}
+      {/* VAT Summary Table - Invoice Based */}
       <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
         <div className="p-4 bg-emerald-50 border-b">
-          <h3 className="font-semibold text-emerald-800">VAT Summary</h3>
+          <h3 className="font-semibold text-emerald-800">VAT Summary (Invoice Based)</h3>
+          <p className="text-xs text-emerald-600 mt-1">VAT from Customer Invoices (Output) and Supplier Invoices + Bank Expenses (Input)</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-100">
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-slate-600">Category</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">Exclusive</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">VAT</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">Inclusive</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">Exclusive (Ex VAT)</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">VAT Amount</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">Inclusive (Inc VAT)</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">Count</th>
               </tr>
             </thead>
             <tbody>
               <tr className="border-t bg-blue-50">
-                <td className="px-4 py-2 font-medium text-blue-800" colSpan={4}>OUTPUT VAT (Sales)</td>
+                <td className="px-4 py-2 font-medium text-blue-800" colSpan={5}>OUTPUT VAT (Sales - Customer Invoices)</td>
               </tr>
               <tr className="border-t">
-                <td className="px-4 py-2 pl-8">Standard Rate (15%)</td>
-                <td className="px-4 py-2 text-right">{formatAmount(standardOutputTotals.exclusive)}</td>
-                <td className="px-4 py-2 text-right">{formatAmount(standardOutputTotals.vat)}</td>
-                <td className="px-4 py-2 text-right">{formatAmount(standardOutputTotals.inclusive)}</td>
-              </tr>
-              <tr className="border-t">
-                <td className="px-4 py-2 pl-8">Zero Rate (0%)</td>
-                <td className="px-4 py-2 text-right">{formatAmount(zeroOutputTotals.exclusive)}</td>
-                <td className="px-4 py-2 text-right">{formatAmount(0)}</td>
-                <td className="px-4 py-2 text-right">{formatAmount(zeroOutputTotals.inclusive)}</td>
+                <td className="px-4 py-2 pl-8">Customer Invoices</td>
+                <td className="px-4 py-2 text-right">{formatAmount(outputFromInvoices.exclusive)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(outputFromInvoices.vat)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(outputFromInvoices.inclusive)}</td>
+                <td className="px-4 py-2 text-right text-slate-500">{customerInvoices.length}</td>
               </tr>
               <tr className="border-t bg-blue-100 font-semibold">
                 <td className="px-4 py-2 text-blue-800">Total Output VAT</td>
-                <td className="px-4 py-2 text-right text-blue-800">{formatAmount(standardOutputTotals.exclusive + zeroOutputTotals.exclusive)}</td>
+                <td className="px-4 py-2 text-right text-blue-800">{formatAmount(outputFromInvoices.exclusive)}</td>
                 <td className="px-4 py-2 text-right text-blue-800">{formatAmount(totalOutputVAT)}</td>
-                <td className="px-4 py-2 text-right text-blue-800">{formatAmount(standardOutputTotals.inclusive + zeroOutputTotals.inclusive)}</td>
+                <td className="px-4 py-2 text-right text-blue-800">{formatAmount(outputFromInvoices.inclusive)}</td>
+                <td className="px-4 py-2 text-right text-blue-800">{customerInvoices.length}</td>
               </tr>
               <tr className="border-t bg-orange-50">
-                <td className="px-4 py-2 font-medium text-orange-800" colSpan={4}>INPUT VAT (Purchases)</td>
+                <td className="px-4 py-2 font-medium text-orange-800" colSpan={5}>INPUT VAT (Purchases - Supplier Invoices + Bank Expenses)</td>
               </tr>
               <tr className="border-t">
-                <td className="px-4 py-2 pl-8">Standard Rate (15%)</td>
-                <td className="px-4 py-2 text-right">{formatAmount(standardInputTotals.exclusive)}</td>
-                <td className="px-4 py-2 text-right">{formatAmount(standardInputTotals.vat)}</td>
-                <td className="px-4 py-2 text-right">{formatAmount(standardInputTotals.inclusive)}</td>
+                <td className="px-4 py-2 pl-8">Supplier Invoices</td>
+                <td className="px-4 py-2 text-right">{formatAmount(inputFromInvoices.exclusive)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(inputFromInvoices.vat)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(inputFromInvoices.inclusive)}</td>
+                <td className="px-4 py-2 text-right text-slate-500">{supplierInvoices.length}</td>
               </tr>
               <tr className="border-t">
-                <td className="px-4 py-2 pl-8">Zero Rate (0%)</td>
-                <td className="px-4 py-2 text-right">{formatAmount(zeroInputTotals.exclusive)}</td>
-                <td className="px-4 py-2 text-right">{formatAmount(0)}</td>
-                <td className="px-4 py-2 text-right">{formatAmount(zeroInputTotals.inclusive)}</td>
+                <td className="px-4 py-2 pl-8">Bank Expenses (Insurance, Bank Charges, etc.)</td>
+                <td className="px-4 py-2 text-right">{formatAmount(inputFromBank.exclusive)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(inputFromBank.vat)}</td>
+                <td className="px-4 py-2 text-right">{formatAmount(inputFromBank.inclusive)}</td>
+                <td className="px-4 py-2 text-right text-slate-500">{bankVatTransactions.length}</td>
               </tr>
               <tr className="border-t bg-orange-100 font-semibold">
                 <td className="px-4 py-2 text-orange-800">Total Input VAT</td>
-                <td className="px-4 py-2 text-right text-orange-800">{formatAmount(standardInputTotals.exclusive + zeroInputTotals.exclusive)}</td>
+                <td className="px-4 py-2 text-right text-orange-800">{formatAmount(totalInputExclusive)}</td>
                 <td className="px-4 py-2 text-right text-orange-800">{formatAmount(totalInputVAT)}</td>
-                <td className="px-4 py-2 text-right text-orange-800">{formatAmount(standardInputTotals.inclusive + zeroInputTotals.inclusive)}</td>
+                <td className="px-4 py-2 text-right text-orange-800">{formatAmount(totalInputInclusive)}</td>
+                <td className="px-4 py-2 text-right text-orange-800">{supplierInvoices.length + bankVatTransactions.length}</td>
               </tr>
               <tr className={`border-t-2 border-slate-300 ${netVAT >= 0 ? 'bg-red-100' : 'bg-green-100'}`}>
                 <td className={`px-4 py-3 font-bold ${netVAT >= 0 ? 'text-red-800' : 'text-green-800'}`}>
@@ -4880,29 +4974,131 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
                   {formatAmount(Math.abs(netVAT))}
                 </td>
                 <td className="px-4 py-3"></td>
+                <td className="px-4 py-3"></td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Output VAT Transactions */}
-      <TransactionTable 
-        transactions={outputTransactions}
-        title="OUTPUT VAT (Sales)"
-        bgColor="bg-blue-50"
-        textColor="text-blue-800"
-        vatType="output"
-      />
+      {/* Invoice-Based VAT Details */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Customer Invoices (Output VAT) */}
+        <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+          <div className="p-4 bg-blue-50 border-b flex justify-between items-center">
+            <h3 className="font-semibold text-blue-800">Customer Invoices (Output VAT)</h3>
+            <span className="text-sm text-blue-600">{customerInvoices.length} invoices</span>
+          </div>
+          <div className="overflow-x-auto max-h-80">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 sticky top-0">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
+                  <th className="text-left px-3 py-2 font-medium text-slate-600">Invoice No.</th>
+                  <th className="text-left px-3 py-2 font-medium text-slate-600">Customer</th>
+                  <th className="text-right px-3 py-2 font-medium text-slate-600">Ex VAT</th>
+                  <th className="text-right px-3 py-2 font-medium text-slate-600">VAT</th>
+                  <th className="text-right px-3 py-2 font-medium text-slate-600">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customerInvoices.length > 0 ? customerInvoices.map(inv => (
+                  <tr key={inv.id} className="border-t hover:bg-slate-50">
+                    <td className="px-3 py-2">{inv.date}</td>
+                    <td className="px-3 py-2 font-medium">{inv.externalInvoiceNo || inv.documentNo}</td>
+                    <td className="px-3 py-2">{inv.customer}</td>
+                    <td className="px-3 py-2 text-right">{formatAmount(inv.subtotal)}</td>
+                    <td className="px-3 py-2 text-right">{formatAmount(inv.vat)}</td>
+                    <td className="px-3 py-2 text-right font-medium">{formatAmount(inv.amount)}</td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={6} className="px-3 py-4 text-center text-slate-500">No customer invoices in this period</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
-      {/* Input VAT Transactions */}
-      <TransactionTable 
-        transactions={inputTransactions}
-        title="INPUT VAT (Purchases)"
-        bgColor="bg-orange-50"
-        textColor="text-orange-800"
-        vatType="input"
-      />
+        {/* Supplier Invoices (Input VAT) */}
+        <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+          <div className="p-4 bg-orange-50 border-b flex justify-between items-center">
+            <h3 className="font-semibold text-orange-800">Supplier Invoices (Input VAT)</h3>
+            <span className="text-sm text-orange-600">{supplierInvoices.length} invoices</span>
+          </div>
+          <div className="overflow-x-auto max-h-80">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 sticky top-0">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
+                  <th className="text-left px-3 py-2 font-medium text-slate-600">Invoice No.</th>
+                  <th className="text-left px-3 py-2 font-medium text-slate-600">Supplier</th>
+                  <th className="text-right px-3 py-2 font-medium text-slate-600">Ex VAT</th>
+                  <th className="text-right px-3 py-2 font-medium text-slate-600">VAT</th>
+                  <th className="text-right px-3 py-2 font-medium text-slate-600">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {supplierInvoices.length > 0 ? supplierInvoices.map(inv => (
+                  <tr key={inv.id} className="border-t hover:bg-slate-50">
+                    <td className="px-3 py-2">{inv.date}</td>
+                    <td className="px-3 py-2 font-medium">{inv.externalInvoiceNo || inv.documentNo}</td>
+                    <td className="px-3 py-2">{inv.supplier}</td>
+                    <td className="px-3 py-2 text-right">{formatAmount(inv.subtotal)}</td>
+                    <td className="px-3 py-2 text-right">{formatAmount(inv.vat)}</td>
+                    <td className="px-3 py-2 text-right font-medium">{formatAmount(inv.amount)}</td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={6} className="px-3 py-4 text-center text-slate-500">No supplier invoices in this period</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Bank Expenses with VAT */}
+      <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+        <div className="p-4 bg-purple-50 border-b flex justify-between items-center">
+          <h3 className="font-semibold text-purple-800">Bank Expenses with VAT (Input VAT - Direct from Banking)</h3>
+          <span className="text-sm text-purple-600">{bankVatTransactions.length} transactions</span>
+        </div>
+        <div className="overflow-x-auto max-h-80">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 sticky top-0">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Description</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Category</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">VAT Rate</th>
+                <th className="text-right px-3 py-2 font-medium text-slate-600">Amount (Inc)</th>
+                <th className="text-right px-3 py-2 font-medium text-slate-600">Ex VAT</th>
+                <th className="text-right px-3 py-2 font-medium text-slate-600">VAT</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bankVatTransactions.length > 0 ? bankVatTransactions.map(stmt => {
+                const amount = stmt.spent || stmt.received || 0;
+                const vatRate = getVATRateDecimal(stmt.vatRate);
+                const exVat = vatRate > 0 ? amount / (1 + vatRate) : amount;
+                const vatAmt = amount - exVat;
+                return (
+                  <tr key={stmt.id} className="border-t hover:bg-slate-50">
+                    <td className="px-3 py-2">{stmt.date}</td>
+                    <td className="px-3 py-2">{stmt.description}</td>
+                    <td className="px-3 py-2">{stmt.selection}</td>
+                    <td className="px-3 py-2">{stmt.vatRate}</td>
+                    <td className="px-3 py-2 text-right">{formatAmount(amount)}</td>
+                    <td className="px-3 py-2 text-right">{formatAmount(exVat)}</td>
+                    <td className="px-3 py-2 text-right">{formatAmount(vatAmt)}</td>
+                  </tr>
+                );
+              }) : (
+                <tr><td colSpan={7} className="px-3 py-4 text-center text-slate-500">No bank expenses with VAT in this period</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* Import Instructions */}
       <div className="bg-slate-50 rounded-lg border p-4">
@@ -4968,8 +5164,8 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
     // Helper to check if standard rate
     const isStdRate = (rate) => rate && (rate.includes('15.00%') || rate === 'Standard 15%' || rate.includes('15%'));
 
-    // Process invoices (Output VAT)
-    filteredInvoices.forEach(inv => {
+    // Process CLIENT invoices (Output VAT - Sales)
+    filteredInvoices.filter(inv => inv.invoiceType !== 'supplier').forEach(inv => {
       if (inv.items) {
         inv.items.forEach(item => {
           const exclusive = (item.qty || 0) * (item.price || 0);
@@ -4978,7 +5174,7 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
           
           const txn = {
             date: inv.date,
-            reference: inv.documentNo,
+            reference: inv.externalInvoiceNo || inv.documentNo,
             account: inv.customer || 'Customer',
             description: item.description,
             exclusive,
@@ -4996,18 +5192,49 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
       }
     });
 
-    // Process bank statements (Input VAT)
+    // Process SUPPLIER invoices (Input VAT - Purchases)
+    filteredInvoices.filter(inv => inv.invoiceType === 'supplier').forEach(inv => {
+      if (inv.items) {
+        inv.items.forEach(item => {
+          const exclusive = (item.qty || 0) * (item.price || 0);
+          const vatRate = getVATRate(item.vatType);
+          const vat = exclusive * vatRate;
+          
+          const txn = {
+            date: inv.date,
+            reference: inv.externalInvoiceNo || inv.documentNo,
+            account: inv.supplier || 'Supplier',
+            description: item.description,
+            exclusive,
+            vat,
+            inclusive: exclusive + vat
+          };
+
+          if (isStdRate(item.vatType)) {
+            vatData.standardInput.vat += vat;
+            vatData.standardInput.transactions.push(txn);
+          } else {
+            vatData.zeroInput.transactions.push({ ...txn, vat: 0 });
+          }
+        });
+      }
+    });
+
+    // Process bank statements ONLY for Account type (expenses like insurance, bank charges)
+    // Customer/Supplier transactions are excluded as their VAT comes from invoices
     filteredStatements.forEach(stmt => {
-      if (stmt.spent > 0) {
+      // Only process Account type transactions (not Customer, Supplier, Transfer)
+      if (stmt.spent > 0 && stmt.type === 'Account' && stmt.vatRate && stmt.vatRate !== 'No VAT') {
         const isStandard = isStdRate(stmt.vatRate);
         const rate = getVATRate(stmt.vatRate);
+        // Amount is VAT inclusive, calculate exclusive
         const exclusive = rate > 0 ? stmt.spent / (1 + rate) : stmt.spent;
         const vat = rate > 0 ? stmt.spent - exclusive : 0;
         
         const txn = {
           date: stmt.date,
-          reference: stmt.reference,
-          account: stmt.payee || stmt.type,
+          reference: stmt.externalInvoiceNo || stmt.reference || 'Bank',
+          account: stmt.selection || stmt.payee || 'Expense',
           description: stmt.description,
           exclusive,
           vat,
@@ -5017,7 +5244,7 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
         if (isStandard) {
           vatData.standardInput.vat += vat;
           vatData.standardInput.transactions.push(txn);
-        } else {
+        } else if (rate > 0) {
           vatData.zeroInput.transactions.push({ ...txn, vat: 0 });
         }
       }
