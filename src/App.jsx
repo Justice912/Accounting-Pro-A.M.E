@@ -100,6 +100,8 @@ const AccountingDashboard = () => {
   const [showCompanySelector, setShowCompanySelector] = useState(false);
   const [showAddCompanyModal, setShowAddCompanyModal] = useState(false);
   const [newCompanyName, setNewCompanyName] = useState('');
+  const [newCompanyLogo, setNewCompanyLogo] = useState(null);
+  const companyLogoInputRef = React.useRef(null);
   
   // Per-company data
   const [invoices, setInvoices] = useState([]);
@@ -238,6 +240,7 @@ const AccountingDashboard = () => {
     const newCompany = {
       id: `company-${Date.now()}`,
       name: newCompanyName.trim(),
+      logo: newCompanyLogo || null,
       createdAt: new Date().toISOString()
     };
     
@@ -249,10 +252,36 @@ const AccountingDashboard = () => {
     }
     
     setNewCompanyName('');
+    setNewCompanyLogo(null);
     setShowAddCompanyModal(false);
     
     // Switch to the new company
     setActiveCompanyId(newCompany.id);
+  };
+
+  // Handle company logo upload
+  const handleCompanyLogoUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setNewCompanyLogo(event.target.result);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  // Update existing company logo
+  const updateCompanyLogo = async (companyId, logoData) => {
+    const updatedCompanies = companies.map(c => 
+      c.id === companyId ? { ...c, logo: logoData } : c
+    );
+    setCompanies(updatedCompanies);
+    
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem('accounting-companies', JSON.stringify(updatedCompanies)).catch(() => {});
+    }
   };
 
   const switchCompany = (companyId) => {
@@ -384,7 +413,7 @@ const AccountingDashboard = () => {
             
             {/* Dropdown */}
             {showCompanySelector && (
-              <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-lg shadow-xl border z-50 overflow-hidden">
+              <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-lg shadow-xl border z-50 overflow-hidden">
                 <div className="p-2 border-b bg-slate-50">
                   <p className="text-xs font-semibold text-slate-500 uppercase">Switch Company</p>
                 </div>
@@ -392,29 +421,59 @@ const AccountingDashboard = () => {
                   {companies.map(company => (
                     <div
                       key={company.id}
-                      className={`flex items-center justify-between px-4 py-3 hover:bg-slate-50 cursor-pointer ${
+                      className={`flex items-center gap-3 px-4 py-3 hover:bg-slate-50 cursor-pointer ${
                         company.id === activeCompanyId ? 'bg-emerald-50 border-l-4 border-emerald-500' : ''
                       }`}
                     >
+                      {/* Company Logo */}
+                      <div className="w-10 h-10 flex-shrink-0">
+                        {company.logo ? (
+                          <img src={company.logo} alt={company.name} className="w-10 h-10 object-contain rounded border" />
+                        ) : (
+                          <div className="w-10 h-10 bg-slate-200 rounded flex items-center justify-center text-slate-500 text-sm font-bold">
+                            {company.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
                       <div 
-                        className="flex-1"
+                        className="flex-1 min-w-0"
                         onClick={() => switchCompany(company.id)}
                       >
-                        <p className={`font-medium ${company.id === activeCompanyId ? 'text-emerald-700' : 'text-slate-800'}`}>
+                        <p className={`font-medium truncate ${company.id === activeCompanyId ? 'text-emerald-700' : 'text-slate-800'}`}>
                           {company.name}
                         </p>
                         {company.id === activeCompanyId && (
                           <p className="text-xs text-emerald-600">Currently Active</p>
                         )}
                       </div>
-                      {companies.length > 1 && company.id !== activeCompanyId && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteCompany(company.id); }}
-                          className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {/* Upload/Change Logo */}
+                        <label className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer">
+                          <Upload className="w-4 h-4" />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onload = (event) => updateCompanyLogo(company.id, event.target.result);
+                                reader.readAsDataURL(file);
+                              }
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                        {companies.length > 1 && company.id !== activeCompanyId && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteCompany(company.id); }}
+                            className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -441,20 +500,64 @@ const AccountingDashboard = () => {
               <h3 className="text-lg font-bold text-slate-800">Add New Company</h3>
               <p className="text-sm text-slate-500 mt-1">Create a new company with separate data</p>
             </div>
-            <div className="p-6">
-              <label className="block text-sm font-medium text-slate-700 mb-2">Company Name</label>
-              <input
-                type="text"
-                value={newCompanyName}
-                onChange={(e) => setNewCompanyName(e.target.value)}
-                placeholder="e.g. AME Business Accountants"
-                className="w-full border rounded-lg px-4 py-3 text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                autoFocus
-              />
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Company Name</label>
+                <input
+                  type="text"
+                  value={newCompanyName}
+                  onChange={(e) => setNewCompanyName(e.target.value)}
+                  placeholder="e.g. AME Business Accountants"
+                  className="w-full border rounded-lg px-4 py-3 text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  autoFocus
+                />
+              </div>
+              
+              {/* Company Logo Upload */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Company Logo (optional)</label>
+                <input
+                  type="file"
+                  ref={companyLogoInputRef}
+                  onChange={handleCompanyLogoUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <div className="flex items-center gap-4">
+                  {newCompanyLogo ? (
+                    <div className="relative">
+                      <img src={newCompanyLogo} alt="Logo preview" className="w-20 h-20 object-contain border rounded-lg" />
+                      <button
+                        onClick={() => setNewCompanyLogo(null)}
+                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : (
+                    <div 
+                      onClick={() => companyLogoInputRef.current?.click()}
+                      className="w-20 h-20 border-2 border-dashed border-slate-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-emerald-500 hover:bg-emerald-50 transition-colors"
+                    >
+                      <Upload className="w-6 h-6 text-slate-400" />
+                    </div>
+                  )}
+                  <div className="text-sm text-slate-500">
+                    <p>Upload your company logo</p>
+                    <p className="text-xs">PNG, JPG (max 2MB)</p>
+                    <button
+                      onClick={() => companyLogoInputRef.current?.click()}
+                      className="text-emerald-600 hover:underline mt-1"
+                    >
+                      {newCompanyLogo ? 'Change logo' : 'Browse files'}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
             <div className="p-6 border-t bg-slate-50 flex gap-3 justify-end rounded-b-xl">
               <button
-                onClick={() => { setShowAddCompanyModal(false); setNewCompanyName(''); }}
+                onClick={() => { setShowAddCompanyModal(false); setNewCompanyName(''); setNewCompanyLogo(null); }}
                 className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-medium"
               >
                 Cancel
@@ -5566,7 +5669,6 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
       'Loan Repayment',
       'Transfer', 
       'Transfers',
-      'Bank',
       'Interest Received',
       'Interest Paid',
       'Drawings',
@@ -5579,15 +5681,21 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
       const catLower = cat.toLowerCase();
       return bankOnlyCategories.some(bc => catLower.includes(bc.toLowerCase()));
     };
+
+    // Get linked invoice IDs to track payments
+    const linkedInvoiceIds = new Set();
+    filteredBankStatements.forEach(stmt => {
+      if (stmt.linkedInvoice) {
+        linkedInvoiceIds.add(stmt.linkedInvoice);
+      }
+    });
     
-    // 1. Process CUSTOMER INVOICES (Sales/Income) - Credit side
+    // 1. Process CUSTOMER INVOICES (Sales/Income)
     filteredInvoices.filter(inv => inv.invoiceType !== 'supplier').forEach(inv => {
-      // Calculate Ex VAT amount from items if available, otherwise use subtotal
       let exVatAmount = 0;
       let vatAmount = 0;
       
       if (inv.items && inv.items.length > 0) {
-        // Recalculate from items to ensure accuracy
         inv.items.forEach(item => {
           const itemExclusive = (item.qty || 1) * (item.price || 0);
           const discountAmt = itemExclusive * ((item.discPercent || 0) / 100);
@@ -5599,33 +5707,36 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
           vatAmount += itemVat;
         });
       } else {
-        // Fallback to stored values
         exVatAmount = parseFloat(inv.subtotal) || 0;
         vatAmount = parseFloat(inv.vat) || 0;
       }
+      
+      const totalAmount = exVatAmount + vatAmount;
       
       // Credit Sales account with Ex VAT amount
       const salesAccount = 'Sales';
       if (!categories[salesAccount]) categories[salesAccount] = { debit: 0, credit: 0 };
       categories[salesAccount].credit += exVatAmount;
       
-      // Debit Trade Receivables (Debtors) with full amount (Inc VAT)
-      const debtorsAccount = 'Trade Receivables';
-      if (!categories[debtorsAccount]) categories[debtorsAccount] = { debit: 0, credit: 0 };
-      categories[debtorsAccount].debit += exVatAmount + vatAmount;
+      // Trade Receivables - only if invoice is NOT paid/linked
+      // If invoice is linked to a bank payment, the receivable is settled
+      if (!linkedInvoiceIds.has(inv.id) && inv.status !== 'Paid') {
+        const debtorsAccount = 'Trade Receivables';
+        if (!categories[debtorsAccount]) categories[debtorsAccount] = { debit: 0, credit: 0 };
+        categories[debtorsAccount].debit += totalAmount;
+      }
       
-      // Track VAT Output (collected from customers)
+      // Track VAT Output
       totalVatOutput += vatAmount;
     });
     
-    // 2. Process SUPPLIER INVOICES (Purchases/Expenses) - Debit side
+    // 2. Process SUPPLIER INVOICES (Purchases/Expenses)
     filteredInvoices.filter(inv => inv.invoiceType === 'supplier').forEach(inv => {
-      // Calculate Ex VAT amount from items if available, otherwise use subtotal
       let exVatAmount = 0;
       let vatAmount = 0;
+      let expenseAccount = 'Purchases'; // Default
       
       if (inv.items && inv.items.length > 0) {
-        // Recalculate from items to ensure accuracy
         inv.items.forEach(item => {
           const itemExclusive = (item.qty || 1) * (item.price || 0);
           const discountAmt = itemExclusive * ((item.discPercent || 0) / 100);
@@ -5635,56 +5746,67 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
           
           exVatAmount += afterDiscount;
           vatAmount += itemVat;
+          
+          // Use the item description as account if it looks like an account name
+          if (item.description && item.description.length > 2) {
+            expenseAccount = item.description;
+          }
         });
       } else {
-        // Fallback to stored values
         exVatAmount = parseFloat(inv.subtotal) || 0;
         vatAmount = parseFloat(inv.vat) || 0;
       }
       
-      // Debit Purchases/Expenses account with Ex VAT amount
-      const purchasesAccount = 'Purchases';
-      if (!categories[purchasesAccount]) categories[purchasesAccount] = { debit: 0, credit: 0 };
-      categories[purchasesAccount].debit += exVatAmount;
+      // Use supplier name or description as the expense account if available
+      if (inv.supplier && inv.supplier.length > 2) {
+        // Check if there's a specific category in the items
+        if (inv.items && inv.items[0] && inv.items[0].description && inv.items[0].description !== 'Payment') {
+          expenseAccount = inv.items[0].description;
+        }
+      }
       
-      // Credit Trade Payables (Creditors) with full amount (Inc VAT)
-      const creditorsAccount = 'Trade Payables';
-      if (!categories[creditorsAccount]) categories[creditorsAccount] = { debit: 0, credit: 0 };
-      categories[creditorsAccount].credit += exVatAmount + vatAmount;
+      const totalAmount = exVatAmount + vatAmount;
       
-      // Track VAT Input (paid to suppliers)
+      // Debit the expense account with Ex VAT amount
+      if (!categories[expenseAccount]) categories[expenseAccount] = { debit: 0, credit: 0 };
+      categories[expenseAccount].debit += exVatAmount;
+      
+      // Trade Payables - only if invoice is NOT paid/linked
+      // If invoice is linked to a bank payment, the payable is settled
+      if (!linkedInvoiceIds.has(inv.id) && inv.status !== 'Paid') {
+        const creditorsAccount = 'Trade Payables';
+        if (!categories[creditorsAccount]) categories[creditorsAccount] = { debit: 0, credit: 0 };
+        categories[creditorsAccount].credit += totalAmount;
+      }
+      
+      // Track VAT Input
       totalVatInput += vatAmount;
     });
     
-    // 3. Process BANK STATEMENTS - Only specific categories
+    // 3. Process BANK STATEMENTS - Only specific categories (not linked to invoices)
     filteredBankStatements.forEach(stmt => {
       const cat = stmt.selection || 'Unallocated';
       
       // Only process bank-only categories OR transfers
-      // Also exclude linked transactions (already in invoices)
+      // Exclude linked transactions (already processed via invoices)
       if ((isBankOnlyCategory(cat) || stmt.type === 'Transfer') && !stmt.linkedInvoice) {
         if (!categories[cat]) categories[cat] = { debit: 0, credit: 0 };
         
-        // Calculate Ex VAT amount
         const vatRate = getVATRate(stmt.vatRate);
         
-        // For spent amounts (debits) - Bank Charges, Insurance, Salaries, Loan Payments
         if (stmt.spent > 0) {
           const exVatSpent = vatRate > 0 ? stmt.spent / (1 + vatRate) : stmt.spent;
           categories[cat].debit += exVatSpent;
           
-          // Track VAT Input if applicable
           if (vatRate > 0) {
             totalVatInput += stmt.spent - exVatSpent;
           }
         }
         
-        // For received amounts (credits) - Loans Received, Interest Received
         if (stmt.received > 0) {
           const exVatReceived = vatRate > 0 ? stmt.received / (1 + vatRate) : stmt.received;
           categories[cat].credit += exVatReceived;
           
-          // Track VAT Output if applicable
           if (vatRate > 0) {
             totalVatOutput += stmt.received - exVatReceived;
           }
@@ -5705,19 +5827,16 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
       categories['Bank'].credit += bankCredit;
     }
     
-    // 5. Add VAT Control account - Net position from VAT Report
-    // VAT Payable = Output VAT - Input VAT (if positive, we owe SARS)
-    // VAT Receivable = Input VAT - Output VAT (if positive, SARS owes us)
+    // 5. Add VAT Control account - Net position
     const netVat = totalVatOutput - totalVatInput;
     if (netVat !== 0) {
       categories['VAT Control'] = { debit: 0, credit: 0 };
       if (netVat > 0) {
-        // VAT Payable to SARS - Credit balance (liability)
         categories['VAT Control'].credit = netVat;
       } else {
-        // VAT Receivable from SARS - Debit balance (asset)
         categories['VAT Control'].debit = Math.abs(netVat);
       }
+    }
     }
 
     return Object.entries(categories).map(([name, values]) => ({
