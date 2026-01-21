@@ -780,9 +780,11 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
   const [newInvoice, setNewInvoice] = useState({
     customer: '',
     documentNo: `INV-${Date.now()}`,
+    externalInvoiceNo: '', // Actual customer/supplier invoice number
     date: new Date().toISOString().split('T')[0],
     dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     customerRef: '',
+    customerVatNo: '',
     deliveryAddress: ['', '', '', '', ''],
     postalAddress: ['', '', '', '', '', ''],
     discount: 0,
@@ -842,19 +844,23 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
       ...newInvoice,
       amount: totals.grandTotal,
       subtotal: totals.subtotal,
-      vat: totals.totalVat
+      vat: totals.totalVat,
+      totalDiscount: totals.totalDiscount
     };
     saveInvoices([...invoices, invoice]);
     setShowInvoiceForm(false);
     setNewInvoice({
       customer: '',
       documentNo: `INV-${Date.now()}`,
+      externalInvoiceNo: '',
       date: new Date().toISOString().split('T')[0],
       dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       customerRef: '',
+      customerVatNo: '',
       deliveryAddress: ['', '', '', '', ''],
       postalAddress: ['', '', '', '', '', ''],
       discount: 0,
+      invoiceType: 'client',
       items: [{ id: 1, type: 'Item', description: '', unit: '', qty: 1, price: 0, vatType: 'Standard Rate (15.00%)', discPercent: 0 }],
       status: 'Pending'
     });
@@ -1318,10 +1324,21 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
 const PrintPreview = ({ invoice, onClose, company }) => {
   const handlePrint = () => window.print();
   
+  // Calculate item totals with VAT
+  const calculateItemTotal = (item) => {
+    const exclusive = (item.qty || 1) * (item.price || 0);
+    const discountAmount = exclusive * ((item.discPercent || 0) / 100);
+    const afterDiscount = exclusive - discountAmount;
+    const vatRate = getVATRate(item.vatType || 'No VAT');
+    const vatAmount = afterDiscount * vatRate;
+    const inclusive = afterDiscount + vatAmount;
+    return { exclusive, discountAmount, afterDiscount, vatAmount, inclusive, vatRate };
+  };
+  
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-8">
-      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-4 border-b flex justify-between items-center bg-slate-50 sticky top-0">
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[95vh] overflow-y-auto">
+        <div className="p-4 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
           <h3 className="font-semibold">Print Preview</h3>
           <div className="flex gap-2">
             <button onClick={handlePrint} className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded text-sm">
@@ -1333,94 +1350,193 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           </div>
         </div>
         
-        <div className="p-8" id="invoice-print">
-          <div className="flex justify-between mb-8">
-            <div className="flex items-start gap-4">
-              {company?.logo && (
-                <img src={company.logo} alt="Company Logo" className="w-20 h-20 object-contain" />
+        <div className="p-8 print:p-4" id="invoice-print">
+          {/* Header with Logo and Invoice Details */}
+          <div className="flex justify-between items-start mb-8">
+            {/* Left side - Logo */}
+            <div className="flex-shrink-0">
+              {company?.logo ? (
+                <img src={company.logo} alt="Company Logo" className="w-40 h-auto object-contain" />
+              ) : (
+                <div className="text-2xl font-bold text-emerald-700">
+                  {company?.name || 'Your Company'}
+                </div>
               )}
-              <div>
-                <h1 className="text-2xl font-bold text-emerald-700">
-                  {invoice.invoiceType === 'supplier' ? 'SUPPLIER INVOICE' : 'INVOICE'}
-                </h1>
-                <p className="text-slate-600 mt-1">{invoice.documentNo}</p>
+              {company?.tradingName && (
+                <p className="text-sm text-slate-500 mt-1">{company.tradingName}</p>
+              )}
+            </div>
+            
+            {/* Right side - Invoice Details Box */}
+            <div className="text-right">
+              <h1 className="text-3xl font-bold text-slate-800 mb-4">
+                {invoice.invoiceType === 'supplier' ? 'SUPPLIER INVOICE' : 'INVOICE'}
+              </h1>
+              <div className="text-sm space-y-1">
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">NUMBER:</span>
+                  <span className="font-semibold">{invoice.documentNo}</span>
+                </div>
+                {invoice.externalInvoiceNo && (
+                  <div className="flex justify-between gap-8">
+                    <span className="text-slate-500">REFERENCE:</span>
+                    <span className="font-semibold">{invoice.externalInvoiceNo}</span>
+                  </div>
+                )}
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">DATE:</span>
+                  <span className="font-semibold">{invoice.date}</span>
+                </div>
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">DUE DATE:</span>
+                  <span className="font-semibold">{invoice.dueDate}</span>
+                </div>
+                {invoice.salesRep && (
+                  <div className="flex justify-between gap-8">
+                    <span className="text-slate-500">SALES REP:</span>
+                    <span className="font-semibold">{invoice.salesRep}</span>
+                  </div>
+                )}
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">PAGE:</span>
+                  <span>1/1</span>
+                </div>
               </div>
             </div>
-            <div className="text-right">
-              <p className="font-semibold text-lg">{company?.name || 'Your Company Name'}</p>
-              {company?.tradingName && <p className="text-sm text-slate-600">Trading as: {company.tradingName}</p>}
-              {company?.address && <p className="text-sm text-slate-600">{company.address}</p>}
-              {company?.city && <p className="text-sm text-slate-600">{company.city}, {company.postalCode}</p>}
-              {company?.phone && <p className="text-sm text-slate-600">Tel: {company.phone}</p>}
-              {company?.email && <p className="text-sm text-slate-600">{company.email}</p>}
-              {company?.vatNo && <p className="text-sm text-slate-600 mt-1">VAT No: {company.vatNo}</p>}
-              {company?.registrationNo && <p className="text-sm text-slate-600">Reg No: {company.registrationNo}</p>}
-            </div>
           </div>
           
-          <div className="grid grid-cols-2 gap-8 mb-8">
+          {/* FROM and TO Section */}
+          <div className="grid grid-cols-2 gap-8 mb-8 border-t border-b py-6">
+            {/* FROM - Company Details */}
             <div>
-              <h4 className="font-semibold text-slate-600 text-sm mb-2">
-                {invoice.invoiceType === 'supplier' ? 'SUPPLIER:' : 'BILL TO:'}
-              </h4>
-              <p className="font-medium">{invoice.supplier || invoice.customer || 'Customer'}</p>
+              <p className="text-xs text-slate-500 font-semibold mb-2">FROM</p>
+              <h3 className="text-lg font-bold text-slate-800 mb-3">{company?.name || 'Your Company'}</h3>
+              
+              {company?.vatNo && (
+                <p className="text-sm mb-3"><span className="text-slate-500">VAT NO:</span> {company.vatNo}</p>
+              )}
+              
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-xs text-slate-500 font-semibold mb-1">POSTAL ADDRESS:</p>
+                  {company?.address && <p>{company.address}</p>}
+                  {company?.city && <p>{company.city}</p>}
+                  {company?.postalCode && <p>{company.postalCode}</p>}
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 font-semibold mb-1">PHYSICAL ADDRESS:</p>
+                  {company?.physicalAddress || company?.address && <p>{company.physicalAddress || company.address}</p>}
+                  {company?.city && <p>{company.city}</p>}
+                  {company?.postalCode && <p>{company.postalCode}</p>}
+                </div>
+              </div>
             </div>
-            <div className="text-right">
-              <p className="text-sm"><span className="text-slate-600">Date:</span> {invoice.date}</p>
-              <p className="text-sm"><span className="text-slate-600">Due:</span> {invoice.dueDate}</p>
-              {invoice.customerRef && <p className="text-sm"><span className="text-slate-600">Ref:</span> {invoice.customerRef}</p>}
+            
+            {/* TO - Customer/Supplier Details */}
+            <div>
+              <p className="text-xs text-slate-500 font-semibold mb-2">TO</p>
+              <h3 className="text-lg font-bold text-slate-800 mb-3">
+                {invoice.invoiceType === 'supplier' ? invoice.supplier : invoice.customer}
+              </h3>
+              
+              {(invoice.customerVatNo || invoice.supplierVatNo) && (
+                <p className="text-sm mb-3">
+                  <span className="text-slate-500">
+                    {invoice.invoiceType === 'supplier' ? 'SUPPLIER VAT NO:' : 'CUSTOMER VAT NO:'}
+                  </span> {invoice.supplierVatNo || invoice.customerVatNo}
+                </p>
+              )}
+              
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-xs text-slate-500 font-semibold mb-1">POSTAL ADDRESS:</p>
+                  {invoice.postalAddress?.filter(Boolean).map((line, i) => <p key={i}>{line}</p>)}
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 font-semibold mb-1">PHYSICAL ADDRESS:</p>
+                  {invoice.deliveryAddress?.filter(Boolean).map((line, i) => <p key={i}>{line}</p>)}
+                </div>
+              </div>
             </div>
           </div>
           
-          <table className="w-full mb-8">
+          {/* Line Items Table */}
+          <table className="w-full mb-8 text-sm">
             <thead>
-              <tr className="border-b-2 border-emerald-600">
-                <th className="text-left py-2 text-sm">Description</th>
-                <th className="text-right py-2 text-sm">Qty</th>
-                <th className="text-right py-2 text-sm">Price</th>
-                <th className="text-right py-2 text-sm">Total</th>
+              <tr className="border-b-2 border-slate-300">
+                <th className="text-left py-3 font-semibold text-slate-600">Description</th>
+                <th className="text-center py-3 font-semibold text-slate-600 w-20">Quantity</th>
+                <th className="text-right py-3 font-semibold text-slate-600 w-28">Unit Price</th>
+                <th className="text-center py-3 font-semibold text-slate-600 w-16">Disc %</th>
+                <th className="text-center py-3 font-semibold text-slate-600 w-16">VAT %</th>
+                <th className="text-right py-3 font-semibold text-slate-600 w-28">Excl. Total</th>
+                <th className="text-right py-3 font-semibold text-slate-600 w-28">Incl. Total</th>
               </tr>
             </thead>
             <tbody>
-              {invoice.items?.map((item, idx) => (
-                <tr key={idx} className="border-b">
-                  <td className="py-2 text-sm">{item.description || 'Item'}</td>
-                  <td className="py-2 text-sm text-right">{item.qty}</td>
-                  <td className="py-2 text-sm text-right">R {(item.price || 0).toFixed(2)}</td>
-                  <td className="py-2 text-sm text-right">R {((item.qty || 0) * (item.price || 0)).toFixed(2)}</td>
-                </tr>
-              ))}
+              {invoice.items?.map((item, idx) => {
+                const calc = calculateItemTotal(item);
+                return (
+                  <tr key={idx} className="border-b border-slate-200">
+                    <td className="py-3">{item.description || 'Item'}</td>
+                    <td className="py-3 text-center">{item.qty || 1}</td>
+                    <td className="py-3 text-right">R{(item.price || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="py-3 text-center">{(item.discPercent || 0).toFixed(2)}%</td>
+                    <td className="py-3 text-center">{(calc.vatRate * 100).toFixed(2)}%</td>
+                    <td className="py-3 text-right">R{calc.afterDiscount.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="py-3 text-right font-semibold">R{calc.inclusive.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           
-          <div className="flex justify-end">
-            <div className="w-64">
-              <div className="flex justify-between py-1 text-sm">
-                <span>Subtotal:</span>
-                <span>R {(invoice.subtotal || 0).toFixed(2)}</span>
+          {/* Banking Details and Totals */}
+          <div className="flex justify-between items-end">
+            {/* Banking Details - Left */}
+            <div className="text-sm">
+              {company?.bankName && (
+                <>
+                  <p className="font-semibold text-slate-700">{company.bankName}</p>
+                  {company?.bankAccountNo && <p>Account No.{company.bankAccountNo}</p>}
+                  {company?.bankBranchCode && <p>Branch code.{company.bankBranchCode}</p>}
+                  <p className="mt-4 text-xs text-slate-500 italic">N.B DEPOSIT OF 50% IS REQUIRED BEFORE COMMENCING WORK.</p>
+                </>
+              )}
+            </div>
+            
+            {/* Totals - Right */}
+            <div className="w-72">
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Total Discount:</span>
+                  <span>R{(invoice.totalDiscount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Total Exclusive:</span>
+                  <span className="font-semibold">R{(invoice.subtotal || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Total VAT:</span>
+                  <span>R{(invoice.vat || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Sub Total:</span>
+                  <span className="font-semibold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between pt-2 border-t">
+                  <span className="text-slate-600">Grand Total:</span>
+                  <span className="font-bold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
               </div>
-              <div className="flex justify-between py-1 text-sm">
-                <span>VAT (15%):</span>
-                <span>R {(invoice.vat || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between py-2 font-bold text-lg border-t-2 border-emerald-600 mt-2">
-                <span>Total:</span>
-                <span className="text-emerald-700">R {(invoice.amount || 0).toFixed(2)}</span>
+              
+              {/* Balance Due Box */}
+              <div className="mt-4 pt-4 border-t-2 border-slate-800">
+                <p className="text-right text-sm text-slate-600">BALANCE DUE</p>
+                <p className="text-right text-2xl font-bold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
             </div>
           </div>
-          
-          {/* Banking Details */}
-          {company?.bankName && (
-            <div className="mt-8 pt-6 border-t">
-              <h4 className="font-semibold text-sm text-slate-600 mb-2">BANKING DETAILS</h4>
-              <div className="text-sm text-slate-600">
-                <p>Bank: {company.bankName}</p>
-                <p>Account: {company.bankAccountNo}</p>
-                {company.bankBranchCode && <p>Branch Code: {company.bankBranchCode}</p>}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -3643,14 +3759,24 @@ Rules:
                   <td className="px-3 py-2">
                     <select
                       value={stmt.type}
-                      onChange={(e) => updateStatement(stmt.id, 'type', e.target.value)}
+                      onChange={(e) => {
+                        updateStatement(stmt.id, 'type', e.target.value);
+                        // Reset selection when type changes
+                        if (e.target.value === 'Customer') {
+                          updateStatement(stmt.id, 'selection', clients[0]?.name || '');
+                        } else if (e.target.value === 'Supplier') {
+                          updateStatement(stmt.id, 'selection', suppliers[0]?.name || '');
+                        } else {
+                          updateStatement(stmt.id, 'selection', 'Unallocated Expen');
+                        }
+                      }}
                       className="border rounded px-2 py-1 text-sm w-full"
                     >
-                      <option>Account</option>
-                      <option>Customer</option>
-                      <option>Supplier</option>
-                      <option>Transfer</option>
-                      <option>VAT</option>
+                      <option value="Account">Account</option>
+                      <option value="Customer">Customer</option>
+                      <option value="Supplier">Supplier</option>
+                      <option value="Transfer">Transfer</option>
+                      <option value="VAT">VAT</option>
                     </select>
                   </td>
                   <td className="px-3 py-2">
@@ -3659,7 +3785,19 @@ Rules:
                       onChange={(e) => updateStatement(stmt.id, 'selection', e.target.value)}
                       className="border rounded px-2 py-1 text-sm w-full"
                     >
-                      {selectionOptions.map(opt => <option key={opt}>{opt}</option>)}
+                      {stmt.type === 'Customer' ? (
+                        <>
+                          <option value="">-- Select Customer --</option>
+                          {clients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </>
+                      ) : stmt.type === 'Supplier' ? (
+                        <>
+                          <option value="">-- Select Supplier --</option>
+                          {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                        </>
+                      ) : (
+                        selectionOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)
+                      )}
                     </select>
                   </td>
                   <td className="px-3 py-2">
@@ -3673,40 +3811,28 @@ Rules:
                   </td>
                   <td className="px-3 py-2">
                     <input
-                      type="text"
-                      value={stmt.spent ? `R ${stmt.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                      type="number"
+                      step="0.01"
+                      value={stmt.spent || ''}
                       onChange={(e) => {
-                        const value = e.target.value.replace(/[^0-9.]/g, '');
-                        updateStatement(stmt.id, 'spent', parseFloat(value) || 0);
-                      }}
-                      onFocus={(e) => {
-                        e.target.value = stmt.spent || '';
-                      }}
-                      onBlur={(e) => {
-                        const value = parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0;
+                        const value = parseFloat(e.target.value) || 0;
                         updateStatement(stmt.id, 'spent', value);
                       }}
-                      className="border rounded px-3 py-1 text-sm w-full text-right min-w-[140px]"
-                      placeholder="R 0.00"
+                      className="border rounded px-3 py-1 text-sm w-full text-right min-w-[120px]"
+                      placeholder="0.00"
                     />
                   </td>
                   <td className="px-3 py-2">
                     <input
-                      type="text"
-                      value={stmt.received ? `R ${stmt.received.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                      type="number"
+                      step="0.01"
+                      value={stmt.received || ''}
                       onChange={(e) => {
-                        const value = e.target.value.replace(/[^0-9.]/g, '');
-                        updateStatement(stmt.id, 'received', parseFloat(value) || 0);
-                      }}
-                      onFocus={(e) => {
-                        e.target.value = stmt.received || '';
-                      }}
-                      onBlur={(e) => {
-                        const value = parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0;
+                        const value = parseFloat(e.target.value) || 0;
                         updateStatement(stmt.id, 'received', value);
                       }}
                       className="border rounded px-3 py-1 text-sm w-full text-right min-w-[120px]"
-                      placeholder="R 0.00"
+                      placeholder="0.00"
                     />
                   </td>
                   {/* Link Invoice Column */}
@@ -5818,4 +5944,3 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
 };
 
 export default AccountingDashboard;
-
