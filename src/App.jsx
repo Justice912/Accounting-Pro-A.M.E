@@ -3074,6 +3074,7 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
   const [extractedPdfData, setExtractedPdfData] = useState([]);
   const [pdfProcessing, setPdfProcessing] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
+  const [convertVatRate, setConvertVatRate] = useState('Standard Rate (15.00%)'); // VAT rate for conversion
 
   // Build selection options from accounts
   const selectionOptions = [
@@ -3507,7 +3508,8 @@ Rules:
   const handleConvertToInvoice = (type) => {
     if (activeStatement && saveInvoices) {
       const amountInclVat = type === 'client' ? (activeStatement.received || 0) : (activeStatement.spent || 0);
-      const vatRateValue = getVATRate(activeStatement.vatRate || 'Standard Rate (15.00%)');
+      // Use the VAT rate selected in the modal
+      const vatRateValue = getVATRate(convertVatRate);
       
       // Calculate Ex VAT amount (amount entered is VAT inclusive)
       const amountExVat = vatRateValue > 0 ? amountInclVat / (1 + vatRateValue) : amountInclVat;
@@ -3530,7 +3532,7 @@ Rules:
           unit: '',
           qty: 1,
           price: amountExVat, // Store Ex VAT price
-          vatType: activeStatement.vatRate || 'Standard Rate (15.00%)',
+          vatType: convertVatRate, // Use selected VAT rate
           discPercent: 0
         }],
         amount: amountInclVat, // Total including VAT
@@ -3554,6 +3556,7 @@ Rules:
       
       setShowConvertModal(false);
       setActiveStatement(null);
+      setConvertVatRate('Standard Rate (15.00%)'); // Reset VAT rate
       setSaveMessage(`${type === 'client' ? 'Client' : 'Supplier'} invoice created and linked!`);
       setTimeout(() => setSaveMessage(''), 3000);
     }
@@ -4059,13 +4062,13 @@ Rules:
       {/* Convert to Invoice Modal */}
       {showConvertModal && activeStatement && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
             <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
               <div>
                 <h3 className="font-semibold text-lg">Convert to Invoice</h3>
                 <p className="text-sm text-slate-600">Create a new invoice from this bank transaction</p>
               </div>
-              <button onClick={() => { setShowConvertModal(false); setActiveStatement(null); }} className="p-2 hover:bg-slate-100 rounded">
+              <button onClick={() => { setShowConvertModal(false); setActiveStatement(null); setConvertVatRate('Standard Rate (15.00%)'); }} className="p-2 hover:bg-slate-100 rounded">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -4080,15 +4083,49 @@ Rules:
                     <p><span className="text-slate-500">Invoice No.:</span> <span className="font-semibold">{activeStatement.externalInvoiceNo}</span></p>
                   )}
                   {activeStatement.spent > 0 && (
-                    <p><span className="text-slate-500">Amount Spent (Inc VAT):</span> <span className="font-semibold text-red-600">R {activeStatement.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></p>
+                    <p><span className="text-slate-500">Amount Spent:</span> <span className="font-semibold text-red-600">R {activeStatement.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></p>
                   )}
                   {activeStatement.received > 0 && (
-                    <p><span className="text-slate-500">Amount Received (Inc VAT):</span> <span className="font-semibold text-emerald-600">R {activeStatement.received.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></p>
-                  )}
-                  {activeStatement.vatRate && activeStatement.vatRate !== 'No VAT' && (
-                    <p className="text-xs text-slate-500 italic mt-2">VAT will be calculated from the inclusive amount</p>
+                    <p><span className="text-slate-500">Amount Received:</span> <span className="font-semibold text-emerald-600">R {activeStatement.received.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></p>
                   )}
                 </div>
+              </div>
+              
+              {/* VAT Rate Selection */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Select VAT Rate for Invoice:
+                </label>
+                <select
+                  value={convertVatRate}
+                  onChange={(e) => setConvertVatRate(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500"
+                >
+                  {VAT_RATES.map(vat => (
+                    <option key={vat.value} value={vat.value}>{vat.label}</option>
+                  ))}
+                </select>
+                
+                {/* Show calculated amounts */}
+                {(() => {
+                  const amount = activeStatement.spent > 0 ? activeStatement.spent : activeStatement.received;
+                  const vatRate = getVATRate(convertVatRate);
+                  const exVat = vatRate > 0 ? amount / (1 + vatRate) : amount;
+                  const vatAmount = amount - exVat;
+                  return (
+                    <div className="mt-3 p-3 bg-emerald-50 rounded-lg text-sm">
+                      <p className="font-medium text-emerald-800 mb-2">Invoice will be created as:</p>
+                      <div className="grid grid-cols-2 gap-2 text-emerald-700">
+                        <span>Amount (Inc VAT):</span>
+                        <span className="text-right font-semibold">R {amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span>
+                        <span>Ex VAT Amount:</span>
+                        <span className="text-right">R {exVat.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span>
+                        <span>VAT ({(vatRate * 100).toFixed(0)}%):</span>
+                        <span className="text-right">R {vatAmount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               
               <h4 className="font-medium text-sm text-slate-600 mb-3">Select invoice type:</h4>
@@ -4105,9 +4142,6 @@ Rules:
                   <Users className="w-8 h-8 mx-auto mb-2 text-blue-600" />
                   <p className="font-semibold text-blue-700">Client Invoice</p>
                   <p className="text-xs text-slate-500 mt-1">For payments received</p>
-                  {activeStatement.received > 0 && (
-                    <p className="text-xs font-semibold text-emerald-600 mt-1">R {activeStatement.received.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
-                  )}
                 </button>
                 <button
                   onClick={() => handleConvertToInvoice('supplier')}
@@ -4121,13 +4155,21 @@ Rules:
                   <Building2 className="w-8 h-8 mx-auto mb-2 text-orange-600" />
                   <p className="font-semibold text-orange-700">Supplier Invoice</p>
                   <p className="text-xs text-slate-500 mt-1">For payments made</p>
-                  {activeStatement.spent > 0 && (
-                    <p className="text-xs font-semibold text-red-600 mt-1">R {activeStatement.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
-                  )}
                 </button>
               </div>
             </div>
             
+            <div className="p-4 border-t bg-slate-50 flex justify-end">
+              <button 
+                onClick={() => { setShowConvertModal(false); setActiveStatement(null); setConvertVatRate('Standard Rate (15.00%)'); }}
+                className="px-4 py-2 border rounded text-sm hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
             <div className="p-4 border-t bg-slate-50 flex justify-end">
               <button 
                 onClick={() => { setShowConvertModal(false); setActiveStatement(null); }}
@@ -5147,9 +5189,52 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
     filtered.forEach(stmt => {
       const cat = stmt.selection || 'Unallocated';
       if (!categories[cat]) categories[cat] = { debit: 0, credit: 0 };
-      categories[cat].debit += stmt.spent || 0;
-      categories[cat].credit += stmt.received || 0;
+      
+      // Calculate Ex VAT amount if VAT rate is selected
+      // If no VAT or Zero rate, use full amount
+      const vatRate = getVATRate(stmt.vatRate);
+      
+      // For spent amounts (debits)
+      if (stmt.spent > 0) {
+        // If VAT rate > 0, calculate Ex VAT amount
+        // Amount entered is VAT inclusive, so Ex VAT = Amount / (1 + rate)
+        const exVatSpent = vatRate > 0 ? stmt.spent / (1 + vatRate) : stmt.spent;
+        categories[cat].debit += exVatSpent;
+      }
+      
+      // For received amounts (credits)
+      if (stmt.received > 0) {
+        // If VAT rate > 0, calculate Ex VAT amount
+        const exVatReceived = vatRate > 0 ? stmt.received / (1 + vatRate) : stmt.received;
+        categories[cat].credit += exVatReceived;
+      }
     });
+
+    // Also add VAT account for total VAT
+    let totalVatInput = 0;
+    let totalVatOutput = 0;
+    
+    filtered.forEach(stmt => {
+      const vatRate = getVATRate(stmt.vatRate);
+      if (vatRate > 0) {
+        if (stmt.spent > 0) {
+          const vatAmount = stmt.spent - (stmt.spent / (1 + vatRate));
+          totalVatInput += vatAmount;
+        }
+        if (stmt.received > 0) {
+          const vatAmount = stmt.received - (stmt.received / (1 + vatRate));
+          totalVatOutput += vatAmount;
+        }
+      }
+    });
+    
+    // Add VAT accounts if there's any VAT
+    if (totalVatInput > 0 || totalVatOutput > 0) {
+      if (!categories['VAT Input']) categories['VAT Input'] = { debit: 0, credit: 0 };
+      if (!categories['VAT Output']) categories['VAT Output'] = { debit: 0, credit: 0 };
+      categories['VAT Input'].debit += totalVatInput;
+      categories['VAT Output'].credit += totalVatOutput;
+    }
 
     return Object.entries(categories).map(([name, values]) => ({
       name,
