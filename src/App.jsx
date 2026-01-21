@@ -5094,7 +5094,6 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
         categories['VAT Control'].debit = Math.abs(netVat);
       }
     }
-    }
 
     return Object.entries(categories).map(([name, values]) => ({
       name,
