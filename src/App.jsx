@@ -92,13 +92,22 @@ const DEFAULT_ACCOUNTS = [
 // ==================== MAIN APP ====================
 const AccountingDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [loading, setLoading] = useState(true);
+  
+  // Multi-company state
+  const [companies, setCompanies] = useState([]);
+  const [activeCompanyId, setActiveCompanyId] = useState(null);
+  const [showCompanySelector, setShowCompanySelector] = useState(false);
+  const [showAddCompanyModal, setShowAddCompanyModal] = useState(false);
+  const [newCompanyName, setNewCompanyName] = useState('');
+  
+  // Per-company data
   const [invoices, setInvoices] = useState([]);
   const [clients, setClients] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [bankStatements, setBankStatements] = useState([]);
   const [vatTransactions, setVatTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
-  const [loading, setLoading] = useState(true);
   
   // Modal states
   const [showInvoiceForm, setShowInvoiceForm] = useState(false);
@@ -108,45 +117,95 @@ const AccountingDashboard = () => {
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [showAccountForm, setShowAccountForm] = useState(false);
 
-  // Load data on mount
+  // Get active company
+  const activeCompany = companies.find(c => c.id === activeCompanyId);
+
+  // Load companies list and last active company on mount
   useEffect(() => {
-    loadAllData();
-    // Failsafe timeout - if still loading after 3 seconds, stop loading
+    loadCompanies();
     const timeout = setTimeout(() => {
       setLoading(false);
-      if (accounts.length === 0) {
-        setAccounts(DEFAULT_ACCOUNTS);
-      }
     }, 3000);
     return () => clearTimeout(timeout);
   }, []);
 
-  const loadAllData = async () => {
+  // Load company-specific data when active company changes
+  useEffect(() => {
+    if (activeCompanyId) {
+      loadCompanyData(activeCompanyId);
+    }
+  }, [activeCompanyId]);
+
+  const loadCompanies = async () => {
     try {
-      // Check if storage is available
       if (typeof localStorage === "undefined") {
-        console.log('Storage not available, using defaults');
+        // Default company if no storage
+        const defaultCompany = { id: 'default', name: 'My Company', createdAt: new Date().toISOString() };
+        setCompanies([defaultCompany]);
+        setActiveCompanyId('default');
         setAccounts(DEFAULT_ACCOUNTS);
         setLoading(false);
         return;
       }
 
+      const companiesRes = await Promise.resolve({ value: localStorage.getItem('accounting-companies') });
+      const lastActiveRes = await Promise.resolve({ value: localStorage.getItem('accounting-active-company') });
+      
+      let loadedCompanies = [];
+      if (companiesRes?.value) {
+        loadedCompanies = JSON.parse(companiesRes.value);
+      }
+      
+      // If no companies exist, create a default one
+      if (loadedCompanies.length === 0) {
+        const defaultCompany = { id: 'default', name: 'My Company', createdAt: new Date().toISOString() };
+        loadedCompanies = [defaultCompany];
+        localStorage.setItem('accounting-companies', JSON.stringify(loadedCompanies)).catch(() => {});
+      }
+      
+      setCompanies(loadedCompanies);
+      
+      // Set active company
+      const lastActiveId = lastActiveRes?.value;
+      if (lastActiveId && loadedCompanies.find(c => c.id === lastActiveId)) {
+        setActiveCompanyId(lastActiveId);
+      } else {
+        setActiveCompanyId(loadedCompanies[0].id);
+      }
+    } catch (error) {
+      console.log('Error loading companies:', error);
+      const defaultCompany = { id: 'default', name: 'My Company', createdAt: new Date().toISOString() };
+      setCompanies([defaultCompany]);
+      setActiveCompanyId('default');
+    }
+  };
+
+  const loadCompanyData = async (companyId) => {
+    try {
+      if (typeof localStorage === "undefined") {
+        setAccounts(DEFAULT_ACCOUNTS);
+        setLoading(false);
+        return;
+      }
+
+      // Load all data for the specific company using company-prefixed keys
+      const prefix = `company-${companyId}`;
       const [invRes, clientRes, suppRes, bankRes, vatRes, accRes] = await Promise.all([
-        Promise.resolve({ value: localStorage.getItem('accounting-invoices') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-clients') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-suppliers') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-bank-statements') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-vat-transactions') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-accounts') })
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-invoices`) }),
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-clients`) }),
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-suppliers`) }),
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-bank-statements`) }),
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-vat-transactions`) }),
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-accounts`) })
       ]);
       
-      if (invRes?.value) setInvoices(JSON.parse(invRes.value));
-      if (clientRes?.value) setClients(JSON.parse(clientRes.value));
-      if (suppRes?.value) setSuppliers(JSON.parse(suppRes.value));
-      if (bankRes?.value) setBankStatements(JSON.parse(bankRes.value));
-      if (vatRes?.value) setVatTransactions(JSON.parse(vatRes.value));
+      setInvoices(invRes?.value ? JSON.parse(invRes.value) : []);
+      setClients(clientRes?.value ? JSON.parse(clientRes.value) : []);
+      setSuppliers(suppRes?.value ? JSON.parse(suppRes.value) : []);
+      setBankStatements(bankRes?.value ? JSON.parse(bankRes.value) : []);
+      setVatTransactions(vatRes?.value ? JSON.parse(vatRes.value) : []);
       
-      // Load accounts or use defaults - always ensure we have accounts
+      // Load accounts or use defaults
       let loadedAccounts = [];
       if (accRes?.value) {
         try {
@@ -158,47 +217,124 @@ const AccountingDashboard = () => {
       
       if (!loadedAccounts || loadedAccounts.length === 0) {
         setAccounts(DEFAULT_ACCOUNTS);
-        // Save defaults to storage
-        window.storage.set('accounting-accounts', JSON.stringify(DEFAULT_ACCOUNTS)).catch(() => {});
+        window.storage.set(`${prefix}-accounts`, JSON.stringify(DEFAULT_ACCOUNTS)).catch(() => {});
       } else {
         setAccounts(loadedAccounts);
       }
+      
+      // Save last active company
+      localStorage.setItem('accounting-active-company', companyId);
     } catch (error) {
-      console.log('Loading fresh data:', error);
+      console.log('Error loading company data:', error);
       setAccounts(DEFAULT_ACCOUNTS);
     } finally {
       setLoading(false);
     }
   };
 
+  const addCompany = async () => {
+    if (!newCompanyName.trim()) return;
+    
+    const newCompany = {
+      id: `company-${Date.now()}`,
+      name: newCompanyName.trim(),
+      createdAt: new Date().toISOString()
+    };
+    
+    const updatedCompanies = [...companies, newCompany];
+    setCompanies(updatedCompanies);
+    
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem('accounting-companies', JSON.stringify(updatedCompanies)).catch(() => {});
+    }
+    
+    setNewCompanyName('');
+    setShowAddCompanyModal(false);
+    
+    // Switch to the new company
+    setActiveCompanyId(newCompany.id);
+  };
+
+  const switchCompany = (companyId) => {
+    if (companyId !== activeCompanyId) {
+      setLoading(true);
+      setActiveCompanyId(companyId);
+    }
+    setShowCompanySelector(false);
+  };
+
+  const deleteCompany = async (companyId) => {
+    if (companies.length <= 1) {
+      alert('Cannot delete the last company');
+      return;
+    }
+    
+    if (!confirm('Are you sure you want to delete this company and all its data?')) {
+      return;
+    }
+    
+    const updatedCompanies = companies.filter(c => c.id !== companyId);
+    setCompanies(updatedCompanies);
+    
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem('accounting-companies', JSON.stringify(updatedCompanies)).catch(() => {});
+      // Delete company data
+      const prefix = `company-${companyId}`;
+      localStorage.removeItem(`${prefix}-invoices`);
+      localStorage.removeItem(`${prefix}-clients`);
+      localStorage.removeItem(`${prefix}-suppliers`);
+      localStorage.removeItem(`${prefix}-bank-statements`);
+      localStorage.removeItem(`${prefix}-vat-transactions`);
+      localStorage.removeItem(`${prefix}-accounts`);
+    }
+    
+    // Switch to another company if we deleted the active one
+    if (companyId === activeCompanyId) {
+      setActiveCompanyId(updatedCompanies[0].id);
+    }
+  };
+
+  // Save functions with company prefix
   const saveInvoices = async (data) => {
     setInvoices(data);
-    localStorage.setItem('accounting-invoices', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-invoices`, JSON.stringify(data));
+    }
   };
 
   const saveClients = async (data) => {
     setClients(data);
-    localStorage.setItem('accounting-clients', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-clients`, JSON.stringify(data));
+    }
   };
 
   const saveSuppliers = async (data) => {
     setSuppliers(data);
-    localStorage.setItem('accounting-suppliers', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-suppliers`, JSON.stringify(data));
+    }
   };
 
   const saveBankStatements = async (data) => {
     setBankStatements(data);
-    localStorage.setItem('accounting-bank-statements', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-bank-statements`, JSON.stringify(data));
+    }
   };
 
   const saveVatTransactions = async (data) => {
     setVatTransactions(data);
-    localStorage.setItem('accounting-vat-transactions', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-vat-transactions`, JSON.stringify(data));
+    }
   };
 
   const saveAccounts = async (data) => {
     setAccounts(data);
-    localStorage.setItem('accounting-accounts', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-accounts`, JSON.stringify(data));
+    }
   };
 
   // Calculate totals
@@ -230,12 +366,118 @@ const AccountingDashboard = () => {
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
-      {/* Header */}
+      {/* Header with Company Selector */}
       <header className="bg-gradient-to-r from-emerald-700 to-emerald-600 text-white shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <h1 className="text-xl font-bold tracking-tight">Accounting Pro</h1>
+          
+          {/* Company Selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowCompanySelector(!showCompanySelector)}
+              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg transition-all"
+            >
+              <Building2 className="w-4 h-4" />
+              <span className="font-medium">{activeCompany?.name || 'Select Company'}</span>
+              <ChevronDown className={`w-4 h-4 transition-transform ${showCompanySelector ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {/* Dropdown */}
+            {showCompanySelector && (
+              <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-lg shadow-xl border z-50 overflow-hidden">
+                <div className="p-2 border-b bg-slate-50">
+                  <p className="text-xs font-semibold text-slate-500 uppercase">Switch Company</p>
+                </div>
+                <div className="max-h-64 overflow-auto">
+                  {companies.map(company => (
+                    <div
+                      key={company.id}
+                      className={`flex items-center justify-between px-4 py-3 hover:bg-slate-50 cursor-pointer ${
+                        company.id === activeCompanyId ? 'bg-emerald-50 border-l-4 border-emerald-500' : ''
+                      }`}
+                    >
+                      <div 
+                        className="flex-1"
+                        onClick={() => switchCompany(company.id)}
+                      >
+                        <p className={`font-medium ${company.id === activeCompanyId ? 'text-emerald-700' : 'text-slate-800'}`}>
+                          {company.name}
+                        </p>
+                        {company.id === activeCompanyId && (
+                          <p className="text-xs text-emerald-600">Currently Active</p>
+                        )}
+                      </div>
+                      {companies.length > 1 && company.id !== activeCompanyId && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteCompany(company.id); }}
+                          className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t">
+                  <button
+                    onClick={() => { setShowCompanySelector(false); setShowAddCompanyModal(true); }}
+                    className="flex items-center gap-2 w-full px-4 py-3 text-emerald-600 hover:bg-emerald-50 font-medium"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Company
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </header>
+
+      {/* Add Company Modal */}
+      {showAddCompanyModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="p-6 border-b">
+              <h3 className="text-lg font-bold text-slate-800">Add New Company</h3>
+              <p className="text-sm text-slate-500 mt-1">Create a new company with separate data</p>
+            </div>
+            <div className="p-6">
+              <label className="block text-sm font-medium text-slate-700 mb-2">Company Name</label>
+              <input
+                type="text"
+                value={newCompanyName}
+                onChange={(e) => setNewCompanyName(e.target.value)}
+                placeholder="e.g. AME Business Accountants"
+                className="w-full border rounded-lg px-4 py-3 text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                autoFocus
+              />
+            </div>
+            <div className="p-6 border-t bg-slate-50 flex gap-3 justify-end rounded-b-xl">
+              <button
+                onClick={() => { setShowAddCompanyModal(false); setNewCompanyName(''); }}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={addCompany}
+                disabled={!newCompanyName.trim()}
+                className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add Company
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Click outside to close dropdown */}
+      {showCompanySelector && (
+        <div 
+          className="fixed inset-0 z-40" 
+          onClick={() => setShowCompanySelector(false)}
+        />
+      )}
 
       {/* Navigation */}
       <nav className="bg-white border-b shadow-sm sticky top-0 z-40">
