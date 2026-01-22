@@ -4055,7 +4055,7 @@ Rules:
                           const isDebit = stmt.spent > 0;
                           const relevantInvoices = invoices.filter(inv => {
                             // Check if already linked
-                            const isLinked = data.some(s => s.linkedInvoice === inv.id);
+                            const isLinked = bankStatements.some(s => s.linkedInvoice === inv.id);
                             if (isLinked) return false;
                             // Check if paid
                             if (inv.status === 'Paid') return false;
