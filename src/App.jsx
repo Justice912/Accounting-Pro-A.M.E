@@ -4054,7 +4054,7 @@ Rules:
                           // Debit (Spent) = Supplier invoices, Credit (Received) = Customer invoices
                           const isDebit = stmt.spent > 0;
                           const relevantInvoices = invoices.filter(inv => {
-                            // Check if already linked
+                            // Check if already linked to another transaction
                             const isLinked = bankStatements.some(s => s.linkedInvoice === inv.id);
                             if (isLinked) return false;
                             // Check if paid
@@ -4069,15 +4069,9 @@ Rules:
                             }
                           });
                           
-                          if (relevantInvoices.length === 0) {
-                            return (
-                              <span className="text-xs text-slate-400 italic">No invoices</span>
-                            );
-                          }
-                          
                           return (
                             <select
-                              className="px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 cursor-pointer min-w-[100px]"
+                              className="px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 cursor-pointer min-w-[120px]"
                               value=""
                               onChange={(e) => {
                                 if (e.target.value) {
@@ -4087,8 +4081,13 @@ Rules:
                                   }
                                 }
                               }}
+                              disabled={relevantInvoices.length === 0}
                             >
-                              <option value="">Link to...</option>
+                              <option value="">
+                                {relevantInvoices.length === 0 
+                                  ? `No ${isDebit ? 'supplier' : 'customer'} invoices` 
+                                  : `Link to... (${relevantInvoices.length})`}
+                              </option>
                               {relevantInvoices.map(inv => (
                                 <option key={inv.id} value={inv.id}>
                                   {inv.documentNo} - R{(inv.amount || 0).toLocaleString()} ({inv.customer || inv.supplier})
