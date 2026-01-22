@@ -4057,7 +4057,7 @@ Rules:
                             // Check if already linked to another transaction
                             const isLinked = bankStatements.some(s => s.linkedInvoice === inv.id);
                             if (isLinked) return false;
-                            // Check if paid
+                            // Only show unpaid invoices (not already Paid)
                             if (inv.status === 'Paid') return false;
                             // Filter by type based on transaction direction
                             if (isDebit) {
@@ -4065,13 +4065,14 @@ Rules:
                               return inv.invoiceType === 'supplier';
                             } else {
                               // Received money = customer paying us
-                              return inv.invoiceType !== 'supplier';
+                              // Customer invoices have invoiceType === 'client' OR undefined OR null
+                              return inv.invoiceType === 'client' || !inv.invoiceType || inv.invoiceType === undefined;
                             }
                           });
                           
                           return (
                             <select
-                              className="px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 cursor-pointer min-w-[120px]"
+                              className="px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 cursor-pointer min-w-[130px]"
                               value=""
                               onChange={(e) => {
                                 if (e.target.value) {
@@ -4090,7 +4091,7 @@ Rules:
                               </option>
                               {relevantInvoices.map(inv => (
                                 <option key={inv.id} value={inv.id}>
-                                  {inv.documentNo} - R{(inv.amount || 0).toLocaleString()} ({inv.customer || inv.supplier})
+                                  {inv.documentNo} - R{(inv.amount || 0).toLocaleString()} ({inv.customer || inv.supplier || 'Unknown'})
                                 </option>
                               ))}
                             </select>
