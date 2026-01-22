@@ -3593,6 +3593,28 @@ Rules:
     }
   };
 
+  // Link invoice directly (used by dropdown, takes statement ID directly)
+  const handleLinkInvoiceDirect = (statementId, invoiceId, invoiceType, invoiceNo) => {
+    const invoice = invoices.find(inv => inv.id === invoiceId);
+    const updatedStatements = bankStatements.map(s => 
+      s.id === statementId 
+        ? { ...s, linkedInvoice: invoiceId, linkedType: invoiceType, linkedInvoiceNo: invoiceNo || '' }
+        : s
+    );
+    saveBankStatements(updatedStatements);
+    
+    // Mark invoice as paid if linking
+    if (invoice && saveInvoices) {
+      const updatedInvoices = invoices.map(inv => 
+        inv.id === invoiceId ? { ...inv, status: 'Paid' } : inv
+      );
+      saveInvoices(updatedInvoices);
+    }
+    
+    setSaveMessage('Invoice linked successfully!');
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
   // Unlink invoice
   const handleUnlinkInvoice = (stmtId) => {
     const updatedStatements = bankStatements.map(s => 
@@ -3869,7 +3891,7 @@ Rules:
                 <th className="text-left px-3 py-3 font-medium text-slate-600 w-28">VAT Rate</th>
                 <th className="text-right px-3 py-3 font-medium text-slate-600 w-28">Spent</th>
                 <th className="text-right px-3 py-3 font-medium text-slate-600 w-28">Received</th>
-                <th className="text-left px-3 py-3 font-medium text-slate-600 w-48">Link / Convert</th>
+                <th className="text-left px-3 py-3 font-medium text-slate-600 w-52">Convert / Link</th>
                 <th className="text-center px-3 py-3 font-medium text-slate-600 w-12">Rec.</th>
                 <th className="w-10"></th>
               </tr>
@@ -4018,14 +4040,8 @@ Rules:
                         </button>
                       </div>
                     ) : (
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => { setActiveStatement(stmt); setShowLinkModal(true); }}
-                          className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100 border border-blue-200"
-                          title="Link to existing invoice"
-                        >
-                          Link
-                        </button>
+                      <div className="flex gap-1 items-center">
+                        {/* Convert button first */}
                         <button
                           onClick={() => { setActiveStatement(stmt); setShowConvertModal(true); }}
                           className="px-2 py-1 text-xs bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100 border border-emerald-200"
@@ -4033,6 +4049,54 @@ Rules:
                         >
                           Convert
                         </button>
+                        {/* Link dropdown - shows relevant invoices based on transaction type */}
+                        {(() => {
+                          // Debit (Spent) = Supplier invoices, Credit (Received) = Customer invoices
+                          const isDebit = stmt.spent > 0;
+                          const relevantInvoices = invoices.filter(inv => {
+                            // Check if already linked
+                            const isLinked = data.some(s => s.linkedInvoice === inv.id);
+                            if (isLinked) return false;
+                            // Check if paid
+                            if (inv.status === 'Paid') return false;
+                            // Filter by type based on transaction direction
+                            if (isDebit) {
+                              // Spent money = paying supplier invoices
+                              return inv.invoiceType === 'supplier';
+                            } else {
+                              // Received money = customer paying us
+                              return inv.invoiceType !== 'supplier';
+                            }
+                          });
+                          
+                          if (relevantInvoices.length === 0) {
+                            return (
+                              <span className="text-xs text-slate-400 italic">No invoices</span>
+                            );
+                          }
+                          
+                          return (
+                            <select
+                              className="px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 cursor-pointer min-w-[100px]"
+                              value=""
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  const inv = invoices.find(i => i.id === e.target.value);
+                                  if (inv) {
+                                    handleLinkInvoiceDirect(stmt.id, inv.id, inv.invoiceType || 'client', inv.documentNo);
+                                  }
+                                }
+                              }}
+                            >
+                              <option value="">Link to...</option>
+                              {relevantInvoices.map(inv => (
+                                <option key={inv.id} value={inv.id}>
+                                  {inv.documentNo} - R{(inv.amount || 0).toLocaleString()} ({inv.customer || inv.supplier})
+                                </option>
+                              ))}
+                            </select>
+                          );
+                        })()}
                       </div>
                     )}
                   </td>
