@@ -4427,8 +4427,39 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
         const exclusive = parseFloat(row.exclusive || row.excl || row.nett || row.amount || 0);
         const vat = parseFloat(row.vat || row.vatamount || row.tax || 0);
         const inclusive = parseFloat(row.inclusive || row.incl || row.total || 0) || (exclusive + vat);
-        const vatType = (row.vattype || row.type || '').toLowerCase().includes('input') ? 'input' : 'output';
         const vatRate = row.vatrate || row.rate || (vat > 0 ? 'Standard 15%' : 'Zero Rated');
+        
+        // Determine VAT type (input/output) based on multiple fields
+        // Check explicit vattype/type column first
+        let vatType = 'output'; // Default to output (sales)
+        const explicitType = (row.vattype || row.type || '').toLowerCase();
+        if (explicitType.includes('input') || explicitType.includes('purchase')) {
+          vatType = 'input';
+        } else if (explicitType.includes('output') || explicitType.includes('sale')) {
+          vatType = 'output';
+        } else {
+          // If no explicit type, check account/category for common purchase/expense keywords
+          const accountLower = account.toLowerCase();
+          const descLower = description.toLowerCase();
+          const purchaseKeywords = [
+            'purchase', 'expense', 'cost', 'supplier', 'creditor', 'buy', 'bought',
+            'input', 'stock', 'inventory', 'material', 'service fee', 'professional fee',
+            'rent', 'utilities', 'telephone', 'internet', 'insurance', 'repairs',
+            'maintenance', 'fuel', 'petrol', 'diesel', 'travel', 'accommodation',
+            'stationery', 'office', 'cleaning', 'security', 'subscription', 'license',
+            'accounting', 'legal', 'consulting', 'advertising', 'marketing', 'bank charge',
+            'equipment', 'asset', 'motor', 'vehicle', 'computer', 'software', 'wages', 'salary'
+          ];
+          
+          // Check if account or description contains purchase-related keywords
+          const isPurchase = purchaseKeywords.some(keyword => 
+            accountLower.includes(keyword) || descLower.includes(keyword)
+          );
+          
+          if (isPurchase) {
+            vatType = 'input';
+          }
+        }
 
         return {
           id: Date.now() + idx,
