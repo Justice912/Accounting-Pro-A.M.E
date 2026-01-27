@@ -4645,28 +4645,61 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     setGenerating(false);
   };
 
-  // Transaction Row Component
+  // Transaction Row Component - uses local state to prevent input lag
   const TransactionRow = ({ t }) => {
+    const [localDate, setLocalDate] = useState(t.date || '');
+    const [localRef, setLocalRef] = useState(t.reference || '');
+    const [localAccount, setLocalAccount] = useState(t.account || '');
+    const [localDesc, setLocalDesc] = useState(t.description || '');
+    const [localVatRate, setLocalVatRate] = useState(t.vatRate || 'Standard Rate (15.00%)');
     const [localExcl, setLocalExcl] = useState(t.exclusive ?? '');
     const [localVat, setLocalVat] = useState(t.vat ?? '');
     const [localIncl, setLocalIncl] = useState(t.inclusive ?? '');
+    const [localReviewed, setLocalReviewed] = useState(t.reviewed || false);
 
+    // Sync local state when transaction changes from external source
     React.useEffect(() => {
+      setLocalDate(t.date || '');
+      setLocalRef(t.reference || '');
+      setLocalAccount(t.account || '');
+      setLocalDesc(t.description || '');
+      setLocalVatRate(t.vatRate || 'Standard Rate (15.00%)');
       setLocalExcl(t.exclusive ?? '');
       setLocalVat(t.vat ?? '');
       setLocalIncl(t.inclusive ?? '');
+      setLocalReviewed(t.reviewed || false);
     }, [t.id]);
+
+    // Save all fields at once
+    const saveAllFields = (overrides = {}) => {
+      const excl = parseFloat(overrides.exclusive ?? localExcl) || 0;
+      const vat = parseFloat(overrides.vat ?? localVat) || 0;
+      const incl = parseFloat(overrides.inclusive ?? localIncl) || 0;
+      
+      saveVatTransactions(vatTransactions.map(tx => 
+        tx.id === t.id ? { 
+          ...tx, 
+          date: overrides.date ?? localDate,
+          reference: overrides.reference ?? localRef,
+          account: overrides.account ?? localAccount,
+          description: overrides.description ?? localDesc,
+          vatRate: overrides.vatRate ?? localVatRate,
+          exclusive: excl.toFixed(2), 
+          vat: vat.toFixed(2), 
+          inclusive: incl.toFixed(2),
+          reviewed: overrides.reviewed ?? localReviewed
+        } : tx
+      ));
+    };
 
     const handleExclBlur = () => {
       const excl = parseFloat(localExcl) || 0;
-      const rate = getVATRate(t.vatRate);
+      const rate = getVATRate(localVatRate);
       const vat = excl * rate;
       const incl = excl + vat;
       setLocalVat(vat.toFixed(2));
       setLocalIncl(incl.toFixed(2));
-      saveVatTransactions(vatTransactions.map(tx => 
-        tx.id === t.id ? { ...tx, exclusive: excl.toFixed(2), vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
-      ));
+      saveAllFields({ exclusive: excl, vat: vat, inclusive: incl });
     };
 
     const handleVatBlur = () => {
@@ -4674,47 +4707,65 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
       const excl = parseFloat(localExcl) || 0;
       const incl = excl + vat;
       setLocalIncl(incl.toFixed(2));
-      saveVatTransactions(vatTransactions.map(tx => 
-        tx.id === t.id ? { ...tx, vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
-      ));
+      saveAllFields({ vat: vat, inclusive: incl });
     };
 
     const handleInclBlur = () => {
       const incl = parseFloat(localIncl) || 0;
-      const rate = getVATRate(t.vatRate);
+      const rate = getVATRate(localVatRate);
       const excl = rate > 0 ? incl / (1 + rate) : incl;
       const vat = incl - excl;
       setLocalExcl(excl.toFixed(2));
       setLocalVat(vat.toFixed(2));
-      saveVatTransactions(vatTransactions.map(tx => 
-        tx.id === t.id ? { ...tx, exclusive: excl.toFixed(2), vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
-      ));
+      saveAllFields({ exclusive: excl, vat: vat, inclusive: incl });
     };
 
     const handleVatRateChange = (newRate) => {
+      setLocalVatRate(newRate);
       const excl = parseFloat(localExcl) || 0;
       const rate = getVATRate(newRate);
       const vat = excl * rate;
       const incl = excl + vat;
       setLocalVat(vat.toFixed(2));
       setLocalIncl(incl.toFixed(2));
-      saveVatTransactions(vatTransactions.map(tx => 
-        tx.id === t.id ? { ...tx, vatRate: newRate, vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
-      ));
+      saveAllFields({ vatRate: newRate, vat: vat, inclusive: incl });
+    };
+
+    const handleReviewedChange = (checked) => {
+      setLocalReviewed(checked);
+      saveAllFields({ reviewed: checked });
+    };
+
+    const handleFieldBlur = (field, value) => {
+      saveAllFields({ [field]: value });
     };
 
     return (
-      <tr className="border-t hover:bg-slate-50">
+      <tr className={`border-t hover:bg-slate-50 ${localReviewed ? 'bg-green-50' : ''}`}>
+        <td className="px-2 py-1 text-center">
+          <input 
+            type="checkbox" 
+            checked={localReviewed} 
+            onChange={(e) => handleReviewedChange(e.target.checked)}
+            className="w-4 h-4 text-green-600 rounded"
+            title="Mark as reviewed"
+          />
+        </td>
         <td className="px-2 py-1">
-          <input type="date" value={t.date} onChange={(e) => updateTransaction(t.id, 'date', e.target.value)}
+          <input type="date" value={localDate} 
+            onChange={(e) => setLocalDate(e.target.value)}
+            onBlur={(e) => handleFieldBlur('date', e.target.value)}
             className="border rounded px-2 py-1 text-sm w-full" />
         </td>
         <td className="px-2 py-1">
-          <input type="text" value={t.reference || ''} onChange={(e) => updateTransaction(t.id, 'reference', e.target.value)}
+          <input type="text" value={localRef} 
+            onChange={(e) => setLocalRef(e.target.value)}
+            onBlur={(e) => handleFieldBlur('reference', e.target.value)}
             className="border rounded px-2 py-1 text-sm w-full" placeholder="Ref" />
         </td>
         <td className="px-2 py-1">
-          <select value={t.account || ''} onChange={(e) => updateTransaction(t.id, 'account', e.target.value)}
+          <select value={localAccount} 
+            onChange={(e) => { setLocalAccount(e.target.value); handleFieldBlur('account', e.target.value); }}
             className="border rounded px-2 py-1 text-sm w-full">
             <option value="">Select Account</option>
             {accounts.filter(a => a.active !== false).map(acc => (
@@ -4723,11 +4774,13 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
           </select>
         </td>
         <td className="px-2 py-1">
-          <input type="text" value={t.description || ''} onChange={(e) => updateTransaction(t.id, 'description', e.target.value)}
+          <input type="text" value={localDesc} 
+            onChange={(e) => setLocalDesc(e.target.value)}
+            onBlur={(e) => handleFieldBlur('description', e.target.value)}
             className="border rounded px-2 py-1 text-sm w-full" placeholder="Description" />
         </td>
         <td className="px-2 py-1">
-          <select value={t.vatRate || 'Standard Rate (15.00%)'} onChange={(e) => handleVatRateChange(e.target.value)}
+          <select value={localVatRate} onChange={(e) => handleVatRateChange(e.target.value)}
             className="border rounded px-2 py-1 text-sm w-full">
             {VAT_RATES.map(vat => <option key={vat.value} value={vat.value}>{vat.label}</option>)}
           </select>
@@ -4754,55 +4807,106 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
   };
 
   // Transaction Table Component
-  const TransactionTable = ({ transactions, title, bgColor, textColor, vatType }) => (
-    <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
-      <div className={`p-4 ${bgColor} border-b flex justify-between items-center`}>
-        <h3 className={`font-semibold ${textColor}`}>{title}</h3>
-        <button onClick={() => addTransaction(vatType)} className={`text-sm ${textColor} hover:underline flex items-center gap-1`}>
-          <Plus className="w-4 h-4" /> Add Transaction
-        </button>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-100">
-            <tr>
-              <th className="text-left px-2 py-2 font-medium text-slate-600 w-28">Date</th>
-              <th className="text-left px-2 py-2 font-medium text-slate-600 w-24">Reference</th>
-              <th className="text-left px-2 py-2 font-medium text-slate-600 w-32">Account</th>
-              <th className="text-left px-2 py-2 font-medium text-slate-600">Description</th>
-              <th className="text-left px-2 py-2 font-medium text-slate-600 w-36">VAT Rate</th>
-              <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">Exclusive</th>
-              <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">VAT</th>
-              <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">Inclusive</th>
-              <th className="w-10"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {transactions.length > 0 ? transactions.map(t => (
-              <TransactionRow key={t.id} t={t} />
-            )) : (
-              <tr>
-                <td colSpan={9} className="text-center py-8 text-slate-500">
-                  No transactions. Click "Add Transaction" or import a CSV file.
-                </td>
-              </tr>
+  const TransactionTable = ({ transactions, title, bgColor, textColor, vatType }) => {
+    const reviewedCount = transactions.filter(t => t.reviewed).length;
+    const totalCount = transactions.length;
+    
+    const markAllReviewed = () => {
+      const ids = transactions.map(t => t.id);
+      saveVatTransactions(vatTransactions.map(tx => 
+        ids.includes(tx.id) ? { ...tx, reviewed: true } : tx
+      ));
+      setSaveMessage(`${transactions.length} transactions marked as reviewed`);
+      setTimeout(() => setSaveMessage(''), 3000);
+    };
+    
+    const markAllUnreviewed = () => {
+      const ids = transactions.map(t => t.id);
+      saveVatTransactions(vatTransactions.map(tx => 
+        ids.includes(tx.id) ? { ...tx, reviewed: false } : tx
+      ));
+      setSaveMessage(`${transactions.length} transactions marked as unreviewed`);
+      setTimeout(() => setSaveMessage(''), 3000);
+    };
+    
+    return (
+      <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+        <div className={`p-4 ${bgColor} border-b flex justify-between items-center`}>
+          <div className="flex items-center gap-3">
+            <h3 className={`font-semibold ${textColor}`}>{title}</h3>
+            {totalCount > 0 && (
+              <span className={`text-xs px-2 py-1 rounded ${reviewedCount === totalCount ? 'bg-green-200 text-green-800' : 'bg-white/50'} ${textColor}`}>
+                {reviewedCount}/{totalCount} reviewed
+              </span>
             )}
-          </tbody>
-          {transactions.length > 0 && (
-            <tfoot className={bgColor}>
+          </div>
+          <div className="flex items-center gap-2">
+            {totalCount > 0 && (
+              <>
+                <button 
+                  onClick={markAllReviewed}
+                  className={`text-xs px-2 py-1 rounded border ${textColor} hover:bg-white/30`}
+                  title="Mark all as reviewed"
+                >
+                  ✓ All Reviewed
+                </button>
+                <button 
+                  onClick={markAllUnreviewed}
+                  className={`text-xs px-2 py-1 rounded border ${textColor} hover:bg-white/30`}
+                  title="Clear all review marks"
+                >
+                  Clear Reviews
+                </button>
+              </>
+            )}
+            <button onClick={() => addTransaction(vatType)} className={`text-sm ${textColor} hover:underline flex items-center gap-1`}>
+              <Plus className="w-4 h-4" /> Add Transaction
+            </button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100">
               <tr>
-                <td colSpan={5} className={`px-3 py-2 text-right ${textColor} font-semibold`}>Subtotal:</td>
-                <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).exclusive)}</td>
-                <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).vat)}</td>
-                <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).inclusive)}</td>
-                <td></td>
+                <th className="text-center px-2 py-2 font-medium text-slate-600 w-12">Rev.</th>
+                <th className="text-left px-2 py-2 font-medium text-slate-600 w-28">Date</th>
+                <th className="text-left px-2 py-2 font-medium text-slate-600 w-24">Reference</th>
+                <th className="text-left px-2 py-2 font-medium text-slate-600 w-32">Account</th>
+                <th className="text-left px-2 py-2 font-medium text-slate-600">Description</th>
+                <th className="text-left px-2 py-2 font-medium text-slate-600 w-36">VAT Rate</th>
+                <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">Exclusive</th>
+                <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">VAT</th>
+                <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">Inclusive</th>
+                <th className="w-10"></th>
               </tr>
-            </tfoot>
-          )}
-        </table>
+            </thead>
+            <tbody>
+              {transactions.length > 0 ? transactions.map(t => (
+                <TransactionRow key={t.id} t={t} />
+              )) : (
+                <tr>
+                  <td colSpan={10} className="text-center py-8 text-slate-500">
+                    No transactions. Click "Add Transaction" or import a CSV file.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            {transactions.length > 0 && (
+              <tfoot className={bgColor}>
+                <tr>
+                  <td colSpan={6} className={`px-3 py-2 text-right ${textColor} font-semibold`}>Subtotal:</td>
+                  <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).exclusive)}</td>
+                  <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).vat)}</td>
+                  <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).inclusive)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -4969,6 +5073,45 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
         textColor="text-orange-800"
         vatType="input"
       />
+
+      {/* Action Buttons */}
+      {vatTransactions.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-4 bg-white rounded-lg border shadow-sm p-4">
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-slate-600">
+              <strong>{vatTransactions.filter(t => t.reviewed).length}</strong> of <strong>{vatTransactions.length}</strong> transactions reviewed
+            </span>
+            {vatTransactions.filter(t => !t.reviewed).length > 0 && (
+              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
+                {vatTransactions.filter(t => !t.reviewed).length} pending review
+              </span>
+            )}
+            {vatTransactions.filter(t => !t.reviewed).length === 0 && (
+              <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded flex items-center gap-1">
+                <Check className="w-3 h-3" /> All reviewed
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                saveVatTransactions(vatTransactions.map(t => ({ ...t, reviewed: true })));
+                setSaveMessage('All transactions marked as reviewed and saved!');
+                setTimeout(() => setSaveMessage(''), 3000);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium"
+            >
+              <Check className="w-4 h-4" /> Review & Save All
+            </button>
+            <button
+              onClick={clearAll}
+              className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium"
+            >
+              <Trash2 className="w-4 h-4" /> Clear All
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Import Instructions */}
       <div className="bg-slate-50 rounded-lg border p-4">
