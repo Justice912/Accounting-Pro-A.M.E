@@ -633,6 +633,7 @@ const AccountingDashboard = () => {
             setShowPrintPreview={setShowPrintPreview}
             selectedInvoice={selectedInvoice}
             setSelectedInvoice={setSelectedInvoice}
+            company={activeCompany}
           />
         )}
         {activeTab === 'suppliers' && (
@@ -649,6 +650,7 @@ const AccountingDashboard = () => {
             selectedInvoice={selectedInvoice}
             setSelectedInvoice={setSelectedInvoice}
             accounts={accounts}
+            company={activeCompany}
           />
         )}
         {activeTab === 'companies' && (
@@ -876,7 +878,7 @@ const MetricCard = ({ title, value, color, icon }) => {
 };
 
 // ==================== CUSTOMERS VIEW (Client Invoices) ====================
-const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setShowInvoiceForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice }) => {
+const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setShowInvoiceForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, company }) => {
   // Filter to only show client invoices (not supplier)
   const clientInvoices = invoices.filter(inv => inv.invoiceType !== 'supplier');
   
@@ -1375,7 +1377,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
 
       {/* Print Preview Modal */}
       {showPrintPreview && selectedInvoice && (
-        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={clients[0]} />
+        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={company} />
       )}
 
       {/* Client Invoices List */}
@@ -1484,15 +1486,21 @@ const PrintPreview = ({ invoice, onClose, company }) => {
         <div className="p-8 min-h-[297mm] print:p-12" id="invoice-print">
           {/* Header with Logo and Invoice Details */}
           <div className="flex justify-between items-start mb-8">
-            {/* Left side - Logo */}
+            {/* Left side - Logo and Company Name */}
             <div className="flex-shrink-0">
               {company?.logo ? (
-                <img src={company.logo} alt="Company Logo" className="w-48 h-auto object-contain" />
+                <div>
+                  <img src={company.logo} alt="Company Logo" className="w-40 h-auto object-contain mb-2" style={{ maxHeight: '80px' }} />
+                  <div className="text-xl font-bold text-slate-800">{company?.name || 'Your Company'}</div>
+                  {company?.tradingName && (
+                    <p className="text-sm text-slate-500">t/a {company.tradingName}</p>
+                  )}
+                </div>
               ) : (
                 <div>
                   <div className="text-2xl font-bold text-slate-800">{company?.name || 'Your Company'}</div>
                   {company?.tradingName && (
-                    <p className="text-sm text-slate-500">{company.tradingName}</p>
+                    <p className="text-sm text-slate-500">t/a {company.tradingName}</p>
                   )}
                 </div>
               )}
@@ -1676,7 +1684,7 @@ const PrintPreview = ({ invoice, onClose, company }) => {
 };
 
 // ==================== SUPPLIERS VIEW (with Supplier Invoices) ====================
-const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clients, showSupplierForm, setShowSupplierForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, accounts = [] }) => {
+const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clients, showSupplierForm, setShowSupplierForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, accounts = [], company }) => {
   const [formData, setFormData] = useState({ name: '', company: '', email: '', phone: '' });
   const [activeTab, setActiveTab] = useState('invoices');
   const pdfInvoiceInputRef = React.useRef(null);
@@ -2465,7 +2473,7 @@ Rules:
       
       {/* Print Preview Modal */}
       {showPrintPreview && selectedInvoice && (
-        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={clients?.[0]} />
+        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={company} />
       )}
     </div>
   );
