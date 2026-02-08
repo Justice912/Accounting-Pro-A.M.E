@@ -689,10 +689,11 @@ const AccountingDashboard = () => {
           />
         )}
         {activeTab === 'reports' && (
-          <ReportsView 
+          <ReportsView
             bankStatements={bankStatements}
             invoices={invoices}
             company={clients[0]}
+            accounts={accounts}
           />
         )}
       </main>
@@ -5136,7 +5137,7 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
 };
 
 // ==================== REPORTS VIEW ====================
-const ReportsView = ({ bankStatements, invoices, company }) => {
+const ReportsView = ({ bankStatements, invoices, company, accounts }) => {
   const [reportType, setReportType] = useState('trial-balance');
   const [startDate, setStartDate] = useState(`${new Date().getFullYear()}-01-01`);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
@@ -5156,33 +5157,23 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
     const filteredInvoices = filterByDateRange(invoices);
     const filteredBankStatements = filterByDateRange(bankStatements);
     const categories = {};
-    
+
     // Track VAT separately to calculate net position
     let totalVatOutput = 0; // VAT collected on sales (liability)
     let totalVatInput = 0;  // VAT paid on purchases (asset)
-    
-    // Categories that should come from Banking only (not invoices)
-    const bankOnlyCategories = [
-      'Bank Charges', 
-      'Insurance', 
-      'Salaries', 
-      'Wages',
-      'Loans Received', 
-      'Loans Paid', 
-      'Loan Repayment',
-      'Transfer', 
-      'Transfers',
-      'Interest Received',
-      'Interest Paid',
-      'Drawings',
-      'Capital'
-    ];
-    
-    // Helper to check if category is bank-only
-    const isBankOnlyCategory = (cat) => {
-      if (!cat) return false;
-      const catLower = cat.toLowerCase();
-      return bankOnlyCategories.some(bc => catLower.includes(bc.toLowerCase()));
+
+    // Build a set of valid account names from chart of accounts for matching
+    const accountNames = new Set((accounts || []).filter(a => a.active !== false).map(a => a.name));
+
+    // Helper: resolve a name to a chart of accounts name, or return as-is
+    const resolveAccount = (name, fallback) => {
+      if (!name) return fallback || 'Unallocated Expense';
+      if (accountNames.has(name)) return name;
+      // Try case-insensitive match
+      for (const acctName of accountNames) {
+        if (acctName.toLowerCase() === name.toLowerCase()) return acctName;
+      }
+      return fallback || name;
     };
 
     // Get linked invoice IDs to track payments
@@ -5192,12 +5183,12 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
         linkedInvoiceIds.add(stmt.linkedInvoice);
       }
     });
-    
+
     // 1. Process CUSTOMER INVOICES (Sales/Income)
     filteredInvoices.filter(inv => inv.invoiceType !== 'supplier').forEach(inv => {
       let exVatAmount = 0;
       let vatAmount = 0;
-      
+
       if (inv.items && inv.items.length > 0) {
         inv.items.forEach(item => {
           const itemExclusive = (item.qty || 1) * (item.price || 0);
@@ -5205,7 +5196,7 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
           const afterDiscount = itemExclusive - discountAmt;
           const itemVatRate = getVATRate(item.vatType);
           const itemVat = afterDiscount * itemVatRate;
-          
+
           exVatAmount += afterDiscount;
           vatAmount += itemVat;
         });
@@ -5213,32 +5204,31 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
         exVatAmount = parseFloat(inv.subtotal) || 0;
         vatAmount = parseFloat(inv.vat) || 0;
       }
-      
+
       const totalAmount = exVatAmount + vatAmount;
-      
+
       // Credit Sales account with Ex VAT amount
       const salesAccount = 'Sales';
       if (!categories[salesAccount]) categories[salesAccount] = { debit: 0, credit: 0 };
       categories[salesAccount].credit += exVatAmount;
-      
+
       // Trade Receivables - only if invoice is NOT paid/linked
-      // If invoice is linked to a bank payment, the receivable is settled
       if (!linkedInvoiceIds.has(inv.id) && inv.status !== 'Paid') {
         const debtorsAccount = 'Trade Receivables';
         if (!categories[debtorsAccount]) categories[debtorsAccount] = { debit: 0, credit: 0 };
         categories[debtorsAccount].debit += totalAmount;
       }
-      
+
       // Track VAT Output
       totalVatOutput += vatAmount;
     });
-    
+
     // 2. Process SUPPLIER INVOICES (Purchases/Expenses)
     filteredInvoices.filter(inv => inv.invoiceType === 'supplier').forEach(inv => {
       let exVatAmount = 0;
       let vatAmount = 0;
       let expenseAccount = 'Purchases'; // Default
-      
+
       if (inv.items && inv.items.length > 0) {
         inv.items.forEach(item => {
           const itemExclusive = (item.qty || 1) * (item.price || 0);
@@ -5246,77 +5236,76 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
           const afterDiscount = itemExclusive - discountAmt;
           const itemVatRate = getVATRate(item.vatType);
           const itemVat = afterDiscount * itemVatRate;
-          
+
           exVatAmount += afterDiscount;
           vatAmount += itemVat;
-          
-          // Use the item description as account if it looks like an account name
-          if (item.description && item.description.length > 2) {
-            expenseAccount = item.description;
-          }
         });
       } else {
         exVatAmount = parseFloat(inv.subtotal) || 0;
         vatAmount = parseFloat(inv.vat) || 0;
       }
-      
-      // Use supplier name or description as the expense account if available
-      if (inv.supplier && inv.supplier.length > 2) {
-        // Check if there's a specific category in the items
-        if (inv.items && inv.items[0] && inv.items[0].description && inv.items[0].description !== 'Payment') {
-          expenseAccount = inv.items[0].description;
-        }
+
+      // Determine the account from linked bank statement selection or invoice category
+      if (inv.items && inv.items[0] && inv.items[0].description && inv.items[0].description !== 'Payment') {
+        expenseAccount = resolveAccount(inv.items[0].description, 'Purchases');
       }
-      
+
+      // Check if the linked bank statement has a selection that maps to chart of accounts
+      const linkedStmt = filteredBankStatements.find(s => s.linkedInvoice === inv.id);
+      if (linkedStmt && linkedStmt.selection && linkedStmt.selection !== 'Unallocated Expen') {
+        expenseAccount = resolveAccount(linkedStmt.selection, expenseAccount);
+      }
+
       const totalAmount = exVatAmount + vatAmount;
-      
+
       // Debit the expense account with Ex VAT amount
       if (!categories[expenseAccount]) categories[expenseAccount] = { debit: 0, credit: 0 };
       categories[expenseAccount].debit += exVatAmount;
-      
+
       // Trade Payables - only if invoice is NOT paid/linked
-      // If invoice is linked to a bank payment, the payable is settled
       if (!linkedInvoiceIds.has(inv.id) && inv.status !== 'Paid') {
         const creditorsAccount = 'Trade Payables';
         if (!categories[creditorsAccount]) categories[creditorsAccount] = { debit: 0, credit: 0 };
         categories[creditorsAccount].credit += totalAmount;
       }
-      
+
       // Track VAT Input
       totalVatInput += vatAmount;
     });
-    
-    // 3. Process BANK STATEMENTS - Only specific categories (not linked to invoices)
+
+    // 3. Process BANK STATEMENTS - ALL Account-type and Transfer transactions not linked to invoices
     filteredBankStatements.forEach(stmt => {
-      const cat = stmt.selection || 'Unallocated';
-      
-      // Only process bank-only categories OR transfers
-      // Exclude linked transactions (already processed via invoices)
-      if ((isBankOnlyCategory(cat) || stmt.type === 'Transfer') && !stmt.linkedInvoice) {
-        if (!categories[cat]) categories[cat] = { debit: 0, credit: 0 };
-        
-        const vatRate = getVATRate(stmt.vatRate);
-        
-        if (stmt.spent > 0) {
-          const exVatSpent = vatRate > 0 ? stmt.spent / (1 + vatRate) : stmt.spent;
-          categories[cat].debit += exVatSpent;
-          
-          if (vatRate > 0) {
-            totalVatInput += stmt.spent - exVatSpent;
-          }
+      // Skip Customer/Supplier types (their amounts come from invoices)
+      // Skip linked transactions (already processed via invoices above)
+      if (stmt.linkedInvoice) return;
+      if (stmt.type === 'Customer' || stmt.type === 'Supplier') return;
+
+      const cat = resolveAccount(stmt.selection, 'Unallocated Expense');
+      if (!categories[cat]) categories[cat] = { debit: 0, credit: 0 };
+
+      const vatRate = getVATRate(stmt.vatRate);
+      // No VAT or vatRate is 0 → use full amount (non-VAT vendor)
+      // Has VAT rate > 0 → calculate ex-VAT amount
+
+      if (stmt.spent > 0) {
+        const exVatSpent = vatRate > 0 ? stmt.spent / (1 + vatRate) : stmt.spent;
+        categories[cat].debit += exVatSpent;
+
+        if (vatRate > 0) {
+          totalVatInput += stmt.spent - exVatSpent;
         }
-        
-        if (stmt.received > 0) {
-          const exVatReceived = vatRate > 0 ? stmt.received / (1 + vatRate) : stmt.received;
-          categories[cat].credit += exVatReceived;
-          
-          if (vatRate > 0) {
-            totalVatOutput += stmt.received - exVatReceived;
-          }
+      }
+
+      if (stmt.received > 0) {
+        const exVatReceived = vatRate > 0 ? stmt.received / (1 + vatRate) : stmt.received;
+        categories[cat].credit += exVatReceived;
+
+        if (vatRate > 0) {
+          totalVatOutput += stmt.received - exVatReceived;
         }
       }
     });
-    
+
     // 4. Add Bank account balance from all bank transactions
     let bankDebit = 0;
     let bankCredit = 0;
@@ -5329,7 +5318,7 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
       categories['Bank'].debit += bankDebit;
       categories['Bank'].credit += bankCredit;
     }
-    
+
     // 5. Add VAT Control account - Net position
     const netVat = totalVatOutput - totalVatInput;
     if (netVat !== 0) {
