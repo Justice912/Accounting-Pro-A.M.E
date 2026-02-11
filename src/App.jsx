@@ -3184,6 +3184,9 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
   const [pdfProcessing, setPdfProcessing] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [convertVatRate, setConvertVatRate] = useState('Standard Rate (15.00%)'); // VAT rate for conversion
+  const [bankingSubTab, setBankingSubTab] = useState('new'); // 'new' or 'reviewed'
+  const [currentPage, setCurrentPage] = useState(1);
+  const ROWS_PER_PAGE = 15;
 
   // Build selection options from accounts
   const selectionOptions = [
@@ -3530,9 +3533,9 @@ Rules:
     a.click();
   };
 
-  const toggleSelectAll = (checked) => {
+  const toggleSelectAll = (checked, visibleStatements) => {
     if (checked) {
-      setSelectedIds(bankStatements.map(s => s.id));
+      setSelectedIds(visibleStatements.map(s => s.id));
     } else {
       setSelectedIds([]);
     }
@@ -3558,20 +3561,53 @@ Rules:
       setTimeout(() => setSaveMessage(''), 3000);
       return;
     }
-    const updated = bankStatements.map(s => 
+    const count = selectedIds.length;
+    const updated = bankStatements.map(s =>
       selectedIds.includes(s.id) ? { ...s, reconciled: true, reviewed: true } : s
     );
     saveBankStatements(updated);
     setSelectedIds([]);
-    setSaveMessage(`${selectedIds.length} transaction(s) marked as reviewed!`);
+    setCurrentPage(1);
+    setSaveMessage(`${count} transaction(s) marked as reviewed!`);
     setTimeout(() => setSaveMessage(''), 3000);
   };
 
   const handleMarkAllAsReviewed = () => {
-    const updated = bankStatements.map(s => ({ ...s, reconciled: true, reviewed: true }));
+    const newTransactions = bankStatements.filter(s => !s.reviewed);
+    const count = newTransactions.length;
+    const updated = bankStatements.map(s => !s.reviewed ? { ...s, reconciled: true, reviewed: true } : s);
     saveBankStatements(updated);
     setSelectedIds([]);
-    setSaveMessage('All transactions marked as reviewed!');
+    setCurrentPage(1);
+    setSaveMessage(`${count} transaction(s) marked as reviewed!`);
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
+  const handleRecallSelected = () => {
+    if (selectedIds.length === 0) {
+      setSaveMessage('Please select transactions first');
+      setTimeout(() => setSaveMessage(''), 3000);
+      return;
+    }
+    const count = selectedIds.length;
+    const updated = bankStatements.map(s =>
+      selectedIds.includes(s.id) ? { ...s, reviewed: false } : s
+    );
+    saveBankStatements(updated);
+    setSelectedIds([]);
+    setCurrentPage(1);
+    setSaveMessage(`${count} transaction(s) recalled for review!`);
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
+  const handleRecallAll = () => {
+    const reviewedTransactions = bankStatements.filter(s => s.reviewed);
+    const count = reviewedTransactions.length;
+    const updated = bankStatements.map(s => s.reviewed ? { ...s, reviewed: false } : s);
+    saveBankStatements(updated);
+    setSelectedIds([]);
+    setCurrentPage(1);
+    setSaveMessage(`${count} transaction(s) recalled for review!`);
     setTimeout(() => setSaveMessage(''), 3000);
   };
 
@@ -3698,14 +3734,74 @@ Rules:
   // Get pending/unpaid invoices for linking
   const availableInvoices = invoices.filter(inv => inv.status !== 'Paid' || !bankStatements.some(s => s.linkedInvoice === inv.id));
 
+  // Filtered transactions based on active sub-tab
+  const filteredStatements = bankingSubTab === 'new'
+    ? bankStatements.filter(s => !s.reviewed)
+    : bankStatements.filter(s => s.reviewed);
+
+  // Pagination calculations
+  const totalFiltered = filteredStatements.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / ROWS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * ROWS_PER_PAGE;
+  const endIndex = Math.min(startIndex + ROWS_PER_PAGE, totalFiltered);
+  const paginatedStatements = filteredStatements.slice(startIndex, endIndex);
+
+  // Count for each tab
+  const newCount = bankStatements.filter(s => !s.reviewed).length;
+  const reviewedCount = bankStatements.filter(s => s.reviewed).length;
+
+  // Generate page numbers for pagination
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxVisible = 10;
+    if (totalPages <= maxVisible) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      const startPage = Math.max(1, safePage - 4);
+      const endPage = Math.min(totalPages, startPage + maxVisible - 1);
+      for (let i = startPage; i <= endPage; i++) pages.push(i);
+      if (endPage < totalPages) pages.push('...');
+    }
+    return pages;
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-semibold text-slate-800">Bank Statements</h2>
-        <div className="flex gap-2">
-          <input type="file" ref={fileInputRef} onChange={handleCSVImport} accept=".csv" className="hidden" />
-          <input type="file" ref={pdfInputRef} onChange={handlePdfUpload} accept=".pdf" className="hidden" />
-          <input type="file" ref={imageInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
+    <div className="space-y-4">
+      {/* Hidden file inputs */}
+      <input type="file" ref={fileInputRef} onChange={handleCSVImport} accept=".csv" className="hidden" />
+      <input type="file" ref={pdfInputRef} onChange={handlePdfUpload} accept=".pdf" className="hidden" />
+      <input type="file" ref={imageInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
+
+      {/* Sub-tabs: New Transactions / Reviewed Transactions */}
+      <div className="border-b border-slate-300">
+        <div className="flex">
+          <button
+            onClick={() => { setBankingSubTab('new'); setCurrentPage(1); setSelectedIds([]); }}
+            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+              bankingSubTab === 'new'
+                ? 'border-blue-600 text-blue-700 bg-white'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            New Transactions {newCount > 0 && <span className="ml-1 px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs font-bold">{newCount}</span>}
+          </button>
+          <button
+            onClick={() => { setBankingSubTab('reviewed'); setCurrentPage(1); setSelectedIds([]); }}
+            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+              bankingSubTab === 'reviewed'
+                ? 'border-blue-600 text-blue-700 bg-white'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            Reviewed Transactions {reviewedCount > 0 && <span className="ml-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-bold">{reviewedCount}</span>}
+          </button>
+        </div>
+      </div>
+
+      {/* Action toolbar */}
+      <div className="flex justify-between items-center flex-wrap gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button onClick={() => imageInputRef.current?.click()} className="flex items-center gap-2 border border-blue-300 text-blue-600 px-4 py-2 rounded-lg hover:bg-blue-50 text-sm">
             <Upload className="w-4 h-4" /> Upload Image
           </button>
@@ -3723,6 +3819,13 @@ Rules:
           </button>
         </div>
       </div>
+
+      {/* Transaction count info */}
+      {totalFiltered > 0 && (
+        <p className="text-sm text-slate-600">
+          You have <span className="font-bold text-blue-700">{totalFiltered}</span> {bankingSubTab === 'new' ? 'new Bank Statement transactions to review and process.' : 'reviewed transactions.'}
+        </p>
+      )}
 
       {/* PDF Extractor Modal */}
       {showPdfExtractor && (
@@ -3886,8 +3989,8 @@ Rules:
                 <th className="text-center px-2 py-3 font-medium text-slate-600 w-10">
                   <input
                     type="checkbox"
-                    checked={bankStatements.length > 0 && selectedIds.length === bankStatements.length}
-                    onChange={(e) => toggleSelectAll(e.target.checked)}
+                    checked={paginatedStatements.length > 0 && paginatedStatements.every(s => selectedIds.includes(s.id))}
+                    onChange={(e) => toggleSelectAll(e.target.checked, paginatedStatements)}
                     className="w-4 h-4"
                   />
                 </th>
@@ -3905,7 +4008,7 @@ Rules:
               </tr>
             </thead>
             <tbody>
-              {bankStatements.length > 0 ? bankStatements.map(stmt => (
+              {paginatedStatements.length > 0 ? paginatedStatements.map(stmt => (
                 <tr key={stmt.id} className={`border-t hover:bg-slate-50 ${stmt.reconciled ? 'bg-green-50' : ''} ${selectedIds.includes(stmt.id) ? 'bg-blue-50' : ''}`}>
                   <td className="px-2 py-2 text-center">
                     <input
@@ -4124,15 +4227,59 @@ Rules:
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={11} className="text-center py-8 text-slate-500">
-                    No bank statements. Import a CSV or add entries manually.
+                  <td colSpan={12} className="text-center py-8 text-slate-500">
+                    {bankingSubTab === 'new'
+                      ? 'No new transactions. Import a CSV, upload a bank statement, or add entries manually.'
+                      : 'No reviewed transactions yet. Mark transactions as reviewed from the New Transactions tab.'}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        
+
+        {/* Pagination */}
+        {totalFiltered > ROWS_PER_PAGE && (
+          <div className="px-4 py-3 border-t flex items-center justify-between bg-slate-50">
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setCurrentPage(1)}
+                disabled={safePage === 1}
+                className={`px-3 py-1 text-sm border rounded ${safePage === 1 ? 'text-slate-400 bg-slate-100 cursor-not-allowed' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-600'}`}
+              >
+                First
+              </button>
+              {getPageNumbers().map((page, idx) => (
+                page === '...' ? (
+                  <span key={`ellipsis-${idx}`} className="px-2 py-1 text-slate-400 text-sm">...</span>
+                ) : (
+                  <button
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    className={`px-3 py-1 text-sm border rounded min-w-[32px] ${
+                      safePage === page
+                        ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                        : 'text-slate-600 hover:bg-blue-50 hover:text-blue-600'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                )
+              ))}
+              <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={safePage === totalPages}
+                className={`px-3 py-1 text-sm border rounded ${safePage === totalPages ? 'text-slate-400 bg-slate-100 cursor-not-allowed' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-600'}`}
+              >
+                Last
+              </button>
+            </div>
+            <span className="text-sm text-slate-500">
+              Displaying {startIndex + 1} - {endIndex} of {totalFiltered}
+            </span>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="p-4 bg-slate-100 border-t">
           {/* Success Message */}
@@ -4141,26 +4288,45 @@ Rules:
               {saveMessage}
             </div>
           )}
-          
+
           <div className="flex justify-center gap-3">
-            <button 
+            <button
               onClick={handleSaveChanges}
-              className="px-6 py-2 bg-blue-600 text-white rounded font-medium text-sm hover:bg-blue-700"
+              className="px-6 py-2 bg-emerald-600 text-white rounded font-medium text-sm hover:bg-emerald-700"
             >
               Save Changes
             </button>
-            <button 
-              onClick={handleMarkSelectedAsReviewed}
-              className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
-            >
-              Mark Selected as Reviewed
-            </button>
-            <button 
-              onClick={handleMarkAllAsReviewed}
-              className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
-            >
-              Mark All as Reviewed
-            </button>
+            {bankingSubTab === 'new' ? (
+              <>
+                <button
+                  onClick={handleMarkSelectedAsReviewed}
+                  className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
+                >
+                  Mark Selected as Reviewed
+                </button>
+                <button
+                  onClick={handleMarkAllAsReviewed}
+                  className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
+                >
+                  Mark All as Reviewed
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={handleRecallSelected}
+                  className="px-6 py-2 bg-white text-orange-600 border border-orange-600 rounded font-medium text-sm hover:bg-orange-50"
+                >
+                  Recall Selected for Review
+                </button>
+                <button
+                  onClick={handleRecallAll}
+                  className="px-6 py-2 bg-white text-orange-600 border border-orange-600 rounded font-medium text-sm hover:bg-orange-50"
+                >
+                  Recall All for Review
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
