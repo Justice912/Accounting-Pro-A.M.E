@@ -1842,7 +1842,7 @@ Rules:
             <Building2 className="w-4 h-4" />
             Supplier Contacts
             <span className={`px-2 py-0.5 rounded-full text-xs ${activeTab === 'contacts' ? 'bg-orange-200 text-orange-800' : 'bg-slate-200 text-slate-600'}`}>
-              {suppliers.length}}
+              {suppliers.length}
             </span>
           </div>
         </button>
