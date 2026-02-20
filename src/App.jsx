@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield } from 'lucide-react';
+import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield, Filter, SortAsc, TrendingUp, DollarSign, Clock } from 'lucide-react';
 import AuditModule from './AuditModule';
 
 // VAT Rate Options (South African VAT rates)
@@ -1162,7 +1162,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
       </div>
 
       {activeSubTab === 'statements' ? (
-        <CustomerStatements invoices={invoices} clients={clients} company={company} />
+        <CustomerStatements invoices={invoices} clients={clients} company={clients?.[0]} />
       ) : (
         <>
           {/* Summary Stats Bar */}
