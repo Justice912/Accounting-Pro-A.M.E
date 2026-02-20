@@ -164,6 +164,7 @@ const AccountingDashboard = () => {
         const defaultCompany = { id: 'default', name: 'My Company', createdAt: new Date().toISOString() };
         loadedCompanies = [defaultCompany];
         localStorage.setItem('accounting-companies', JSON.stringify(loadedCompanies)).catch(() => {});
+        setShowAddCompanyModal(true);
       }
       
       setCompanies(loadedCompanies);
@@ -180,6 +181,7 @@ const AccountingDashboard = () => {
       const defaultCompany = { id: 'default', name: 'My Company', createdAt: new Date().toISOString() };
       setCompanies([defaultCompany]);
       setActiveCompanyId('default');
+      setShowAddCompanyModal(true);
     }
   };
 
@@ -402,94 +404,93 @@ const AccountingDashboard = () => {
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <h1 className="text-xl font-bold tracking-tight">Accounting Pro</h1>
           
-          {/* Company Selector */}
-          <div className="relative">
-            <button
-              onClick={() => setShowCompanySelector(!showCompanySelector)}
-              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg transition-all"
-            >
-              <Building2 className="w-4 h-4" />
-              <span className="font-medium">{activeCompany?.name || 'Select Company'}</span>
-              <ChevronDown className={`w-4 h-4 transition-transform ${showCompanySelector ? 'rotate-180' : ''}`} />
-            </button>
-            
-            {/* Dropdown */}
-            {showCompanySelector && (
-              <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-lg shadow-xl border z-50 overflow-hidden">
-                <div className="p-2 border-b bg-slate-50">
-                  <p className="text-xs font-semibold text-slate-500 uppercase">Switch Company</p>
+          {/* Client Selector */}
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                onClick={() => setShowCompanySelector(!showCompanySelector)}
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg transition-all min-w-[240px]"
+              >
+                {activeCompany?.logo ? (
+                  <img src={activeCompany.logo} alt={activeCompany.name} className="w-6 h-6 object-contain rounded bg-white p-0.5" />
+                ) : (
+                  <div className="w-6 h-6 bg-white/80 rounded text-emerald-700 text-xs font-bold flex items-center justify-center">
+                    {(activeCompany?.name || 'C').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="text-left flex-1 min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-white/80">Client</div>
+                  <div className="font-semibold truncate">{activeCompany?.name || 'Select Company'}</div>
                 </div>
-                <div className="max-h-64 overflow-auto">
-                  {companies.map(company => (
-                    <div
-                      key={company.id}
-                      className={`flex items-center gap-3 px-4 py-3 hover:bg-slate-50 cursor-pointer ${
-                        company.id === activeCompanyId ? 'bg-emerald-50 border-l-4 border-emerald-500' : ''
-                      }`}
+                <ChevronDown className={`w-4 h-4 transition-transform ${showCompanySelector ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showCompanySelector && (
+                <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-lg shadow-xl border z-50 overflow-hidden">
+                  <div className="p-2 border-b bg-slate-50 flex items-center justify-between">
+                    <p className="text-xs font-semibold text-slate-500 uppercase">Switch Client</p>
+                    <button
+                      onClick={() => { setShowCompanySelector(false); setActiveTab('companies'); }}
+                      className="text-xs text-emerald-600 hover:underline"
                     >
-                      {/* Company Logo */}
-                      <div className="w-10 h-10 flex-shrink-0">
-                        {company.logo ? (
-                          <img src={company.logo} alt={company.name} className="w-10 h-10 object-contain rounded border" />
-                        ) : (
-                          <div className="w-10 h-10 bg-slate-200 rounded flex items-center justify-center text-slate-500 text-sm font-bold">
-                            {company.name.charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                      </div>
-                      <div 
-                        className="flex-1 min-w-0"
-                        onClick={() => switchCompany(company.id)}
+                      Manage Companies
+                    </button>
+                  </div>
+                  <div className="max-h-64 overflow-auto">
+                    {companies.map(company => (
+                      <button
+                        key={company.id}
+                        onClick={() => { switchCompany(company.id); setShowCompanySelector(false); }}
+                        className={`w-full text-left flex items-center gap-3 px-4 py-3 hover:bg-slate-50 ${
+                          company.id === activeCompanyId ? 'bg-emerald-50 border-l-4 border-emerald-500' : ''
+                        }`}
                       >
-                        <p className={`font-medium truncate ${company.id === activeCompanyId ? 'text-emerald-700' : 'text-slate-800'}`}>
-                          {company.name}
-                        </p>
-                        {company.id === activeCompanyId && (
-                          <p className="text-xs text-emerald-600">Currently Active</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {/* Upload/Change Logo */}
-                        <label className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer">
-                          <Upload className="w-4 h-4" />
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => {
-                              const file = e.target.files[0];
-                              if (file) {
-                                const reader = new FileReader();
-                                reader.onload = (event) => updateCompanyLogo(company.id, event.target.result);
-                                reader.readAsDataURL(file);
-                              }
-                              e.target.value = '';
-                            }}
-                          />
-                        </label>
-                        {companies.length > 1 && company.id !== activeCompanyId && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); deleteCompany(company.id); }}
-                            className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                        <div className="w-10 h-10 flex-shrink-0">
+                          {company.logo ? (
+                            <img src={company.logo} alt={company.name} className="w-10 h-10 object-contain rounded border" />
+                          ) : (
+                            <div className="w-10 h-10 bg-slate-200 rounded flex items-center justify-center text-slate-500 text-sm font-bold">
+                              {company.name.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`font-medium truncate ${company.id === activeCompanyId ? 'text-emerald-700' : 'text-slate-800'}`}>
+                            {company.name}
+                          </p>
+                          {company.id === activeCompanyId && (
+                            <p className="text-xs text-emerald-600">Currently Active</p>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="border-t">
+                    <button
+                      onClick={() => { setShowCompanySelector(false); setShowAddCompanyModal(true); }}
+                      className="flex items-center gap-2 w-full px-4 py-3 text-emerald-600 hover:bg-emerald-50 font-medium"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Company
+                    </button>
+                  </div>
                 </div>
-                <div className="border-t">
-                  <button
-                    onClick={() => { setShowCompanySelector(false); setShowAddCompanyModal(true); }}
-                    className="flex items-center gap-2 w-full px-4 py-3 text-emerald-600 hover:bg-emerald-50 font-medium"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add Company
-                  </button>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
+            <button
+              onClick={() => setActiveTab('companies')}
+              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 px-3 py-2 rounded-lg transition-all"
+            >
+              <Users className="w-4 h-4" />
+              Manage
+            </button>
+            <button
+              onClick={() => setShowAddCompanyModal(true)}
+              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 px-3 py-2 rounded-lg transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              Add
+            </button>
           </div>
         </div>
       </header>
@@ -578,8 +579,8 @@ const AccountingDashboard = () => {
 
       {/* Click outside to close dropdown */}
       {showCompanySelector && (
-        <div 
-          className="fixed inset-0 z-40" 
+        <div
+          className="fixed inset-0 z-40"
           onClick={() => setShowCompanySelector(false)}
         />
       )}
@@ -1343,9 +1344,12 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
     customerVatNo: '',
     deliveryAddress: ['', '', '', '', ''],
     postalAddress: ['', '', '', '', '', ''],
-    discount: 0,
+    discountType: 'amount', // amount | percent
+    discountValue: 0,
     invoiceType: 'client',
     items: [{ id: 1, type: 'Item', description: '', unit: '', qty: 1, price: 0, vatType: 'Standard Rate (15.00%)', discPercent: 0 }],
+    paymentTerms: 'Due on receipt',
+    notes: '',
     status: 'Pending'
   });
 
@@ -1390,7 +1394,17 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
       totalVat += calc.vat;
       totalDiscount += calc.discount;
     });
-    return { subtotal, totalVat, totalDiscount, grandTotal: subtotal + totalVat };
+    const rawDiscountValue = newInvoice.discountValue ?? 0;
+    const discountType = newInvoice.discountType || 'amount';
+    const calculatedDiscount = discountType === 'percent'
+      ? subtotal * (Math.max(0, rawDiscountValue) / 100)
+      : Math.max(0, rawDiscountValue);
+    const invoiceDiscount = Math.max(0, Math.min(calculatedDiscount, subtotal));
+    const discountRatio = subtotal > 0 ? invoiceDiscount / subtotal : 0;
+    const vatAfterDiscount = totalVat * (1 - discountRatio);
+    const grandTotal = (subtotal - invoiceDiscount) + vatAfterDiscount;
+    totalDiscount += invoiceDiscount;
+    return { subtotal, totalVat: vatAfterDiscount, totalDiscount, invoiceDiscount, grandTotal };
   };
 
   const handleSaveInvoice = () => {
@@ -1401,7 +1415,8 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
       amount: totals.grandTotal,
       subtotal: totals.subtotal,
       vat: totals.totalVat,
-      totalDiscount: totals.totalDiscount
+      totalDiscount: totals.totalDiscount,
+      invoiceDiscount: totals.invoiceDiscount
     };
     saveInvoices([...invoices, invoice]);
     setShowInvoiceForm(false);
@@ -1415,9 +1430,12 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
       customerVatNo: '',
       deliveryAddress: ['', '', '', '', ''],
       postalAddress: ['', '', '', '', '', ''],
-      discount: 0,
+      discountType: 'amount',
+      discountValue: 0,
       invoiceType: 'client',
       items: [{ id: 1, type: 'Item', description: '', unit: '', qty: 1, price: 0, vatType: 'Standard Rate (15.00%)', discPercent: 0 }],
+      paymentTerms: 'Due on receipt',
+      notes: '',
       status: 'Pending'
     });
   };
@@ -1711,13 +1729,23 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Discount %</label>
-                  <input 
-                    type="number" 
-                    value={newInvoice.discount}
-                    onChange={(e) => setNewInvoice({...newInvoice, discount: parseFloat(e.target.value) || 0})}
-                    className="w-full border rounded px-3 py-2 text-sm"
-                  />
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Invoice Discount</label>
+                  <div className="flex gap-2">
+                    <select
+                      value={newInvoice.discountType}
+                      onChange={(e) => setNewInvoice({...newInvoice, discountType: e.target.value })}
+                      className="w-28 border rounded px-2 py-2 text-sm bg-slate-50"
+                    >
+                      <option value="amount">Amount (R)</option>
+                      <option value="percent">Percent (%)</option>
+                    </select>
+                    <input 
+                      type="number"
+                      value={newInvoice.discountValue}
+                      onChange={(e) => setNewInvoice({...newInvoice, discountValue: parseFloat(e.target.value) || 0})}
+                      className="flex-1 border rounded px-3 py-2 text-sm"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1827,6 +1855,33 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                 </table>
               </div>
 
+              {/* Payment Terms + Notes */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Payment Terms</label>
+                  <select
+                    value={newInvoice.paymentTerms}
+                    onChange={(e) => setNewInvoice({...newInvoice, paymentTerms: e.target.value})}
+                    className="w-full border rounded px-3 py-2 text-sm bg-slate-50"
+                  >
+                    <option>Due on receipt</option>
+                    <option>Net 7</option>
+                    <option>Net 14</option>
+                    <option>Net 30</option>
+                    <option>Net 60</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Invoice Notes</label>
+                  <textarea
+                    value={newInvoice.notes}
+                    onChange={(e) => setNewInvoice({...newInvoice, notes: e.target.value})}
+                    className="w-full border rounded px-3 py-2 text-sm h-[72px]"
+                    placeholder="e.g. Thank you for your business."
+                  />
+                </div>
+              </div>
+
               {/* Totals */}
               <div className="flex justify-end">
                 <div className="w-64 space-y-2">
@@ -1834,8 +1889,14 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                     <span className="text-slate-600">Subtotal:</span>
                     <span>R {totals.subtotal.toFixed(2)}</span>
                   </div>
+                  {totals.invoiceDiscount > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-600">Invoice Discount:</span>
+                      <span>-R {totals.invoiceDiscount.toFixed(2)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm">
-                    <span className="text-slate-600">VAT (15%):</span>
+                    <span className="text-slate-600">VAT:</span>
                     <span>R {totals.totalVat.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm font-bold border-t pt-2">
@@ -1872,8 +1933,11 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                       customerRef: '',
                       deliveryAddress: ['', '', '', '', ''],
                       postalAddress: ['', '', '', '', '', ''],
-                      discount: 0,
+                      discountType: 'amount',
+                      discountValue: 0,
                       items: [{ id: 1, type: 'Item', description: '', unit: '', qty: 1, price: 0, vatType: 'Standard 15%', discPercent: 0 }],
+                      paymentTerms: 'Due on receipt',
+                      notes: '',
                       status: 'Pending'
                     });
                   }}
@@ -1891,7 +1955,10 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                   onClick={() => {
                     const email = clients.find(c => c.name === newInvoice.customer)?.email || '';
                     const subject = `Invoice ${newInvoice.documentNo}`;
-                    const body = `Dear ${newInvoice.customer || 'Customer'},\n\nPlease find attached invoice ${newInvoice.documentNo}.\n\nTotal Amount: R ${totals.grandTotal.toFixed(2)}\nDue Date: ${newInvoice.dueDate}\n\nThank you for your business.`;
+                    const discountLine = totals.invoiceDiscount > 0 ? `Invoice Discount: R ${totals.invoiceDiscount.toFixed(2)}\n` : '';
+                    const notesLine = newInvoice.notes ? `Notes: ${newInvoice.notes}\n` : '';
+                    const termsLine = newInvoice.paymentTerms ? `Payment Terms: ${newInvoice.paymentTerms}\n` : '';
+                    const body = `Dear ${newInvoice.customer || 'Customer'},\n\nPlease find attached invoice ${newInvoice.documentNo}.\n\n${discountLine}${notesLine}${termsLine}Total Amount: R ${totals.grandTotal.toFixed(2)}\nDue Date: ${newInvoice.dueDate}\n\nThank you for your business.`;
                     window.open(`mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
                   }}
                   className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
@@ -2010,6 +2077,11 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                       <div>
                         <h4 className="font-semibold text-slate-800 text-sm">{invoice.documentNo}</h4>
                         <p className="text-sm font-medium text-slate-700 mt-0.5">{invoice.customer || 'No customer'}</p>
+                        {(invoice.customerRef || invoice.externalInvoiceNo || invoice.customerVatNo) && (
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Bill To: {invoice.customerRef || invoice.externalInvoiceNo || invoice.customerVatNo}
+                          </p>
+                        )}
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadge(invoice.status)}`}>
@@ -2136,6 +2208,14 @@ const PrintPreview = ({ invoice, onClose, company }) => {
         
         {/* Invoice Content - A4 Size */}
         <div className="p-8 min-h-[297mm] print:p-12" id="invoice-print">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="h-1 w-16 bg-emerald-600" />
+              <span className="text-xs uppercase tracking-[0.2em] text-slate-500">Tax Invoice</span>
+            </div>
+            <div className="text-xs text-slate-400">Generated by Accounting Pro</div>
+          </div>
+
           {/* Header with Logo and Invoice Details */}
           <div className="flex justify-between items-start mb-8">
             {/* Left side - Logo and Company Name */}
@@ -2157,13 +2237,13 @@ const PrintPreview = ({ invoice, onClose, company }) => {
                 </div>
               )}
             </div>
-            
+
             {/* Right side - Invoice Details Box */}
             <div className="text-right">
-              <h1 className="text-3xl font-bold text-slate-800 mb-4">
+              <h1 className="text-3xl font-bold text-slate-800 mb-3">
                 {invoice.invoiceType === 'supplier' ? 'SUPPLIER INVOICE' : 'INVOICE'}
               </h1>
-              <div className="text-sm space-y-1 border p-4 rounded bg-slate-50">
+              <div className="text-sm space-y-1 border border-slate-200 p-4 rounded-lg bg-slate-50">
                 <div className="flex justify-between gap-8">
                   <span className="text-slate-500">NUMBER:</span>
                   <span className="font-bold">{invoice.documentNo}</span>
@@ -2197,7 +2277,7 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           </div>
           
           {/* FROM and TO Section */}
-          <div className="grid grid-cols-2 gap-8 mb-8 border-t border-b border-slate-300 py-6">
+          <div className="grid grid-cols-2 gap-8 mb-8 border-t border-b border-slate-200 py-6">
             {/* FROM - Company Details */}
             <div>
               <p className="text-xs text-slate-500 font-bold mb-2 uppercase">From</p>
@@ -2250,11 +2330,24 @@ const PrintPreview = ({ invoice, onClose, company }) => {
               </div>
             </div>
           </div>
+
+          {(invoice.paymentTerms || invoice.notes) && (
+            <div className="grid grid-cols-2 gap-8 mb-6">
+              <div>
+                <p className="text-xs text-slate-500 font-bold mb-1 uppercase">Payment Terms</p>
+                <p className="text-sm text-slate-700">{invoice.paymentTerms || '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 font-bold mb-1 uppercase">Notes</p>
+                <p className="text-sm text-slate-700 whitespace-pre-wrap">{invoice.notes || '—'}</p>
+              </div>
+            </div>
+          )}
           
           {/* Line Items Table */}
-          <table className="w-full mb-8 text-sm">
+          <table className="w-full mb-8 text-sm border border-slate-200 rounded-lg overflow-hidden">
             <thead>
-              <tr className="border-b-2 border-slate-400 bg-slate-100">
+              <tr className="border-b-2 border-slate-300 bg-slate-100">
                 <th className="text-left py-3 px-2 font-bold text-slate-700">Description</th>
                 <th className="text-center py-3 px-2 font-bold text-slate-700 w-20">Quantity</th>
                 <th className="text-right py-3 px-2 font-bold text-slate-700 w-28">Unit Price</th>
@@ -2268,7 +2361,7 @@ const PrintPreview = ({ invoice, onClose, company }) => {
               {invoice.items?.map((item, idx) => {
                 const calc = calculateItemTotal(item);
                 return (
-                  <tr key={idx} className="border-b border-slate-200">
+                  <tr key={idx} className={`border-b border-slate-200 ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}`}>
                     <td className="py-3 px-2">{item.description || 'Item'}</td>
                     <td className="py-3 px-2 text-center">{item.qty || 1}</td>
                     <td className="py-3 px-2 text-right">R{(item.price || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -2300,6 +2393,12 @@ const PrintPreview = ({ invoice, onClose, company }) => {
             {/* Totals - Right */}
             <div className="w-80">
               <div className="space-y-2 text-sm border rounded p-4">
+                {invoice.invoiceDiscount > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Invoice Discount:</span>
+                    <span>-R{(invoice.invoiceDiscount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-slate-600">Total Discount:</span>
                   <span>R{(invoice.totalDiscount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -2328,6 +2427,10 @@ const PrintPreview = ({ invoice, onClose, company }) => {
                 <p className="text-3xl font-bold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
             </div>
+          </div>
+          <div className="mt-8 pt-6 border-t text-xs text-slate-500 flex justify-between">
+            <p>Thank you for your business.</p>
+            <p>Payment due by {invoice.dueDate}</p>
           </div>
         </div>
       </div>
