@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield } from 'lucide-react';
+import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield, Filter, SortAsc, TrendingUp, Clock, DollarSign } from 'lucide-react';
 import AuditModule from './AuditModule';
 
 // VAT Rate Options (South African VAT rates)
@@ -881,11 +881,458 @@ const MetricCard = ({ title, value, color, icon }) => {
   );
 };
 
+// ==================== CUSTOMER STATEMENTS SUB-VIEW ====================
+const CustomerStatements = ({ invoices, clients, company }) => {
+  const clientInvoices = invoices.filter(inv => inv.invoiceType !== 'supplier');
+  const initToday = new Date();
+  const firstOfMonth = new Date(initToday.getFullYear(), initToday.getMonth(), 1).toISOString().split('T')[0];
+  const todayStr = initToday.toISOString().split('T')[0];
+
+  const [selectedCustomer, setSelectedCustomer] = useState('');
+  const [dateFrom, setDateFrom] = useState(firstOfMonth);
+  const [dateTo, setDateTo] = useState(todayStr);
+
+  // Unique customers from invoices + clients list
+  const customerNames = Array.from(new Set([
+    ...clients.map(c => c.name),
+    ...clientInvoices.map(inv => inv.customer).filter(Boolean)
+  ])).sort();
+
+  // Build statement transactions for selected customer in date range
+  const buildStatement = () => {
+    if (!selectedCustomer) return { transactions: [], aging: null, openingBalance: 0, closingBalance: 0 };
+
+    const today = new Date(); // Fresh date each time statement is built
+    const from = new Date(dateFrom);
+    from.setHours(0, 0, 0, 0);
+    const to = new Date(dateTo);
+    to.setHours(23, 59, 59, 999);
+
+    // All invoices for this customer (for aging — not date filtered)
+    const allCustomerInvoices = clientInvoices.filter(inv => inv.customer === selectedCustomer);
+
+    // Invoices before the period start (opening balance = unpaid amounts)
+    const beforePeriod = allCustomerInvoices.filter(inv => new Date(inv.date) < from);
+    const openingBalance = beforePeriod.reduce((sum, inv) => {
+      if (inv.status === 'Paid') return sum;
+      return sum + (inv.amount || 0);
+    }, 0);
+
+    // Transactions within the date range
+    const periodInvoices = allCustomerInvoices.filter(inv => {
+      const d = new Date(inv.date);
+      return d >= from && d <= to;
+    });
+
+    // Sort by date, then by status (unpaid before paid) for correct running balance
+    const sorted = [...periodInvoices].sort((a, b) => {
+      const dateDiff = new Date(a.date) - new Date(b.date);
+      if (dateDiff !== 0) return dateDiff;
+      // Within same date, show invoices (debits) before payments (credits)
+      if (a.status === 'Paid' && b.status !== 'Paid') return 1;
+      if (a.status !== 'Paid' && b.status === 'Paid') return -1;
+      return 0;
+    });
+
+    // Build transactions: each invoice is a debit (amount owed).
+    // Paid invoices also generate a credit (payment received).
+    // This correctly reflects the double-entry nature of the statement.
+    let runningBalance = openingBalance;
+    const transactions = [];
+    sorted.forEach(inv => {
+      const amt = inv.amount || 0;
+      // Every invoice is a debit (charge to customer)
+      runningBalance += amt;
+      transactions.push({
+        date: inv.date,
+        description: `Invoice ${inv.documentNo}${inv.customerRef ? ` (Ref: ${inv.customerRef})` : ''}`,
+        invoiceNo: inv.documentNo,
+        status: inv.status,
+        debit: amt,
+        credit: 0,
+        balance: runningBalance,
+        dueDate: inv.dueDate,
+      });
+      // If paid, also show the payment as a separate credit line
+      if (inv.status === 'Paid') {
+        runningBalance -= amt;
+        transactions.push({
+          date: inv.date,
+          description: `Payment - Invoice ${inv.documentNo}`,
+          invoiceNo: inv.documentNo,
+          status: 'Paid',
+          debit: 0,
+          credit: amt,
+          balance: runningBalance,
+          dueDate: inv.dueDate,
+        });
+      }
+    });
+
+    // Aging buckets — based on ALL unpaid invoices vs today
+    // Standard accounting: Current, 1-30, 31-60, 61-90, 90+
+    const unpaid = allCustomerInvoices.filter(inv => inv.status !== 'Paid');
+    const aging = { current: 0, days30: 0, days60: 0, days90: 0, days90plus: 0 };
+    unpaid.forEach(inv => {
+      const due = new Date(inv.dueDate || inv.date);
+      const diffMs = today - due;
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const amt = inv.amount || 0;
+      if (diffDays <= 0) aging.current += amt;
+      else if (diffDays <= 30) aging.days30 += amt;
+      else if (diffDays <= 60) aging.days60 += amt;
+      else if (diffDays <= 90) aging.days90 += amt;
+      else aging.days90plus += amt;
+    });
+
+    const closingBalance = runningBalance;
+    return { transactions, aging, openingBalance, closingBalance };
+  };
+
+  const { transactions, aging, openingBalance, closingBalance } = buildStatement();
+
+  const fmt = (n) => `R ${(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const handlePrintStatement = () => {
+    if (!selectedCustomer) return;
+    const clientInfo = clients.find(c => c.name === selectedCustomer);
+
+    const agingHtml = aging ? `
+      <div class="aging">
+        <h3>Aging Analysis</h3>
+        <table>
+          <thead><tr><th>Current</th><th>1-30 Days</th><th>31-60 Days</th><th>61-90 Days</th><th>90+ Days</th><th>Total Outstanding</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>R ${aging.current.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+              <td>R ${aging.days30.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+              <td>R ${aging.days60.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+              <td>R ${aging.days90.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+              <td>R ${aging.days90plus.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+              <td><strong>R ${(aging.current + aging.days30 + aging.days60 + aging.days90 + aging.days90plus).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    ` : '';
+
+    const printContent = `
+      <html>
+      <head><title>Statement - ${selectedCustomer}</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 30px; font-size: 13px; color: #1e293b; }
+        h1 { color: #064e3b; margin-bottom: 4px; }
+        .header { display: flex; justify-content: space-between; margin-bottom: 24px; border-bottom: 2px solid #064e3b; padding-bottom: 16px; }
+        .company-name { font-size: 20px; font-weight: bold; }
+        .meta { font-size: 12px; color: #475569; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th { background: #ecfdf5; text-align: left; padding: 8px; border: 1px solid #d1fae5; font-size: 12px; }
+        td { padding: 7px 8px; border: 1px solid #e2e8f0; }
+        .text-right { text-align: right; }
+        .bold { font-weight: bold; }
+        .summary { margin-top: 20px; display: flex; justify-content: flex-end; }
+        .summary-box { border: 2px solid #064e3b; padding: 12px 20px; min-width: 260px; }
+        .summary-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+        .summary-total { border-top: 2px solid #064e3b; margin-top: 8px; padding-top: 8px; font-size: 15px; font-weight: bold; }
+        .aging { margin-top: 30px; }
+        .aging h3 { color: #064e3b; }
+        .status-paid { color: #047857; }
+        .status-overdue { color: #dc2626; }
+        .status-pending { color: #d97706; }
+        @media print { body { padding: 20px; } }
+      </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="company-name">${company?.name || 'Your Company'}</div>
+            ${company?.vatNo ? `<div class="meta">VAT No: ${company.vatNo}</div>` : ''}
+            ${company?.address ? `<div class="meta">${company.address}</div>` : ''}
+            ${company?.phone ? `<div class="meta">Tel: ${company.phone}</div>` : ''}
+          </div>
+          <div style="text-align:right;">
+            <h1>CUSTOMER STATEMENT</h1>
+            <div class="meta">Period: ${dateFrom} to ${dateTo}</div>
+            <div class="meta">Printed: ${new Date().toLocaleDateString('en-ZA')}</div>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+          <strong>Customer:</strong> ${selectedCustomer}<br/>
+          ${clientInfo?.email ? `<span class="meta">Email: ${clientInfo.email}</span>` : ''}
+          ${clientInfo?.phone ? ` &nbsp; Phone: ${clientInfo.phone}` : ''}
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Status</th>
+              <th class="text-right">Debit (Invoiced)</th>
+              <th class="text-right">Credit (Paid)</th>
+              <th class="text-right">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>${dateFrom}</td>
+              <td>Opening Balance</td>
+              <td></td>
+              <td class="text-right"></td>
+              <td class="text-right"></td>
+              <td class="text-right bold">R ${openingBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+            </tr>
+            ${transactions.map(t => `
+              <tr>
+                <td>${t.date}</td>
+                <td>${t.description}</td>
+                <td class="${t.status === 'Paid' ? 'status-paid' : t.status === 'Overdue' ? 'status-overdue' : 'status-pending'}">${t.status}</td>
+                <td class="text-right">${t.debit > 0 ? 'R ' + t.debit.toLocaleString('en-ZA', { minimumFractionDigits: 2 }) : ''}</td>
+                <td class="text-right">${t.credit > 0 ? 'R ' + t.credit.toLocaleString('en-ZA', { minimumFractionDigits: 2 }) : ''}</td>
+                <td class="text-right bold">R ${t.balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <div class="summary">
+          <div class="summary-box">
+            <div class="summary-row"><span>Opening Balance:</span><span>R ${openingBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+            <div class="summary-row"><span>Total Invoiced:</span><span>R ${transactions.reduce((s, t) => s + t.debit, 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+            <div class="summary-row"><span>Total Payments:</span><span>R ${transactions.reduce((s, t) => s + t.credit, 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+            <div class="summary-row summary-total"><span>Closing Balance:</span><span>R ${closingBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+          </div>
+        </div>
+
+        ${agingHtml}
+      </body>
+      </html>
+    `;
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(printContent);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  const totalOutstanding = aging ? (aging.current + aging.days30 + aging.days60 + aging.days90 + aging.days90plus) : 0;
+
+  return (
+    <div className="space-y-5">
+      {/* Controls */}
+      <div className="bg-white rounded-lg border p-4 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Customer</label>
+            <select
+              value={selectedCustomer}
+              onChange={e => setSelectedCustomer(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            >
+              <option value="">-- Select Customer --</option>
+              {customerNames.map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">From Date</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">To Date</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            />
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={handlePrintStatement}
+              disabled={!selectedCustomer}
+              className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Printer className="w-4 h-4" /> Print Statement
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {!selectedCustomer ? (
+        <div className="text-center py-16 bg-white rounded-lg border">
+          <Users className="w-12 h-12 text-emerald-300 mx-auto mb-3" />
+          <p className="text-slate-500 font-medium">Select a customer to view their statement</p>
+          <p className="text-sm text-slate-400 mt-1">Choose a customer from the dropdown above</p>
+        </div>
+      ) : (
+        <>
+          {/* Summary Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-white rounded-lg border p-4">
+              <p className="text-xs text-slate-500 font-medium mb-1">Opening Balance</p>
+              <p className="text-lg font-bold text-slate-800">{fmt(openingBalance)}</p>
+            </div>
+            <div className="bg-white rounded-lg border p-4">
+              <p className="text-xs text-slate-500 font-medium mb-1">Period Invoiced</p>
+              <p className="text-lg font-bold text-blue-600">{fmt(transactions.reduce((s, t) => s + t.debit, 0))}</p>
+            </div>
+            <div className="bg-white rounded-lg border p-4">
+              <p className="text-xs text-slate-500 font-medium mb-1">Period Payments</p>
+              <p className="text-lg font-bold text-emerald-600">{fmt(transactions.reduce((s, t) => s + t.credit, 0))}</p>
+            </div>
+            <div className="bg-emerald-50 rounded-lg border border-emerald-200 p-4">
+              <p className="text-xs text-emerald-700 font-medium mb-1">Closing Balance</p>
+              <p className="text-lg font-bold text-emerald-800">{fmt(closingBalance)}</p>
+            </div>
+          </div>
+
+          {/* Transaction Table */}
+          <div className="bg-white rounded-lg border overflow-hidden">
+            <div className="px-4 py-3 bg-slate-50 border-b">
+              <h3 className="font-semibold text-slate-700 text-sm">
+                Transaction History — {selectedCustomer}
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">{dateFrom} to {dateTo}</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-emerald-50 border-b">
+                    <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Date</th>
+                    <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Description</th>
+                    <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Status</th>
+                    <th className="text-right px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Debit (Invoiced)</th>
+                    <th className="text-right px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Credit (Paid)</th>
+                    <th className="text-right px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Running Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Opening balance row */}
+                  <tr className="border-b bg-slate-50">
+                    <td className="px-4 py-2.5 text-slate-500 text-xs">{dateFrom}</td>
+                    <td className="px-4 py-2.5 font-medium text-slate-600 text-xs">Opening Balance</td>
+                    <td className="px-4 py-2.5"></td>
+                    <td className="px-4 py-2.5 text-right text-slate-400">—</td>
+                    <td className="px-4 py-2.5 text-right text-slate-400">—</td>
+                    <td className="px-4 py-2.5 text-right font-semibold text-slate-700">{fmt(openingBalance)}</td>
+                  </tr>
+
+                  {transactions.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">
+                        No transactions found for this period
+                      </td>
+                    </tr>
+                  ) : (
+                    transactions.map((t, idx) => (
+                      <tr key={idx} className="border-b hover:bg-slate-50 transition-colors">
+                        <td className="px-4 py-2.5 text-slate-600 text-xs whitespace-nowrap">{t.date}</td>
+                        <td className="px-4 py-2.5 text-slate-800">{t.description}</td>
+                        <td className="px-4 py-2.5">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                            t.status === 'Paid' ? 'bg-emerald-100 text-emerald-700' :
+                            t.status === 'Overdue' ? 'bg-red-100 text-red-700' :
+                            'bg-amber-100 text-amber-700'
+                          }`}>
+                            {t.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-blue-700 font-medium">
+                          {t.debit > 0 ? fmt(t.debit) : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-emerald-700 font-medium">
+                          {t.credit > 0 ? fmt(t.credit) : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-semibold text-slate-800">{fmt(t.balance)}</td>
+                      </tr>
+                    ))
+                  )}
+
+                  {/* Closing balance row */}
+                  <tr className="bg-emerald-50 border-t-2 border-emerald-200">
+                    <td className="px-4 py-3 text-emerald-800 font-bold text-xs" colSpan={2}>Closing Balance</td>
+                    <td></td>
+                    <td className="px-4 py-3 text-right font-bold text-blue-700">
+                      {fmt(transactions.reduce((s, t) => s + t.debit, 0))}
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold text-emerald-700">
+                      {fmt(transactions.reduce((s, t) => s + t.credit, 0))}
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold text-emerald-800 text-base">{fmt(closingBalance)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Aging Analysis */}
+          {aging && (
+            <div className="bg-white rounded-lg border overflow-hidden">
+              <div className="px-4 py-3 bg-slate-50 border-b flex items-center gap-2">
+                <Clock className="w-4 h-4 text-slate-500" />
+                <h3 className="font-semibold text-slate-700 text-sm">Aging Analysis — Outstanding Invoices</h3>
+              </div>
+              <div className="p-4 grid grid-cols-2 md:grid-cols-6 gap-4">
+                <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200 text-center">
+                  <p className="text-xs font-medium text-emerald-600 mb-1">Current</p>
+                  <p className="text-base font-bold text-emerald-800">{fmt(aging.current)}</p>
+                  <p className="text-xs text-emerald-500">Not yet due</p>
+                </div>
+                <div className="bg-amber-50 rounded-lg p-3 border border-amber-200 text-center">
+                  <p className="text-xs font-medium text-amber-600 mb-1">1-30 Days</p>
+                  <p className="text-base font-bold text-amber-800">{fmt(aging.days30)}</p>
+                  <p className="text-xs text-amber-500">Overdue 1-30d</p>
+                </div>
+                <div className="bg-orange-50 rounded-lg p-3 border border-orange-200 text-center">
+                  <p className="text-xs font-medium text-orange-600 mb-1">31-60 Days</p>
+                  <p className="text-base font-bold text-orange-800">{fmt(aging.days60)}</p>
+                  <p className="text-xs text-orange-500">Overdue 31-60d</p>
+                </div>
+                <div className="bg-red-50 rounded-lg p-3 border border-red-200 text-center">
+                  <p className="text-xs font-medium text-red-600 mb-1">61-90 Days</p>
+                  <p className="text-base font-bold text-red-800">{fmt(aging.days90)}</p>
+                  <p className="text-xs text-red-500">Overdue 61-90d</p>
+                </div>
+                <div className="bg-red-100 rounded-lg p-3 border border-red-300 text-center">
+                  <p className="text-xs font-medium text-red-700 mb-1">90+ Days</p>
+                  <p className="text-base font-bold text-red-900">{fmt(aging.days90plus)}</p>
+                  <p className="text-xs text-red-600">Severely overdue</p>
+                </div>
+                <div className="bg-slate-100 rounded-lg p-3 border border-slate-300 text-center">
+                  <p className="text-xs font-medium text-slate-600 mb-1">Total Outstanding</p>
+                  <p className="text-base font-bold text-slate-800">{fmt(totalOutstanding)}</p>
+                  <p className="text-xs text-slate-500">All unpaid</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
 // ==================== CUSTOMERS VIEW (Client Invoices) ====================
 const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setShowInvoiceForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, company }) => {
   // Filter to only show client invoices (not supplier)
   const clientInvoices = invoices.filter(inv => inv.invoiceType !== 'supplier');
-  
+
+  // Sub-tab: 'invoices' | 'statements'
+  const [activeSubTab, setActiveSubTab] = useState('invoices');
+
+  // Search & filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [sortBy, setSortBy] = useState('date-desc');
+
   const [newInvoice, setNewInvoice] = useState({
     customer: '',
     documentNo: `INV-${Date.now()}`,
@@ -985,24 +1432,190 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
 
   const totals = invoiceTotals();
 
+  // ---- Stats for the summary bar ----
+  const totalInvoiced = clientInvoices.reduce((s, inv) => s + (inv.amount || 0), 0);
+  const totalPaid = clientInvoices.filter(inv => inv.status === 'Paid').reduce((s, inv) => s + (inv.amount || 0), 0);
+  const totalOutstanding = clientInvoices.filter(inv => inv.status !== 'Paid').reduce((s, inv) => s + (inv.amount || 0), 0);
+  const overdueCount = clientInvoices.filter(inv => inv.status === 'Overdue').length;
+
+  // ---- Filtering + Sorting ----
+  const filteredInvoices = clientInvoices
+    .filter(inv => {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch = !q ||
+        (inv.customer || '').toLowerCase().includes(q) ||
+        (inv.documentNo || '').toLowerCase().includes(q) ||
+        (inv.status || '').toLowerCase().includes(q);
+      const matchesStatus = statusFilter === 'All' || inv.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'date-asc': return new Date(a.date) - new Date(b.date);
+        case 'date-desc': return new Date(b.date) - new Date(a.date);
+        case 'amount-asc': return (a.amount || 0) - (b.amount || 0);
+        case 'amount-desc': return (b.amount || 0) - (a.amount || 0);
+        case 'customer': return (a.customer || '').localeCompare(b.customer || '');
+        case 'status': return (a.status || '').localeCompare(b.status || '');
+        default: return new Date(b.date) - new Date(a.date);
+      }
+    });
+
+  const fmtAmt = (n) => `R ${(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const statusBadge = (status) => {
+    const styles = {
+      'Paid': 'bg-emerald-100 text-emerald-700 border border-emerald-200',
+      'Overdue': 'bg-red-100 text-red-700 border border-red-200',
+      'Pending': 'bg-amber-100 text-amber-700 border border-amber-200',
+    };
+    return styles[status] || 'bg-slate-100 text-slate-600 border border-slate-200';
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-xl font-semibold text-slate-800">Customer Invoices</h2>
-          <p className="text-sm text-slate-500">Invoices for payments received from customers</p>
+          <h2 className="text-xl font-semibold text-slate-800">Customers</h2>
+          <p className="text-sm text-slate-500">Customer invoices and account statements</p>
         </div>
+        {activeSubTab === 'invoices' && (
+          <button
+            onClick={() => setShowInvoiceForm(true)}
+            className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium shadow-sm"
+          >
+            <Plus className="w-4 h-4" /> New Invoice
+          </button>
+        )}
+      </div>
+
+      {/* Sub-tab Toggle */}
+      <div className="flex bg-slate-100 rounded-lg p-1 w-fit">
         <button
-          onClick={() => setShowInvoiceForm(true)}
-          className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+          onClick={() => setActiveSubTab('invoices')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+            activeSubTab === 'invoices'
+              ? 'bg-white text-emerald-700 shadow-sm'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
         >
-          <Plus className="w-4 h-4" /> New Customer Invoice
+          <FileText className="w-4 h-4" /> Invoices
+        </button>
+        <button
+          onClick={() => setActiveSubTab('statements')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+            activeSubTab === 'statements'
+              ? 'bg-white text-emerald-700 shadow-sm'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <TrendingUp className="w-4 h-4" /> Statements
         </button>
       </div>
 
-      {/* Invoice Form Modal */}
-      {showInvoiceForm && (
+      {activeSubTab === 'statements' ? (
+        <CustomerStatements invoices={invoices} clients={clients} company={company} />
+      ) : (
+        <>
+          {/* Summary Stats Bar */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-white rounded-lg border p-4 flex items-center gap-3">
+              <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                <FileText className="w-5 h-5 text-blue-500" />
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 font-medium">Total Invoices</p>
+                <p className="text-lg font-bold text-slate-800">{clientInvoices.length}</p>
+              </div>
+            </div>
+            <div className="bg-white rounded-lg border p-4 flex items-center gap-3">
+              <div className="w-9 h-9 bg-slate-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                <DollarSign className="w-5 h-5 text-slate-500" />
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 font-medium">Total Invoiced</p>
+                <p className="text-base font-bold text-slate-800">{fmtAmt(totalInvoiced)}</p>
+              </div>
+            </div>
+            <div className="bg-white rounded-lg border p-4 flex items-center gap-3">
+              <div className="w-9 h-9 bg-emerald-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                <Check className="w-5 h-5 text-emerald-500" />
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 font-medium">Total Paid</p>
+                <p className="text-base font-bold text-emerald-600">{fmtAmt(totalPaid)}</p>
+              </div>
+            </div>
+            <div className="bg-white rounded-lg border p-4 flex items-center gap-3">
+              <div className="w-9 h-9 bg-red-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                <AlertCircle className="w-5 h-5 text-red-500" />
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 font-medium">Overdue</p>
+                <p className="text-base font-bold text-red-600">
+                  {overdueCount} invoice{overdueCount !== 1 ? 's' : ''}
+                </p>
+                <p className="text-xs text-slate-400">{fmtAmt(totalOutstanding)} outstanding</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Search, Filter & Sort Bar */}
+          <div className="bg-white rounded-lg border p-3 flex flex-wrap gap-3 items-center">
+            <div className="flex-1 min-w-48 relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search by customer, invoice #, status..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-slate-50"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-slate-400" />
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value)}
+                className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-slate-50"
+              >
+                <option value="All">All Statuses</option>
+                <option value="Pending">Pending</option>
+                <option value="Paid">Paid</option>
+                <option value="Overdue">Overdue</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <SortAsc className="w-4 h-4 text-slate-400" />
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-slate-50"
+              >
+                <option value="date-desc">Date (Newest)</option>
+                <option value="date-asc">Date (Oldest)</option>
+                <option value="amount-desc">Amount (High-Low)</option>
+                <option value="amount-asc">Amount (Low-High)</option>
+                <option value="customer">Customer Name</option>
+                <option value="status">Status</option>
+              </select>
+            </div>
+            {(searchQuery || statusFilter !== 'All') && (
+              <button
+                onClick={() => { setSearchQuery(''); setStatusFilter('All'); }}
+                className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-500 transition-colors"
+              >
+                <X className="w-3.5 h-3.5" /> Clear
+              </button>
+            )}
+            <span className="ml-auto text-xs text-slate-400">
+              {filteredInvoices.length} of {clientInvoices.length}
+            </span>
+          </div>
+
+          {/* Invoice Form Modal */}
+          {showInvoiceForm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center overflow-y-auto py-8">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl mx-4">
             <div className="p-6 border-b flex justify-between items-center bg-slate-50">
@@ -1377,73 +1990,108 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
             </div>
           </div>
         </div>
-      )}
+          )}
 
-      {/* Print Preview Modal */}
-      {showPrintPreview && selectedInvoice && (
-        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={company} />
-      )}
+          {/* Print Preview Modal */}
+          {showPrintPreview && selectedInvoice && (
+            <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={company} />
+          )}
 
-      {/* Client Invoices List */}
-      {clientInvoices.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {clientInvoices.map(invoice => (
-            <div key={invoice.id} className="bg-white rounded-lg border shadow-sm p-5 border-l-4 border-l-blue-500">
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <h4 className="font-semibold text-slate-800">{invoice.documentNo}</h4>
-                  <p className="text-sm text-slate-600">{invoice.customer || 'No customer'}</p>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${
-                    invoice.status === 'Paid' ? 'bg-emerald-100 text-emerald-700' :
-                    invoice.status === 'Overdue' ? 'bg-red-100 text-red-700' :
-                    'bg-amber-100 text-amber-700'
-                  }`}>
-                    {invoice.status}
-                  </span>
-                  {invoice.createdFromBank && (
-                    <span className="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-600">From Bank</span>
-                  )}
-                </div>
-              </div>
-              <div className="text-xl font-bold text-blue-600 mb-3">
-                R {(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
-              </div>
-              <div className="text-xs text-slate-500 mb-4">
-                Date: {invoice.date} • Due: {invoice.dueDate}
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => { setSelectedInvoice(invoice); setShowPrintPreview(true); }}
-                  className="flex-1 text-sm py-2 border rounded hover:bg-slate-50"
-                >
-                  <Eye className="w-4 h-4 inline mr-1" /> View
-                </button>
-                {invoice.status !== 'Paid' && (
-                  <button 
-                    onClick={() => markAsPaid(invoice.id)}
-                    className="flex-1 text-sm py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700"
-                  >
-                    <Check className="w-4 h-4 inline mr-1" /> Paid
-                  </button>
-                )}
-                <button 
-                  onClick={() => deleteInvoice(invoice.id)}
-                  className="px-3 py-2 text-red-600 border border-red-200 rounded hover:bg-red-50"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
+          {/* Client Invoices List */}
+          {filteredInvoices.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredInvoices.map(invoice => {
+                const isOverdue = invoice.status === 'Overdue';
+                const isPaid = invoice.status === 'Paid';
+                const borderColor = isPaid ? 'border-l-emerald-500' : isOverdue ? 'border-l-red-500' : 'border-l-amber-400';
+                return (
+                  <div key={invoice.id} className={`bg-white rounded-lg border shadow-sm p-5 border-l-4 ${borderColor} hover:shadow-md transition-shadow`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h4 className="font-semibold text-slate-800 text-sm">{invoice.documentNo}</h4>
+                        <p className="text-sm font-medium text-slate-700 mt-0.5">{invoice.customer || 'No customer'}</p>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadge(invoice.status)}`}>
+                          {invoice.status}
+                        </span>
+                        {invoice.createdFromBank && (
+                          <span className="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-500">From Bank</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 mb-3">
+                      <p className="text-2xl font-bold text-slate-900">
+                        {fmtAmt(invoice.amount)}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3 text-xs text-slate-500 mb-4 border-t pt-2">
+                      <span>
+                        <Calendar className="w-3 h-3 inline mr-1" />
+                        {invoice.date}
+                      </span>
+                      <span className={isOverdue ? 'text-red-600 font-medium' : ''}>
+                        Due: {invoice.dueDate}
+                      </span>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setSelectedInvoice(invoice); setShowPrintPreview(true); }}
+                        className="flex-1 flex items-center justify-center gap-1 text-xs py-1.5 border rounded-md hover:bg-slate-50 transition-colors text-slate-600"
+                      >
+                        <Eye className="w-3.5 h-3.5" /> View
+                      </button>
+                      {!isPaid && (
+                        <button
+                          onClick={() => markAsPaid(invoice.id)}
+                          className="flex-1 flex items-center justify-center gap-1 text-xs py-1.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors"
+                        >
+                          <Check className="w-3.5 h-3.5" /> Mark Paid
+                        </button>
+                      )}
+                      <button
+                        onClick={() => deleteInvoice(invoice.id)}
+                        className="px-2.5 py-1.5 text-red-500 border border-red-100 rounded-md hover:bg-red-50 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-12 bg-white rounded-lg border">
-          <Users className="w-12 h-12 text-blue-300 mx-auto mb-3" />
-          <p className="text-slate-500">No customer invoices yet.</p>
-          <p className="text-sm text-slate-400 mt-1">Create a new invoice or convert a bank receipt.</p>
-        </div>
+          ) : (
+            <div className="text-center py-16 bg-white rounded-lg border">
+              {clientInvoices.length === 0 ? (
+                <>
+                  <FileText className="w-12 h-12 text-emerald-200 mx-auto mb-3" />
+                  <p className="text-slate-500 font-medium">No customer invoices yet.</p>
+                  <p className="text-sm text-slate-400 mt-1">Create a new invoice to get started.</p>
+                  <button
+                    onClick={() => setShowInvoiceForm(true)}
+                    className="mt-4 flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 text-sm font-medium mx-auto"
+                  >
+                    <Plus className="w-4 h-4" /> New Invoice
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Search className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                  <p className="text-slate-500 font-medium">No invoices match your filters.</p>
+                  <button
+                    onClick={() => { setSearchQuery(''); setStatusFilter('All'); }}
+                    className="mt-3 text-sm text-emerald-600 hover:underline"
+                  >
+                    Clear filters
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -2330,7 +2978,7 @@ Rules:
             <Building2 className="w-4 h-4" />
             Supplier Contacts
             <span className={`px-2 py-0.5 rounded-full text-xs ${activeTab === 'contacts' ? 'bg-orange-200 text-orange-800' : 'bg-slate-200 text-slate-600'}`}>
-              {suppliers.length}}
+              {suppliers.length}
             </span>
           </div>
         </button>
