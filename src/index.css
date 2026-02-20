@@ -1,3 +1,22 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@media print {
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+
+  /* Hide navigation, main content, and header when printing */
+  nav, main, header {
+    display: none !important;
+  }
+
+  /* Invoice content area should auto-size, not force a minimum height */
+  #invoice-print {
+    min-height: auto !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+}
