@@ -3,20 +3,41 @@
 @tailwind utilities;
 
 @media print {
-  @page {
-    size: A4;
-    margin: 10mm;
+  /* Hide everything except the invoice content */
+  body * {
+    visibility: hidden;
   }
 
-  /* Hide navigation, main content, and header when printing */
-  nav, main, header {
+  #invoice-print,
+  #invoice-print * {
+    visibility: visible;
+  }
+
+  #invoice-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 20px;
+  }
+
+  /* Hide the modal overlay and controls during print */
+  .fixed.inset-0 {
+    position: absolute;
+    background: none !important;
+    padding: 0 !important;
+  }
+
+  /* Hide print/close buttons */
+  .sticky.top-0 {
     display: none !important;
   }
 
-  /* Invoice content area should auto-size, not force a minimum height */
-  #invoice-print {
-    min-height: auto !important;
-    padding: 0 !important;
-    width: 100% !important;
+  /* Remove max-height scroll on print */
+  .max-h-\[90vh\] {
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
   }
 }

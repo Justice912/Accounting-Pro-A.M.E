@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield } from 'lucide-react';
-import AuditModule from './AuditModule';
+import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet } from 'lucide-react';
 
 // VAT Rate Options (South African VAT rates)
 const VAT_RATES = [
@@ -93,13 +92,24 @@ const DEFAULT_ACCOUNTS = [
 // ==================== MAIN APP ====================
 const AccountingDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [loading, setLoading] = useState(true);
+  
+  // Multi-company state
+  const [companies, setCompanies] = useState([]);
+  const [activeCompanyId, setActiveCompanyId] = useState(null);
+  const [showCompanySelector, setShowCompanySelector] = useState(false);
+  const [showAddCompanyModal, setShowAddCompanyModal] = useState(false);
+  const [newCompanyName, setNewCompanyName] = useState('');
+  const [newCompanyLogo, setNewCompanyLogo] = useState(null);
+  const companyLogoInputRef = React.useRef(null);
+  
+  // Per-company data
   const [invoices, setInvoices] = useState([]);
   const [clients, setClients] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [bankStatements, setBankStatements] = useState([]);
   const [vatTransactions, setVatTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
-  const [loading, setLoading] = useState(true);
   
   // Modal states
   const [showInvoiceForm, setShowInvoiceForm] = useState(false);
@@ -109,45 +119,95 @@ const AccountingDashboard = () => {
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [showAccountForm, setShowAccountForm] = useState(false);
 
-  // Load data on mount
+  // Get active company
+  const activeCompany = companies.find(c => c.id === activeCompanyId);
+
+  // Load companies list and last active company on mount
   useEffect(() => {
-    loadAllData();
-    // Failsafe timeout - if still loading after 3 seconds, stop loading
+    loadCompanies();
     const timeout = setTimeout(() => {
       setLoading(false);
-      if (accounts.length === 0) {
-        setAccounts(DEFAULT_ACCOUNTS);
-      }
     }, 3000);
     return () => clearTimeout(timeout);
   }, []);
 
-  const loadAllData = async () => {
+  // Load company-specific data when active company changes
+  useEffect(() => {
+    if (activeCompanyId) {
+      loadCompanyData(activeCompanyId);
+    }
+  }, [activeCompanyId]);
+
+  const loadCompanies = async () => {
     try {
-      // Check if storage is available
       if (typeof localStorage === "undefined") {
-        console.log('Storage not available, using defaults');
+        // Default company if no storage
+        const defaultCompany = { id: 'default', name: 'My Company', createdAt: new Date().toISOString() };
+        setCompanies([defaultCompany]);
+        setActiveCompanyId('default');
         setAccounts(DEFAULT_ACCOUNTS);
         setLoading(false);
         return;
       }
 
+      const companiesRes = await Promise.resolve({ value: localStorage.getItem('accounting-companies') });
+      const lastActiveRes = await Promise.resolve({ value: localStorage.getItem('accounting-active-company') });
+      
+      let loadedCompanies = [];
+      if (companiesRes?.value) {
+        loadedCompanies = JSON.parse(companiesRes.value);
+      }
+      
+      // If no companies exist, create a default one
+      if (loadedCompanies.length === 0) {
+        const defaultCompany = { id: 'default', name: 'My Company', createdAt: new Date().toISOString() };
+        loadedCompanies = [defaultCompany];
+        localStorage.setItem('accounting-companies', JSON.stringify(loadedCompanies)).catch(() => {});
+      }
+      
+      setCompanies(loadedCompanies);
+      
+      // Set active company
+      const lastActiveId = lastActiveRes?.value;
+      if (lastActiveId && loadedCompanies.find(c => c.id === lastActiveId)) {
+        setActiveCompanyId(lastActiveId);
+      } else {
+        setActiveCompanyId(loadedCompanies[0].id);
+      }
+    } catch (error) {
+      console.log('Error loading companies:', error);
+      const defaultCompany = { id: 'default', name: 'My Company', createdAt: new Date().toISOString() };
+      setCompanies([defaultCompany]);
+      setActiveCompanyId('default');
+    }
+  };
+
+  const loadCompanyData = async (companyId) => {
+    try {
+      if (typeof localStorage === "undefined") {
+        setAccounts(DEFAULT_ACCOUNTS);
+        setLoading(false);
+        return;
+      }
+
+      // Load all data for the specific company using company-prefixed keys
+      const prefix = `company-${companyId}`;
       const [invRes, clientRes, suppRes, bankRes, vatRes, accRes] = await Promise.all([
-        Promise.resolve({ value: localStorage.getItem('accounting-invoices') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-clients') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-suppliers') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-bank-statements') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-vat-transactions') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-accounts') })
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-invoices`) }),
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-clients`) }),
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-suppliers`) }),
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-bank-statements`) }),
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-vat-transactions`) }),
+        Promise.resolve({ value: localStorage.getItem(`${prefix}-accounts`) })
       ]);
       
-      if (invRes?.value) setInvoices(JSON.parse(invRes.value));
-      if (clientRes?.value) setClients(JSON.parse(clientRes.value));
-      if (suppRes?.value) setSuppliers(JSON.parse(suppRes.value));
-      if (bankRes?.value) setBankStatements(JSON.parse(bankRes.value));
-      if (vatRes?.value) setVatTransactions(JSON.parse(vatRes.value));
+      setInvoices(invRes?.value ? JSON.parse(invRes.value) : []);
+      setClients(clientRes?.value ? JSON.parse(clientRes.value) : []);
+      setSuppliers(suppRes?.value ? JSON.parse(suppRes.value) : []);
+      setBankStatements(bankRes?.value ? JSON.parse(bankRes.value) : []);
+      setVatTransactions(vatRes?.value ? JSON.parse(vatRes.value) : []);
       
-      // Load accounts or use defaults - always ensure we have accounts
+      // Load accounts or use defaults
       let loadedAccounts = [];
       if (accRes?.value) {
         try {
@@ -159,47 +219,151 @@ const AccountingDashboard = () => {
       
       if (!loadedAccounts || loadedAccounts.length === 0) {
         setAccounts(DEFAULT_ACCOUNTS);
-        // Save defaults to storage
-        window.storage.set('accounting-accounts', JSON.stringify(DEFAULT_ACCOUNTS)).catch(() => {});
+        window.storage.set(`${prefix}-accounts`, JSON.stringify(DEFAULT_ACCOUNTS)).catch(() => {});
       } else {
         setAccounts(loadedAccounts);
       }
+      
+      // Save last active company
+      localStorage.setItem('accounting-active-company', companyId);
     } catch (error) {
-      console.log('Loading fresh data:', error);
+      console.log('Error loading company data:', error);
       setAccounts(DEFAULT_ACCOUNTS);
     } finally {
       setLoading(false);
     }
   };
 
+  const addCompany = async () => {
+    if (!newCompanyName.trim()) return;
+    
+    const newCompany = {
+      id: `company-${Date.now()}`,
+      name: newCompanyName.trim(),
+      logo: newCompanyLogo || null,
+      createdAt: new Date().toISOString()
+    };
+    
+    const updatedCompanies = [...companies, newCompany];
+    setCompanies(updatedCompanies);
+    
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem('accounting-companies', JSON.stringify(updatedCompanies)).catch(() => {});
+    }
+    
+    setNewCompanyName('');
+    setNewCompanyLogo(null);
+    setShowAddCompanyModal(false);
+    
+    // Switch to the new company
+    setActiveCompanyId(newCompany.id);
+  };
+
+  // Handle company logo upload
+  const handleCompanyLogoUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setNewCompanyLogo(event.target.result);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  // Update existing company logo
+  const updateCompanyLogo = async (companyId, logoData) => {
+    const updatedCompanies = companies.map(c => 
+      c.id === companyId ? { ...c, logo: logoData } : c
+    );
+    setCompanies(updatedCompanies);
+    
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem('accounting-companies', JSON.stringify(updatedCompanies)).catch(() => {});
+    }
+  };
+
+  const switchCompany = (companyId) => {
+    if (companyId !== activeCompanyId) {
+      setLoading(true);
+      setActiveCompanyId(companyId);
+    }
+    setShowCompanySelector(false);
+  };
+
+  const deleteCompany = async (companyId) => {
+    if (companies.length <= 1) {
+      alert('Cannot delete the last company');
+      return;
+    }
+    
+    if (!confirm('Are you sure you want to delete this company and all its data?')) {
+      return;
+    }
+    
+    const updatedCompanies = companies.filter(c => c.id !== companyId);
+    setCompanies(updatedCompanies);
+    
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem('accounting-companies', JSON.stringify(updatedCompanies)).catch(() => {});
+      // Delete company data
+      const prefix = `company-${companyId}`;
+      localStorage.removeItem(`${prefix}-invoices`);
+      localStorage.removeItem(`${prefix}-clients`);
+      localStorage.removeItem(`${prefix}-suppliers`);
+      localStorage.removeItem(`${prefix}-bank-statements`);
+      localStorage.removeItem(`${prefix}-vat-transactions`);
+      localStorage.removeItem(`${prefix}-accounts`);
+    }
+    
+    // Switch to another company if we deleted the active one
+    if (companyId === activeCompanyId) {
+      setActiveCompanyId(updatedCompanies[0].id);
+    }
+  };
+
+  // Save functions with company prefix
   const saveInvoices = async (data) => {
     setInvoices(data);
-    localStorage.setItem('accounting-invoices', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-invoices`, JSON.stringify(data));
+    }
   };
 
   const saveClients = async (data) => {
     setClients(data);
-    localStorage.setItem('accounting-clients', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-clients`, JSON.stringify(data));
+    }
   };
 
   const saveSuppliers = async (data) => {
     setSuppliers(data);
-    localStorage.setItem('accounting-suppliers', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-suppliers`, JSON.stringify(data));
+    }
   };
 
   const saveBankStatements = async (data) => {
     setBankStatements(data);
-    localStorage.setItem('accounting-bank-statements', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-bank-statements`, JSON.stringify(data));
+    }
   };
 
   const saveVatTransactions = async (data) => {
     setVatTransactions(data);
-    localStorage.setItem('accounting-vat-transactions', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-vat-transactions`, JSON.stringify(data));
+    }
   };
 
   const saveAccounts = async (data) => {
     setAccounts(data);
-    localStorage.setItem('accounting-accounts', JSON.stringify(data));
+    if (typeof localStorage !== "undefined" && activeCompanyId) {
+      localStorage.setItem(`company-${activeCompanyId}-accounts`, JSON.stringify(data));
+    }
   };
 
   // Calculate totals
@@ -218,8 +382,7 @@ const AccountingDashboard = () => {
     { id: 'accounts', label: 'Accounts', icon: Wallet },
     { id: 'banking', label: 'Banking', icon: Landmark },
     { id: 'vatrecon', label: 'VAT Recon', icon: Calculator },
-    { id: 'reports', label: 'Reports', icon: BarChart3 },
-    { id: 'audit', label: 'Audit Module', icon: Shield }
+    { id: 'reports', label: 'Reports', icon: BarChart3 }
   ];
 
   if (loading) {
@@ -232,17 +395,197 @@ const AccountingDashboard = () => {
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
-      {/* Header */}
+      {/* Header with Company Selector */}
       <header className="bg-gradient-to-r from-emerald-700 to-emerald-600 text-white shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <h1 className="text-xl font-bold tracking-tight">Accounting Pro</h1>
+          
+          {/* Company Selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowCompanySelector(!showCompanySelector)}
+              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg transition-all"
+            >
+              <Building2 className="w-4 h-4" />
+              <span className="font-medium">{activeCompany?.name || 'Select Company'}</span>
+              <ChevronDown className={`w-4 h-4 transition-transform ${showCompanySelector ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {/* Dropdown */}
+            {showCompanySelector && (
+              <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-lg shadow-xl border z-50 overflow-hidden">
+                <div className="p-2 border-b bg-slate-50">
+                  <p className="text-xs font-semibold text-slate-500 uppercase">Switch Company</p>
+                </div>
+                <div className="max-h-64 overflow-auto">
+                  {companies.map(company => (
+                    <div
+                      key={company.id}
+                      className={`flex items-center gap-3 px-4 py-3 hover:bg-slate-50 cursor-pointer ${
+                        company.id === activeCompanyId ? 'bg-emerald-50 border-l-4 border-emerald-500' : ''
+                      }`}
+                    >
+                      {/* Company Logo */}
+                      <div className="w-10 h-10 flex-shrink-0">
+                        {company.logo ? (
+                          <img src={company.logo} alt={company.name} className="w-10 h-10 object-contain rounded border" />
+                        ) : (
+                          <div className="w-10 h-10 bg-slate-200 rounded flex items-center justify-center text-slate-500 text-sm font-bold">
+                            {company.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <div 
+                        className="flex-1 min-w-0"
+                        onClick={() => switchCompany(company.id)}
+                      >
+                        <p className={`font-medium truncate ${company.id === activeCompanyId ? 'text-emerald-700' : 'text-slate-800'}`}>
+                          {company.name}
+                        </p>
+                        {company.id === activeCompanyId && (
+                          <p className="text-xs text-emerald-600">Currently Active</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {/* Upload/Change Logo */}
+                        <label className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer">
+                          <Upload className="w-4 h-4" />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onload = (event) => updateCompanyLogo(company.id, event.target.result);
+                                reader.readAsDataURL(file);
+                              }
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                        {companies.length > 1 && company.id !== activeCompanyId && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteCompany(company.id); }}
+                            className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t">
+                  <button
+                    onClick={() => { setShowCompanySelector(false); setShowAddCompanyModal(true); }}
+                    className="flex items-center gap-2 w-full px-4 py-3 text-emerald-600 hover:bg-emerald-50 font-medium"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Company
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </header>
+
+      {/* Add Company Modal */}
+      {showAddCompanyModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="p-6 border-b">
+              <h3 className="text-lg font-bold text-slate-800">Add New Company</h3>
+              <p className="text-sm text-slate-500 mt-1">Create a new company with separate data</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Company Name</label>
+                <input
+                  type="text"
+                  value={newCompanyName}
+                  onChange={(e) => setNewCompanyName(e.target.value)}
+                  placeholder="e.g. AME Business Accountants"
+                  className="w-full border rounded-lg px-4 py-3 text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  autoFocus
+                />
+              </div>
+              
+              {/* Company Logo Upload */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Company Logo (optional)</label>
+                <input
+                  type="file"
+                  ref={companyLogoInputRef}
+                  onChange={handleCompanyLogoUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <div className="flex items-center gap-4">
+                  {newCompanyLogo ? (
+                    <div className="relative">
+                      <img src={newCompanyLogo} alt="Logo preview" className="w-20 h-20 object-contain border rounded-lg" />
+                      <button
+                        onClick={() => setNewCompanyLogo(null)}
+                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : (
+                    <div 
+                      onClick={() => companyLogoInputRef.current?.click()}
+                      className="w-20 h-20 border-2 border-dashed border-slate-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-emerald-500 hover:bg-emerald-50 transition-colors"
+                    >
+                      <Upload className="w-6 h-6 text-slate-400" />
+                    </div>
+                  )}
+                  <div className="text-sm text-slate-500">
+                    <p>Upload your company logo</p>
+                    <p className="text-xs">PNG, JPG (max 2MB)</p>
+                    <button
+                      onClick={() => companyLogoInputRef.current?.click()}
+                      className="text-emerald-600 hover:underline mt-1"
+                    >
+                      {newCompanyLogo ? 'Change logo' : 'Browse files'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 border-t bg-slate-50 flex gap-3 justify-end rounded-b-xl">
+              <button
+                onClick={() => { setShowAddCompanyModal(false); setNewCompanyName(''); setNewCompanyLogo(null); }}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={addCompany}
+                disabled={!newCompanyName.trim()}
+                className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add Company
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Click outside to close dropdown */}
+      {showCompanySelector && (
+        <div 
+          className="fixed inset-0 z-40" 
+          onClick={() => setShowCompanySelector(false)}
+        />
+      )}
 
       {/* Navigation */}
       <nav className="bg-white border-b shadow-sm sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4">
-          <div className="flex space-x-1 overflow-x-auto">
+          <div className="flex space-x-1">
             {tabs.map(tab => {
               const Icon = tab.icon;
               return (
@@ -265,8 +608,7 @@ const AccountingDashboard = () => {
       </nav>
 
       {/* Main Content */}
-      {activeTab === 'audit' && <AuditModule />}
-      <main className={`max-w-7xl mx-auto px-4 py-6 ${activeTab === 'audit' ? 'hidden' : ''}`}>
+      <main className="max-w-7xl mx-auto px-4 py-6">
         {activeTab === 'dashboard' && (
           <DashboardView 
             totalIncome={totalIncome}
@@ -291,6 +633,7 @@ const AccountingDashboard = () => {
             setShowPrintPreview={setShowPrintPreview}
             selectedInvoice={selectedInvoice}
             setSelectedInvoice={setSelectedInvoice}
+            company={activeCompany}
           />
         )}
         {activeTab === 'suppliers' && (
@@ -307,6 +650,7 @@ const AccountingDashboard = () => {
             selectedInvoice={selectedInvoice}
             setSelectedInvoice={setSelectedInvoice}
             accounts={accounts}
+            company={activeCompany}
           />
         )}
         {activeTab === 'companies' && (
@@ -345,10 +689,11 @@ const AccountingDashboard = () => {
           />
         )}
         {activeTab === 'reports' && (
-          <ReportsView 
+          <ReportsView
             bankStatements={bankStatements}
             invoices={invoices}
             company={clients[0]}
+            accounts={accounts}
           />
         )}
       </main>
@@ -533,464 +878,19 @@ const MetricCard = ({ title, value, color, icon }) => {
   );
 };
 
-// ==================== CUSTOMER STATEMENTS SUB-VIEW ====================
-const CustomerStatements = ({ invoices, clients, company }) => {
-  const clientInvoices = invoices.filter(inv => inv.invoiceType !== 'supplier');
-  const initToday = new Date();
-  const firstOfMonth = new Date(initToday.getFullYear(), initToday.getMonth(), 1).toISOString().split('T')[0];
-  const todayStr = initToday.toISOString().split('T')[0];
-
-  const [selectedCustomer, setSelectedCustomer] = useState('');
-  const [dateFrom, setDateFrom] = useState(firstOfMonth);
-  const [dateTo, setDateTo] = useState(todayStr);
-
-  // Unique customers from invoices + clients list
-  const customerNames = Array.from(new Set([
-    ...clients.map(c => c.name),
-    ...clientInvoices.map(inv => inv.customer).filter(Boolean)
-  ])).sort();
-
-  // Build statement transactions for selected customer in date range
-  const buildStatement = () => {
-    if (!selectedCustomer) return { transactions: [], aging: null, openingBalance: 0, closingBalance: 0 };
-
-    const today = new Date(); // Fresh date each time statement is built
-    const from = new Date(dateFrom);
-    from.setHours(0, 0, 0, 0);
-    const to = new Date(dateTo);
-    to.setHours(23, 59, 59, 999);
-
-    // All invoices for this customer (for aging — not date filtered)
-    const allCustomerInvoices = clientInvoices.filter(inv => inv.customer === selectedCustomer);
-
-    // Invoices before the period start (opening balance = unpaid amounts)
-    const beforePeriod = allCustomerInvoices.filter(inv => new Date(inv.date) < from);
-    const openingBalance = beforePeriod.reduce((sum, inv) => {
-      if (inv.status === 'Paid') return sum;
-      return sum + (inv.amount || 0);
-    }, 0);
-
-    // Transactions within the date range
-    const periodInvoices = allCustomerInvoices.filter(inv => {
-      const d = new Date(inv.date);
-      return d >= from && d <= to;
-    });
-
-    // Sort by date, then by status (unpaid before paid) for correct running balance
-    const sorted = [...periodInvoices].sort((a, b) => {
-      const dateDiff = new Date(a.date) - new Date(b.date);
-      if (dateDiff !== 0) return dateDiff;
-      // Within same date, show invoices (debits) before payments (credits)
-      if (a.status === 'Paid' && b.status !== 'Paid') return 1;
-      if (a.status !== 'Paid' && b.status === 'Paid') return -1;
-      return 0;
-    });
-
-    // Build transactions: each invoice is a debit (amount owed).
-    // Paid invoices also generate a credit (payment received).
-    // This correctly reflects the double-entry nature of the statement.
-    let runningBalance = openingBalance;
-    const transactions = [];
-    sorted.forEach(inv => {
-      const amt = inv.amount || 0;
-      // Every invoice is a debit (charge to customer)
-      runningBalance += amt;
-      transactions.push({
-        date: inv.date,
-        description: `Invoice ${inv.documentNo}${inv.customerRef ? ` (Ref: ${inv.customerRef})` : ''}`,
-        invoiceNo: inv.documentNo,
-        status: inv.status,
-        debit: amt,
-        credit: 0,
-        balance: runningBalance,
-        dueDate: inv.dueDate,
-      });
-      // If paid, also show the payment as a separate credit line
-      if (inv.status === 'Paid') {
-        runningBalance -= amt;
-        transactions.push({
-          date: inv.date,
-          description: `Payment - Invoice ${inv.documentNo}`,
-          invoiceNo: inv.documentNo,
-          status: 'Paid',
-          debit: 0,
-          credit: amt,
-          balance: runningBalance,
-          dueDate: inv.dueDate,
-        });
-      }
-    });
-
-    // Aging buckets — based on ALL unpaid invoices vs today
-    // Standard accounting: Current, 1-30, 31-60, 61-90, 90+
-    const unpaid = allCustomerInvoices.filter(inv => inv.status !== 'Paid');
-    const aging = { current: 0, days30: 0, days60: 0, days90: 0, days90plus: 0 };
-    unpaid.forEach(inv => {
-      const due = new Date(inv.dueDate || inv.date);
-      const diffMs = today - due;
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      const amt = inv.amount || 0;
-      if (diffDays <= 0) aging.current += amt;
-      else if (diffDays <= 30) aging.days30 += amt;
-      else if (diffDays <= 60) aging.days60 += amt;
-      else if (diffDays <= 90) aging.days90 += amt;
-      else aging.days90plus += amt;
-    });
-
-    const closingBalance = runningBalance;
-    return { transactions, aging, openingBalance, closingBalance };
-  };
-
-  const { transactions, aging, openingBalance, closingBalance } = buildStatement();
-
-  const fmt = (n) => `R ${(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-  const handlePrintStatement = () => {
-    if (!selectedCustomer) return;
-    const clientInfo = clients.find(c => c.name === selectedCustomer);
-
-    const agingHtml = aging ? `
-      <div class="aging">
-        <h3>Aging Analysis</h3>
-        <table>
-          <thead><tr><th>Current</th><th>1-30 Days</th><th>31-60 Days</th><th>61-90 Days</th><th>90+ Days</th><th>Total Outstanding</th></tr></thead>
-          <tbody>
-            <tr>
-              <td>R ${aging.current.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
-              <td>R ${aging.days30.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
-              <td>R ${aging.days60.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
-              <td>R ${aging.days90.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
-              <td>R ${aging.days90plus.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
-              <td><strong>R ${(aging.current + aging.days30 + aging.days60 + aging.days90 + aging.days90plus).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    ` : '';
-
-    const printContent = `
-      <html>
-      <head><title>Statement - ${selectedCustomer}</title>
-      <style>
-        body { font-family: Arial, sans-serif; padding: 30px; font-size: 13px; color: #1e293b; }
-        h1 { color: #064e3b; margin-bottom: 4px; }
-        .header { display: flex; justify-content: space-between; margin-bottom: 24px; border-bottom: 2px solid #064e3b; padding-bottom: 16px; }
-        .company-name { font-size: 20px; font-weight: bold; }
-        .meta { font-size: 12px; color: #475569; }
-        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-        th { background: #ecfdf5; text-align: left; padding: 8px; border: 1px solid #d1fae5; font-size: 12px; }
-        td { padding: 7px 8px; border: 1px solid #e2e8f0; }
-        .text-right { text-align: right; }
-        .bold { font-weight: bold; }
-        .summary { margin-top: 20px; display: flex; justify-content: flex-end; }
-        .summary-box { border: 2px solid #064e3b; padding: 12px 20px; min-width: 260px; }
-        .summary-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
-        .summary-total { border-top: 2px solid #064e3b; margin-top: 8px; padding-top: 8px; font-size: 15px; font-weight: bold; }
-        .aging { margin-top: 30px; }
-        .aging h3 { color: #064e3b; }
-        .status-paid { color: #047857; }
-        .status-overdue { color: #dc2626; }
-        .status-pending { color: #d97706; }
-        @media print { body { padding: 20px; } }
-      </style>
-      </head>
-      <body>
-        <div class="header">
-          <div>
-            <div class="company-name">${company?.name || 'Your Company'}</div>
-            ${company?.vatNo ? `<div class="meta">VAT No: ${company.vatNo}</div>` : ''}
-            ${company?.address ? `<div class="meta">${company.address}</div>` : ''}
-            ${company?.phone ? `<div class="meta">Tel: ${company.phone}</div>` : ''}
-          </div>
-          <div style="text-align:right;">
-            <h1>CUSTOMER STATEMENT</h1>
-            <div class="meta">Period: ${dateFrom} to ${dateTo}</div>
-            <div class="meta">Printed: ${new Date().toLocaleDateString('en-ZA')}</div>
-          </div>
-        </div>
-
-        <div style="margin-bottom: 16px;">
-          <strong>Customer:</strong> ${selectedCustomer}<br/>
-          ${clientInfo?.email ? `<span class="meta">Email: ${clientInfo.email}</span>` : ''}
-          ${clientInfo?.phone ? ` &nbsp; Phone: ${clientInfo.phone}` : ''}
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Description</th>
-              <th>Status</th>
-              <th class="text-right">Debit (Invoiced)</th>
-              <th class="text-right">Credit (Paid)</th>
-              <th class="text-right">Balance</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>${dateFrom}</td>
-              <td>Opening Balance</td>
-              <td></td>
-              <td class="text-right"></td>
-              <td class="text-right"></td>
-              <td class="text-right bold">R ${openingBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
-            </tr>
-            ${transactions.map(t => `
-              <tr>
-                <td>${t.date}</td>
-                <td>${t.description}</td>
-                <td class="${t.status === 'Paid' ? 'status-paid' : t.status === 'Overdue' ? 'status-overdue' : 'status-pending'}">${t.status}</td>
-                <td class="text-right">${t.debit > 0 ? 'R ' + t.debit.toLocaleString('en-ZA', { minimumFractionDigits: 2 }) : ''}</td>
-                <td class="text-right">${t.credit > 0 ? 'R ' + t.credit.toLocaleString('en-ZA', { minimumFractionDigits: 2 }) : ''}</td>
-                <td class="text-right bold">R ${t.balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-
-        <div class="summary">
-          <div class="summary-box">
-            <div class="summary-row"><span>Opening Balance:</span><span>R ${openingBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
-            <div class="summary-row"><span>Total Invoiced:</span><span>R ${transactions.reduce((s, t) => s + t.debit, 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
-            <div class="summary-row"><span>Total Payments:</span><span>R ${transactions.reduce((s, t) => s + t.credit, 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
-            <div class="summary-row summary-total"><span>Closing Balance:</span><span>R ${closingBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
-          </div>
-        </div>
-
-        ${agingHtml}
-      </body>
-      </html>
-    `;
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(printContent);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
-  };
-
-  const totalOutstanding = aging ? (aging.current + aging.days30 + aging.days60 + aging.days90 + aging.days90plus) : 0;
-
-  return (
-    <div className="space-y-5">
-      {/* Controls */}
-      <div className="bg-white rounded-lg border p-4 space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Customer</label>
-            <select
-              value={selectedCustomer}
-              onChange={e => setSelectedCustomer(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-            >
-              <option value="">-- Select Customer --</option>
-              {customerNames.map(name => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">From Date</label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">To Date</label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={e => setDateTo(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-            />
-          </div>
-          <div className="flex items-end">
-            <button
-              onClick={handlePrintStatement}
-              disabled={!selectedCustomer}
-              className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Printer className="w-4 h-4" /> Print Statement
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {!selectedCustomer ? (
-        <div className="text-center py-16 bg-white rounded-lg border">
-          <Users className="w-12 h-12 text-emerald-300 mx-auto mb-3" />
-          <p className="text-slate-500 font-medium">Select a customer to view their statement</p>
-          <p className="text-sm text-slate-400 mt-1">Choose a customer from the dropdown above</p>
-        </div>
-      ) : (
-        <>
-          {/* Summary Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-white rounded-lg border p-4">
-              <p className="text-xs text-slate-500 font-medium mb-1">Opening Balance</p>
-              <p className="text-lg font-bold text-slate-800">{fmt(openingBalance)}</p>
-            </div>
-            <div className="bg-white rounded-lg border p-4">
-              <p className="text-xs text-slate-500 font-medium mb-1">Period Invoiced</p>
-              <p className="text-lg font-bold text-blue-600">{fmt(transactions.reduce((s, t) => s + t.debit, 0))}</p>
-            </div>
-            <div className="bg-white rounded-lg border p-4">
-              <p className="text-xs text-slate-500 font-medium mb-1">Period Payments</p>
-              <p className="text-lg font-bold text-emerald-600">{fmt(transactions.reduce((s, t) => s + t.credit, 0))}</p>
-            </div>
-            <div className="bg-emerald-50 rounded-lg border border-emerald-200 p-4">
-              <p className="text-xs text-emerald-700 font-medium mb-1">Closing Balance</p>
-              <p className="text-lg font-bold text-emerald-800">{fmt(closingBalance)}</p>
-            </div>
-          </div>
-
-          {/* Transaction Table */}
-          <div className="bg-white rounded-lg border overflow-hidden">
-            <div className="px-4 py-3 bg-slate-50 border-b">
-              <h3 className="font-semibold text-slate-700 text-sm">
-                Transaction History — {selectedCustomer}
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5">{dateFrom} to {dateTo}</p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-emerald-50 border-b">
-                    <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Date</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Description</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Status</th>
-                    <th className="text-right px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Debit (Invoiced)</th>
-                    <th className="text-right px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Credit (Paid)</th>
-                    <th className="text-right px-4 py-3 font-medium text-slate-600 text-xs uppercase tracking-wide">Running Balance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {/* Opening balance row */}
-                  <tr className="border-b bg-slate-50">
-                    <td className="px-4 py-2.5 text-slate-500 text-xs">{dateFrom}</td>
-                    <td className="px-4 py-2.5 font-medium text-slate-600 text-xs">Opening Balance</td>
-                    <td className="px-4 py-2.5"></td>
-                    <td className="px-4 py-2.5 text-right text-slate-400">—</td>
-                    <td className="px-4 py-2.5 text-right text-slate-400">—</td>
-                    <td className="px-4 py-2.5 text-right font-semibold text-slate-700">{fmt(openingBalance)}</td>
-                  </tr>
-
-                  {transactions.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">
-                        No transactions found for this period
-                      </td>
-                    </tr>
-                  ) : (
-                    transactions.map((t, idx) => (
-                      <tr key={idx} className="border-b hover:bg-slate-50 transition-colors">
-                        <td className="px-4 py-2.5 text-slate-600 text-xs whitespace-nowrap">{t.date}</td>
-                        <td className="px-4 py-2.5 text-slate-800">{t.description}</td>
-                        <td className="px-4 py-2.5">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                            t.status === 'Paid' ? 'bg-emerald-100 text-emerald-700' :
-                            t.status === 'Overdue' ? 'bg-red-100 text-red-700' :
-                            'bg-amber-100 text-amber-700'
-                          }`}>
-                            {t.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-blue-700 font-medium">
-                          {t.debit > 0 ? fmt(t.debit) : <span className="text-slate-300">—</span>}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-emerald-700 font-medium">
-                          {t.credit > 0 ? fmt(t.credit) : <span className="text-slate-300">—</span>}
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-semibold text-slate-800">{fmt(t.balance)}</td>
-                      </tr>
-                    ))
-                  )}
-
-                  {/* Closing balance row */}
-                  <tr className="bg-emerald-50 border-t-2 border-emerald-200">
-                    <td className="px-4 py-3 text-emerald-800 font-bold text-xs" colSpan={2}>Closing Balance</td>
-                    <td></td>
-                    <td className="px-4 py-3 text-right font-bold text-blue-700">
-                      {fmt(transactions.reduce((s, t) => s + t.debit, 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right font-bold text-emerald-700">
-                      {fmt(transactions.reduce((s, t) => s + t.credit, 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right font-bold text-emerald-800 text-base">{fmt(closingBalance)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Aging Analysis */}
-          {aging && (
-            <div className="bg-white rounded-lg border overflow-hidden">
-              <div className="px-4 py-3 bg-slate-50 border-b flex items-center gap-2">
-                <Clock className="w-4 h-4 text-slate-500" />
-                <h3 className="font-semibold text-slate-700 text-sm">Aging Analysis — Outstanding Invoices</h3>
-              </div>
-              <div className="p-4 grid grid-cols-2 md:grid-cols-6 gap-4">
-                <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200 text-center">
-                  <p className="text-xs font-medium text-emerald-600 mb-1">Current</p>
-                  <p className="text-base font-bold text-emerald-800">{fmt(aging.current)}</p>
-                  <p className="text-xs text-emerald-500">Not yet due</p>
-                </div>
-                <div className="bg-amber-50 rounded-lg p-3 border border-amber-200 text-center">
-                  <p className="text-xs font-medium text-amber-600 mb-1">1-30 Days</p>
-                  <p className="text-base font-bold text-amber-800">{fmt(aging.days30)}</p>
-                  <p className="text-xs text-amber-500">Overdue 1-30d</p>
-                </div>
-                <div className="bg-orange-50 rounded-lg p-3 border border-orange-200 text-center">
-                  <p className="text-xs font-medium text-orange-600 mb-1">31-60 Days</p>
-                  <p className="text-base font-bold text-orange-800">{fmt(aging.days60)}</p>
-                  <p className="text-xs text-orange-500">Overdue 31-60d</p>
-                </div>
-                <div className="bg-red-50 rounded-lg p-3 border border-red-200 text-center">
-                  <p className="text-xs font-medium text-red-600 mb-1">61-90 Days</p>
-                  <p className="text-base font-bold text-red-800">{fmt(aging.days90)}</p>
-                  <p className="text-xs text-red-500">Overdue 61-90d</p>
-                </div>
-                <div className="bg-red-100 rounded-lg p-3 border border-red-300 text-center">
-                  <p className="text-xs font-medium text-red-700 mb-1">90+ Days</p>
-                  <p className="text-base font-bold text-red-900">{fmt(aging.days90plus)}</p>
-                  <p className="text-xs text-red-600">Severely overdue</p>
-                </div>
-                <div className="bg-slate-100 rounded-lg p-3 border border-slate-300 text-center">
-                  <p className="text-xs font-medium text-slate-600 mb-1">Total Outstanding</p>
-                  <p className="text-base font-bold text-slate-800">{fmt(totalOutstanding)}</p>
-                  <p className="text-xs text-slate-500">All unpaid</p>
-                </div>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-};
-
 // ==================== CUSTOMERS VIEW (Client Invoices) ====================
-const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setShowInvoiceForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice }) => {
+const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setShowInvoiceForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, company }) => {
   // Filter to only show client invoices (not supplier)
   const clientInvoices = invoices.filter(inv => inv.invoiceType !== 'supplier');
-
-  // Sub-tab: 'invoices' | 'statements'
-  const [activeSubTab, setActiveSubTab] = useState('invoices');
-
-  // Search & filter state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [sortBy, setSortBy] = useState('date-desc');
-
+  
   const [newInvoice, setNewInvoice] = useState({
     customer: '',
     documentNo: `INV-${Date.now()}`,
+    externalInvoiceNo: '', // Actual customer/supplier invoice number
     date: new Date().toISOString().split('T')[0],
     dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     customerRef: '',
+    customerVatNo: '',
     deliveryAddress: ['', '', '', '', ''],
     postalAddress: ['', '', '', '', '', ''],
     discount: 0,
@@ -1051,19 +951,22 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
       amount: totals.grandTotal,
       subtotal: totals.subtotal,
       vat: totals.totalVat,
-      discount: totals.totalDiscount
+      totalDiscount: totals.totalDiscount
     };
     saveInvoices([...invoices, invoice]);
     setShowInvoiceForm(false);
     setNewInvoice({
       customer: '',
       documentNo: `INV-${Date.now()}`,
+      externalInvoiceNo: '',
       date: new Date().toISOString().split('T')[0],
       dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       customerRef: '',
+      customerVatNo: '',
       deliveryAddress: ['', '', '', '', ''],
       postalAddress: ['', '', '', '', '', ''],
       discount: 0,
+      invoiceType: 'client',
       items: [{ id: 1, type: 'Item', description: '', unit: '', qty: 1, price: 0, vatType: 'Standard Rate (15.00%)', discPercent: 0 }],
       status: 'Pending'
     });
@@ -1079,190 +982,24 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
 
   const totals = invoiceTotals();
 
-  // ---- Stats for the summary bar ----
-  const totalInvoiced = clientInvoices.reduce((s, inv) => s + (inv.amount || 0), 0);
-  const totalPaid = clientInvoices.filter(inv => inv.status === 'Paid').reduce((s, inv) => s + (inv.amount || 0), 0);
-  const totalOutstanding = clientInvoices.filter(inv => inv.status !== 'Paid').reduce((s, inv) => s + (inv.amount || 0), 0);
-  const overdueCount = clientInvoices.filter(inv => inv.status === 'Overdue').length;
-
-  // ---- Filtering + Sorting ----
-  const filteredInvoices = clientInvoices
-    .filter(inv => {
-      const q = searchQuery.toLowerCase();
-      const matchesSearch = !q ||
-        (inv.customer || '').toLowerCase().includes(q) ||
-        (inv.documentNo || '').toLowerCase().includes(q) ||
-        (inv.status || '').toLowerCase().includes(q);
-      const matchesStatus = statusFilter === 'All' || inv.status === statusFilter;
-      return matchesSearch && matchesStatus;
-    })
-    .sort((a, b) => {
-      switch (sortBy) {
-        case 'date-asc': return new Date(a.date) - new Date(b.date);
-        case 'date-desc': return new Date(b.date) - new Date(a.date);
-        case 'amount-asc': return (a.amount || 0) - (b.amount || 0);
-        case 'amount-desc': return (b.amount || 0) - (a.amount || 0);
-        case 'customer': return (a.customer || '').localeCompare(b.customer || '');
-        case 'status': return (a.status || '').localeCompare(b.status || '');
-        default: return new Date(b.date) - new Date(a.date);
-      }
-    });
-
-  const fmtAmt = (n) => `R ${(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-  const statusBadge = (status) => {
-    const styles = {
-      'Paid': 'bg-emerald-100 text-emerald-700 border border-emerald-200',
-      'Overdue': 'bg-red-100 text-red-700 border border-red-200',
-      'Pending': 'bg-amber-100 text-amber-700 border border-amber-200',
-    };
-    return styles[status] || 'bg-slate-100 text-slate-600 border border-slate-200';
-  };
-
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-xl font-semibold text-slate-800">Customers</h2>
-          <p className="text-sm text-slate-500">Customer invoices and account statements</p>
+          <h2 className="text-xl font-semibold text-slate-800">Customer Invoices</h2>
+          <p className="text-sm text-slate-500">Invoices for payments received from customers</p>
         </div>
-        {activeSubTab === 'invoices' && (
-          <button
-            onClick={() => setShowInvoiceForm(true)}
-            className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium shadow-sm"
-          >
-            <Plus className="w-4 h-4" /> New Invoice
-          </button>
-        )}
-      </div>
-
-      {/* Sub-tab Toggle */}
-      <div className="flex bg-slate-100 rounded-lg p-1 w-fit">
         <button
-          onClick={() => setActiveSubTab('invoices')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-            activeSubTab === 'invoices'
-              ? 'bg-white text-emerald-700 shadow-sm'
-              : 'text-slate-500 hover:text-slate-700'
-          }`}
+          onClick={() => setShowInvoiceForm(true)}
+          className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
         >
-          <FileText className="w-4 h-4" /> Invoices
-        </button>
-        <button
-          onClick={() => setActiveSubTab('statements')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-            activeSubTab === 'statements'
-              ? 'bg-white text-emerald-700 shadow-sm'
-              : 'text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          <TrendingUp className="w-4 h-4" /> Statements
+          <Plus className="w-4 h-4" /> New Customer Invoice
         </button>
       </div>
 
-      {activeSubTab === 'statements' ? (
-        <CustomerStatements invoices={invoices} clients={clients} company={company} />
-      ) : (
-        <>
-          {/* Summary Stats Bar */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-white rounded-lg border p-4 flex items-center gap-3">
-              <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                <FileText className="w-5 h-5 text-blue-500" />
-              </div>
-              <div>
-                <p className="text-xs text-slate-500 font-medium">Total Invoices</p>
-                <p className="text-lg font-bold text-slate-800">{clientInvoices.length}</p>
-              </div>
-            </div>
-            <div className="bg-white rounded-lg border p-4 flex items-center gap-3">
-              <div className="w-9 h-9 bg-slate-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                <DollarSign className="w-5 h-5 text-slate-500" />
-              </div>
-              <div>
-                <p className="text-xs text-slate-500 font-medium">Total Invoiced</p>
-                <p className="text-base font-bold text-slate-800">{fmtAmt(totalInvoiced)}</p>
-              </div>
-            </div>
-            <div className="bg-white rounded-lg border p-4 flex items-center gap-3">
-              <div className="w-9 h-9 bg-emerald-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                <Check className="w-5 h-5 text-emerald-500" />
-              </div>
-              <div>
-                <p className="text-xs text-slate-500 font-medium">Total Paid</p>
-                <p className="text-base font-bold text-emerald-600">{fmtAmt(totalPaid)}</p>
-              </div>
-            </div>
-            <div className="bg-white rounded-lg border p-4 flex items-center gap-3">
-              <div className="w-9 h-9 bg-red-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                <AlertCircle className="w-5 h-5 text-red-500" />
-              </div>
-              <div>
-                <p className="text-xs text-slate-500 font-medium">Overdue</p>
-                <p className="text-base font-bold text-red-600">
-                  {overdueCount} invoice{overdueCount !== 1 ? 's' : ''}
-                </p>
-                <p className="text-xs text-slate-400">{fmtAmt(totalOutstanding)} outstanding</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Search, Filter & Sort Bar */}
-          <div className="bg-white rounded-lg border p-3 flex flex-wrap gap-3 items-center">
-            <div className="flex-1 min-w-48 relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search by customer, invoice #, status..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-slate-50"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-slate-400" />
-              <select
-                value={statusFilter}
-                onChange={e => setStatusFilter(e.target.value)}
-                className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-slate-50"
-              >
-                <option value="All">All Statuses</option>
-                <option value="Pending">Pending</option>
-                <option value="Paid">Paid</option>
-                <option value="Overdue">Overdue</option>
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <SortAsc className="w-4 h-4 text-slate-400" />
-              <select
-                value={sortBy}
-                onChange={e => setSortBy(e.target.value)}
-                className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-slate-50"
-              >
-                <option value="date-desc">Date (Newest)</option>
-                <option value="date-asc">Date (Oldest)</option>
-                <option value="amount-desc">Amount (High-Low)</option>
-                <option value="amount-asc">Amount (Low-High)</option>
-                <option value="customer">Customer Name</option>
-                <option value="status">Status</option>
-              </select>
-            </div>
-            {(searchQuery || statusFilter !== 'All') && (
-              <button
-                onClick={() => { setSearchQuery(''); setStatusFilter('All'); }}
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-500 transition-colors"
-              >
-                <X className="w-3.5 h-3.5" /> Clear
-              </button>
-            )}
-            <span className="ml-auto text-xs text-slate-400">
-              {filteredInvoices.length} of {clientInvoices.length}
-            </span>
-          </div>
-
-          {/* Invoice Form Modal */}
-          {showInvoiceForm && (
+      {/* Invoice Form Modal */}
+      {showInvoiceForm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center overflow-y-auto py-8">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl mx-4">
             <div className="p-6 border-b flex justify-between items-center bg-slate-50">
@@ -1274,7 +1011,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                   </button>
                   <div className="absolute right-0 mt-1 w-48 bg-white border rounded shadow-lg hidden group-hover:block">
                     <button 
-                      onClick={() => { const t = invoiceTotals(); setSelectedInvoice({...newInvoice, subtotal: t.subtotal, vat: t.totalVat, amount: t.grandTotal, discount: t.totalDiscount}); setShowPrintPreview(true); }}
+                      onClick={() => { setSelectedInvoice({...newInvoice, ...invoiceTotals()}); setShowPrintPreview(true); }}
                       className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
                     >
                       <Printer className="w-4 h-4" /> Print Preview
@@ -1318,7 +1055,27 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-5 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Customer Invoice No.</label>
+                  <input 
+                    type="text" 
+                    value={newInvoice.externalInvoiceNo || ''}
+                    onChange={(e) => setNewInvoice({...newInvoice, externalInvoiceNo: e.target.value})}
+                    placeholder="Actual invoice number"
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Customer VAT No.</label>
+                  <input 
+                    type="text" 
+                    value={newInvoice.customerVatNo || ''}
+                    onChange={(e) => setNewInvoice({...newInvoice, customerVatNo: e.target.value})}
+                    placeholder="VAT number"
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Customer Reference</label>
                   <input 
@@ -1509,7 +1266,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                   Save and New
                 </button>
                 <button 
-                  onClick={() => { const t = invoiceTotals(); setSelectedInvoice({...newInvoice, subtotal: t.subtotal, vat: t.totalVat, amount: t.grandTotal, discount: t.totalDiscount}); setShowPrintPreview(true); }}
+                  onClick={() => { setSelectedInvoice({...newInvoice, ...invoiceTotals()}); setShowPrintPreview(true); }}
                   className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
                 >
                   Print Preview
@@ -1617,108 +1374,73 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
             </div>
           </div>
         </div>
-          )}
+      )}
 
       {/* Print Preview Modal */}
       {showPrintPreview && selectedInvoice && (
-        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={clients[0]} />
+        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={company} />
       )}
 
-          {/* Client Invoices List */}
-          {filteredInvoices.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredInvoices.map(invoice => {
-                const isOverdue = invoice.status === 'Overdue';
-                const isPaid = invoice.status === 'Paid';
-                const borderColor = isPaid ? 'border-l-emerald-500' : isOverdue ? 'border-l-red-500' : 'border-l-amber-400';
-                return (
-                  <div key={invoice.id} className={`bg-white rounded-lg border shadow-sm p-5 border-l-4 ${borderColor} hover:shadow-md transition-shadow`}>
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <h4 className="font-semibold text-slate-800 text-sm">{invoice.documentNo}</h4>
-                        <p className="text-sm font-medium text-slate-700 mt-0.5">{invoice.customer || 'No customer'}</p>
-                      </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadge(invoice.status)}`}>
-                          {invoice.status}
-                        </span>
-                        {invoice.createdFromBank && (
-                          <span className="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-500">From Bank</span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mt-3 mb-3">
-                      <p className="text-2xl font-bold text-slate-900">
-                        {fmtAmt(invoice.amount)}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-3 text-xs text-slate-500 mb-4 border-t pt-2">
-                      <span>
-                        <Calendar className="w-3 h-3 inline mr-1" />
-                        {invoice.date}
-                      </span>
-                      <span className={isOverdue ? 'text-red-600 font-medium' : ''}>
-                        Due: {invoice.dueDate}
-                      </span>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => { setSelectedInvoice(invoice); setShowPrintPreview(true); }}
-                        className="flex-1 flex items-center justify-center gap-1 text-xs py-1.5 border rounded-md hover:bg-slate-50 transition-colors text-slate-600"
-                      >
-                        <Eye className="w-3.5 h-3.5" /> View
-                      </button>
-                      {!isPaid && (
-                        <button
-                          onClick={() => markAsPaid(invoice.id)}
-                          className="flex-1 flex items-center justify-center gap-1 text-xs py-1.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors"
-                        >
-                          <Check className="w-3.5 h-3.5" /> Mark Paid
-                        </button>
-                      )}
-                      <button
-                        onClick={() => deleteInvoice(invoice.id)}
-                        className="px-2.5 py-1.5 text-red-500 border border-red-100 rounded-md hover:bg-red-50 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="text-center py-16 bg-white rounded-lg border">
-              {clientInvoices.length === 0 ? (
-                <>
-                  <FileText className="w-12 h-12 text-emerald-200 mx-auto mb-3" />
-                  <p className="text-slate-500 font-medium">No customer invoices yet.</p>
-                  <p className="text-sm text-slate-400 mt-1">Create a new invoice to get started.</p>
-                  <button
-                    onClick={() => setShowInvoiceForm(true)}
-                    className="mt-4 flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 text-sm font-medium mx-auto"
+      {/* Client Invoices List */}
+      {clientInvoices.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {clientInvoices.map(invoice => (
+            <div key={invoice.id} className="bg-white rounded-lg border shadow-sm p-5 border-l-4 border-l-blue-500">
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <h4 className="font-semibold text-slate-800">{invoice.documentNo}</h4>
+                  <p className="text-sm text-slate-600">{invoice.customer || 'No customer'}</p>
+                </div>
+                <div className="flex flex-col items-end gap-1">
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${
+                    invoice.status === 'Paid' ? 'bg-emerald-100 text-emerald-700' :
+                    invoice.status === 'Overdue' ? 'bg-red-100 text-red-700' :
+                    'bg-amber-100 text-amber-700'
+                  }`}>
+                    {invoice.status}
+                  </span>
+                  {invoice.createdFromBank && (
+                    <span className="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-600">From Bank</span>
+                  )}
+                </div>
+              </div>
+              <div className="text-xl font-bold text-blue-600 mb-3">
+                R {(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+              </div>
+              <div className="text-xs text-slate-500 mb-4">
+                Date: {invoice.date} • Due: {invoice.dueDate}
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => { setSelectedInvoice(invoice); setShowPrintPreview(true); }}
+                  className="flex-1 text-sm py-2 border rounded hover:bg-slate-50"
+                >
+                  <Eye className="w-4 h-4 inline mr-1" /> View
+                </button>
+                {invoice.status !== 'Paid' && (
+                  <button 
+                    onClick={() => markAsPaid(invoice.id)}
+                    className="flex-1 text-sm py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700"
                   >
-                    <Plus className="w-4 h-4" /> New Invoice
+                    <Check className="w-4 h-4 inline mr-1" /> Paid
                   </button>
-                </>
-              ) : (
-                <>
-                  <Search className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                  <p className="text-slate-500 font-medium">No invoices match your filters.</p>
-                  <button
-                    onClick={() => { setSearchQuery(''); setStatusFilter('All'); }}
-                    className="mt-3 text-sm text-emerald-600 hover:underline"
-                  >
-                    Clear filters
-                  </button>
-                </>
-              )}
+                )}
+                <button 
+                  onClick={() => deleteInvoice(invoice.id)}
+                  className="px-3 py-2 text-red-600 border border-red-200 rounded hover:bg-red-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-          )}
-        </>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12 bg-white rounded-lg border">
+          <Users className="w-12 h-12 text-blue-300 mx-auto mb-3" />
+          <p className="text-slate-500">No customer invoices yet.</p>
+          <p className="text-sm text-slate-400 mt-1">Create a new invoice or convert a bank receipt.</p>
+        </div>
       )}
     </div>
   );
@@ -1726,16 +1448,34 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
 
 // Print Preview Component
 const PrintPreview = ({ invoice, onClose, company }) => {
-  const handlePrint = () => window.print();
+  const handlePrint = () => {
+    // Set document title for save as PDF
+    const originalTitle = document.title;
+    document.title = invoice.documentNo || 'Invoice';
+    window.print();
+    document.title = originalTitle;
+  };
+  
+  // Calculate item totals with VAT
+  const calculateItemTotal = (item) => {
+    const exclusive = (item.qty || 1) * (item.price || 0);
+    const discountAmount = exclusive * ((item.discPercent || 0) / 100);
+    const afterDiscount = exclusive - discountAmount;
+    const vatRate = getVATRate(item.vatType || 'No VAT');
+    const vatAmount = afterDiscount * vatRate;
+    const inclusive = afterDiscount + vatAmount;
+    return { exclusive, discountAmount, afterDiscount, vatAmount, inclusive, vatRate };
+  };
   
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-8">
-      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-4 border-b flex justify-between items-center bg-slate-50 sticky top-0">
-          <h3 className="font-semibold">Print Preview</h3>
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+      <div className="bg-white shadow-xl w-full h-full max-w-[210mm] max-h-[297mm] overflow-y-auto print:max-w-none print:max-h-none print:overflow-visible">
+        {/* Print Controls - Hidden when printing */}
+        <div className="p-3 border-b flex justify-between items-center bg-slate-50 print:hidden sticky top-0 z-10">
+          <h3 className="font-semibold">Print Preview - {invoice.documentNo}</h3>
           <div className="flex gap-2">
             <button onClick={handlePrint} className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded text-sm">
-              <Printer className="w-4 h-4" /> Print
+              <Printer className="w-4 h-4" /> Print / Save PDF
             </button>
             <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded">
               <X className="w-5 h-5" />
@@ -1743,104 +1483,201 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           </div>
         </div>
         
-        <div className="p-8" id="invoice-print">
-          <div className="flex justify-between mb-8">
-            <div className="flex items-start gap-4">
-              {company?.logo && (
-                <img src={company.logo} alt="Company Logo" className="w-20 h-20 object-contain" />
+        {/* Invoice Content - A4 Size */}
+        <div className="p-8 min-h-[297mm] print:p-12" id="invoice-print">
+          {/* Header with Logo and Invoice Details */}
+          <div className="flex justify-between items-start mb-8">
+            {/* Left side - Logo and Company Name */}
+            <div className="flex-shrink-0">
+              {company?.logo ? (
+                <div>
+                  <img src={company.logo} alt="Company Logo" className="w-40 h-auto object-contain mb-2" style={{ maxHeight: '80px' }} />
+                  <div className="text-xl font-bold text-slate-800">{company?.name || 'Your Company'}</div>
+                  {company?.tradingName && (
+                    <p className="text-sm text-slate-500">t/a {company.tradingName}</p>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div className="text-2xl font-bold text-slate-800">{company?.name || 'Your Company'}</div>
+                  {company?.tradingName && (
+                    <p className="text-sm text-slate-500">t/a {company.tradingName}</p>
+                  )}
+                </div>
               )}
-              <div>
-                <h1 className="text-2xl font-bold text-emerald-700">
-                  {invoice.invoiceType === 'supplier' ? 'SUPPLIER INVOICE' : 'INVOICE'}
-                </h1>
-                <p className="text-slate-600 mt-1">{invoice.documentNo}</p>
+            </div>
+            
+            {/* Right side - Invoice Details Box */}
+            <div className="text-right">
+              <h1 className="text-3xl font-bold text-slate-800 mb-4">
+                {invoice.invoiceType === 'supplier' ? 'SUPPLIER INVOICE' : 'INVOICE'}
+              </h1>
+              <div className="text-sm space-y-1 border p-4 rounded bg-slate-50">
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">NUMBER:</span>
+                  <span className="font-bold">{invoice.documentNo}</span>
+                </div>
+                {invoice.externalInvoiceNo && (
+                  <div className="flex justify-between gap-8">
+                    <span className="text-slate-500">REFERENCE:</span>
+                    <span className="font-bold">{invoice.externalInvoiceNo}</span>
+                  </div>
+                )}
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">DATE:</span>
+                  <span className="font-bold">{invoice.date}</span>
+                </div>
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">DUE DATE:</span>
+                  <span className="font-bold">{invoice.dueDate}</span>
+                </div>
+                {invoice.salesRep && (
+                  <div className="flex justify-between gap-8">
+                    <span className="text-slate-500">SALES REP:</span>
+                    <span className="font-bold">{invoice.salesRep}</span>
+                  </div>
+                )}
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">PAGE:</span>
+                  <span>1/1</span>
+                </div>
               </div>
             </div>
-            <div className="text-right">
-              <p className="font-semibold text-lg">{company?.name || 'Your Company Name'}</p>
-              {company?.tradingName && <p className="text-sm text-slate-600">Trading as: {company.tradingName}</p>}
-              {company?.address && <p className="text-sm text-slate-600">{company.address}</p>}
-              {company?.city && <p className="text-sm text-slate-600">{company.city}, {company.postalCode}</p>}
-              {company?.phone && <p className="text-sm text-slate-600">Tel: {company.phone}</p>}
-              {company?.email && <p className="text-sm text-slate-600">{company.email}</p>}
-              {company?.vatNo && <p className="text-sm text-slate-600 mt-1">VAT No: {company.vatNo}</p>}
-              {company?.registrationNo && <p className="text-sm text-slate-600">Reg No: {company.registrationNo}</p>}
-            </div>
           </div>
           
-          <div className="grid grid-cols-2 gap-8 mb-8">
+          {/* FROM and TO Section */}
+          <div className="grid grid-cols-2 gap-8 mb-8 border-t border-b border-slate-300 py-6">
+            {/* FROM - Company Details */}
             <div>
-              <h4 className="font-semibold text-slate-600 text-sm mb-2">
-                {invoice.invoiceType === 'supplier' ? 'SUPPLIER:' : 'BILL TO:'}
-              </h4>
-              <p className="font-medium">{invoice.supplier || invoice.customer || 'Customer'}</p>
+              <p className="text-xs text-slate-500 font-bold mb-2 uppercase">From</p>
+              <h3 className="text-lg font-bold text-slate-800 mb-3">{company?.name || 'Your Company'}</h3>
+              
+              {company?.vatNo && (
+                <p className="text-sm mb-3"><span className="text-slate-500 font-medium">VAT NO:</span> {company.vatNo}</p>
+              )}
+              
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-xs text-slate-500 font-bold mb-1 uppercase">Postal Address:</p>
+                  {company?.address && <p>{company.address}</p>}
+                  {company?.city && <p>{company.city}</p>}
+                  {company?.postalCode && <p>{company.postalCode}</p>}
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 font-bold mb-1 uppercase">Physical Address:</p>
+                  {(company?.physicalAddress || company?.address) && <p>{company.physicalAddress || company.address}</p>}
+                  {company?.city && <p>{company.city}</p>}
+                  {company?.postalCode && <p>{company.postalCode}</p>}
+                </div>
+              </div>
             </div>
-            <div className="text-right">
-              <p className="text-sm"><span className="text-slate-600">Date:</span> {invoice.date}</p>
-              <p className="text-sm"><span className="text-slate-600">Due:</span> {invoice.dueDate}</p>
-              {invoice.customerRef && <p className="text-sm"><span className="text-slate-600">Ref:</span> {invoice.customerRef}</p>}
+            
+            {/* TO - Customer/Supplier Details */}
+            <div>
+              <p className="text-xs text-slate-500 font-bold mb-2 uppercase">To</p>
+              <h3 className="text-lg font-bold text-slate-800 mb-3">
+                {invoice.invoiceType === 'supplier' ? invoice.supplier : invoice.customer}
+              </h3>
+              
+              {(invoice.customerVatNo || invoice.supplierVatNo) && (
+                <p className="text-sm mb-3">
+                  <span className="text-slate-500 font-medium">
+                    {invoice.invoiceType === 'supplier' ? 'SUPPLIER VAT NO:' : 'CUSTOMER VAT NO:'}
+                  </span> {invoice.supplierVatNo || invoice.customerVatNo}
+                </p>
+              )}
+              
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-xs text-slate-500 font-bold mb-1 uppercase">Postal Address:</p>
+                  {invoice.postalAddress?.filter(Boolean).map((line, i) => <p key={i}>{line}</p>)}
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 font-bold mb-1 uppercase">Physical Address:</p>
+                  {invoice.deliveryAddress?.filter(Boolean).map((line, i) => <p key={i}>{line}</p>)}
+                </div>
+              </div>
             </div>
           </div>
           
-          <table className="w-full mb-8">
+          {/* Line Items Table */}
+          <table className="w-full mb-8 text-sm">
             <thead>
-              <tr className="border-b-2 border-emerald-600">
-                <th className="text-left py-2 text-sm">Description</th>
-                <th className="text-right py-2 text-sm">Qty</th>
-                <th className="text-right py-2 text-sm">Price</th>
-                <th className="text-right py-2 text-sm">Total</th>
+              <tr className="border-b-2 border-slate-400 bg-slate-100">
+                <th className="text-left py-3 px-2 font-bold text-slate-700">Description</th>
+                <th className="text-center py-3 px-2 font-bold text-slate-700 w-20">Quantity</th>
+                <th className="text-right py-3 px-2 font-bold text-slate-700 w-28">Unit Price</th>
+                <th className="text-center py-3 px-2 font-bold text-slate-700 w-16">Disc %</th>
+                <th className="text-center py-3 px-2 font-bold text-slate-700 w-16">VAT %</th>
+                <th className="text-right py-3 px-2 font-bold text-slate-700 w-28">Excl. Total</th>
+                <th className="text-right py-3 px-2 font-bold text-slate-700 w-28">Incl. Total</th>
               </tr>
             </thead>
             <tbody>
-              {invoice.items?.map((item, idx) => (
-                <tr key={idx} className="border-b">
-                  <td className="py-2 text-sm">{item.description || 'Item'}</td>
-                  <td className="py-2 text-sm text-right">{item.qty}</td>
-                  <td className="py-2 text-sm text-right">R {(item.price || 0).toFixed(2)}</td>
-                  <td className="py-2 text-sm text-right">R {((item.qty || 0) * (item.price || 0)).toFixed(2)}</td>
-                </tr>
-              ))}
+              {invoice.items?.map((item, idx) => {
+                const calc = calculateItemTotal(item);
+                return (
+                  <tr key={idx} className="border-b border-slate-200">
+                    <td className="py-3 px-2">{item.description || 'Item'}</td>
+                    <td className="py-3 px-2 text-center">{item.qty || 1}</td>
+                    <td className="py-3 px-2 text-right">R{(item.price || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="py-3 px-2 text-center">{(item.discPercent || 0).toFixed(2)}%</td>
+                    <td className="py-3 px-2 text-center">{(calc.vatRate * 100).toFixed(2)}%</td>
+                    <td className="py-3 px-2 text-right">R{calc.afterDiscount.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="py-3 px-2 text-right font-semibold">R{calc.inclusive.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           
-          <div className="flex justify-end">
-            <div className="w-72">
-              <div className="flex justify-between py-1 text-sm">
-                <span className="text-slate-600">Subtotal:</span>
-                <span>R {(invoice.subtotal || 0).toFixed(2)}</span>
-              </div>
-              {(invoice.discount || 0) > 0 && (
-                <div className="flex justify-between py-1 text-sm">
-                  <span className="text-slate-600">Discount:</span>
-                  <span className="text-red-600">- R {(invoice.discount || 0).toFixed(2)}</span>
+          {/* Banking Details and Totals */}
+          <div className="flex justify-between items-end mt-auto">
+            {/* Banking Details - Left */}
+            <div className="text-sm max-w-xs">
+              {company?.bankName && (
+                <div className="border rounded p-4 bg-slate-50">
+                  <p className="font-bold text-slate-700 mb-2">Banking Details</p>
+                  <p className="font-semibold">{company.bankName}</p>
+                  {company?.bankAccountNo && <p>Account No. {company.bankAccountNo}</p>}
+                  {company?.bankBranchCode && <p>Branch Code: {company.bankBranchCode}</p>}
                 </div>
               )}
-              <div className="flex justify-between py-1 text-sm">
-                <span className="text-slate-600">VAT (15%):</span>
-                <span>R {(invoice.vat || 0).toFixed(2)}</span>
+              <p className="mt-4 text-xs text-slate-500 italic">N.B DEPOSIT OF 50% IS REQUIRED BEFORE COMMENCING WORK.</p>
+            </div>
+            
+            {/* Totals - Right */}
+            <div className="w-80">
+              <div className="space-y-2 text-sm border rounded p-4">
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Total Discount:</span>
+                  <span>R{(invoice.totalDiscount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Total Exclusive:</span>
+                  <span className="font-semibold">R{(invoice.subtotal || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Total VAT:</span>
+                  <span>R{(invoice.vat || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between border-t pt-2">
+                  <span className="text-slate-600">Sub Total:</span>
+                  <span className="font-semibold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between pt-1">
+                  <span className="text-slate-600 font-bold">Grand Total:</span>
+                  <span className="font-bold text-lg">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
               </div>
-              <div className="flex justify-between py-2 font-bold text-lg border-t-2 border-emerald-600 mt-2">
-                <span>Grand Total:</span>
-                <span className="text-emerald-700">R {(invoice.amount || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between py-2 font-bold text-base border-t border-slate-300 mt-1">
-                <span className="text-slate-700">Amount Due:</span>
-                <span className="text-emerald-700">R {(invoice.status === 'Paid' ? 0 : (invoice.amount || 0)).toFixed(2)}</span>
+              
+              {/* Balance Due Box */}
+              <div className="mt-4 pt-4 border-t-4 border-slate-800 text-right">
+                <p className="text-sm text-slate-600 font-medium">BALANCE DUE</p>
+                <p className="text-3xl font-bold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
             </div>
           </div>
-          
-          {/* Banking Details */}
-          {company?.bankName && (
-            <div className="mt-8 pt-6 border-t">
-              <h4 className="font-semibold text-sm text-slate-600 mb-2">BANKING DETAILS</h4>
-              <div className="text-sm text-slate-600">
-                <p>Bank: {company.bankName}</p>
-                <p>Account: {company.bankAccountNo}</p>
-                {company.bankBranchCode && <p>Branch Code: {company.bankBranchCode}</p>}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -1848,7 +1685,7 @@ const PrintPreview = ({ invoice, onClose, company }) => {
 };
 
 // ==================== SUPPLIERS VIEW (with Supplier Invoices) ====================
-const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clients, showSupplierForm, setShowSupplierForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, accounts = [] }) => {
+const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clients, showSupplierForm, setShowSupplierForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, accounts = [], company }) => {
   const [formData, setFormData] = useState({ name: '', company: '', email: '', phone: '' });
   const [activeTab, setActiveTab] = useState('invoices');
   const pdfInvoiceInputRef = React.useRef(null);
@@ -2490,7 +2327,7 @@ Rules:
             <Building2 className="w-4 h-4" />
             Supplier Contacts
             <span className={`px-2 py-0.5 rounded-full text-xs ${activeTab === 'contacts' ? 'bg-orange-200 text-orange-800' : 'bg-slate-200 text-slate-600'}`}>
-              {suppliers.length}
+              {suppliers.length}}
             </span>
           </div>
         </button>
@@ -2637,7 +2474,7 @@ Rules:
       
       {/* Print Preview Modal */}
       {showPrintPreview && selectedInvoice && (
-        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={clients?.[0]} />
+        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={company} />
       )}
     </div>
   );
@@ -3347,6 +3184,10 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
   const [extractedPdfData, setExtractedPdfData] = useState([]);
   const [pdfProcessing, setPdfProcessing] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
+  const [convertVatRate, setConvertVatRate] = useState('Standard Rate (15.00%)'); // VAT rate for conversion
+  const [bankingSubTab, setBankingSubTab] = useState('new'); // 'new' or 'reviewed'
+  const [currentPage, setCurrentPage] = useState(1);
+  const ROWS_PER_PAGE = 15;
 
   // Build selection options from accounts
   const selectionOptions = [
@@ -3693,9 +3534,9 @@ Rules:
     a.click();
   };
 
-  const toggleSelectAll = (checked) => {
+  const toggleSelectAll = (checked, visibleStatements) => {
     if (checked) {
-      setSelectedIds(bankStatements.map(s => s.id));
+      setSelectedIds(visibleStatements.map(s => s.id));
     } else {
       setSelectedIds([]);
     }
@@ -3721,20 +3562,53 @@ Rules:
       setTimeout(() => setSaveMessage(''), 3000);
       return;
     }
-    const updated = bankStatements.map(s => 
+    const count = selectedIds.length;
+    const updated = bankStatements.map(s =>
       selectedIds.includes(s.id) ? { ...s, reconciled: true, reviewed: true } : s
     );
     saveBankStatements(updated);
     setSelectedIds([]);
-    setSaveMessage(`${selectedIds.length} transaction(s) marked as reviewed!`);
+    setCurrentPage(1);
+    setSaveMessage(`${count} transaction(s) marked as reviewed!`);
     setTimeout(() => setSaveMessage(''), 3000);
   };
 
   const handleMarkAllAsReviewed = () => {
-    const updated = bankStatements.map(s => ({ ...s, reconciled: true, reviewed: true }));
+    const newTransactions = bankStatements.filter(s => !s.reviewed);
+    const count = newTransactions.length;
+    const updated = bankStatements.map(s => !s.reviewed ? { ...s, reconciled: true, reviewed: true } : s);
     saveBankStatements(updated);
     setSelectedIds([]);
-    setSaveMessage('All transactions marked as reviewed!');
+    setCurrentPage(1);
+    setSaveMessage(`${count} transaction(s) marked as reviewed!`);
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
+  const handleRecallSelected = () => {
+    if (selectedIds.length === 0) {
+      setSaveMessage('Please select transactions first');
+      setTimeout(() => setSaveMessage(''), 3000);
+      return;
+    }
+    const count = selectedIds.length;
+    const updated = bankStatements.map(s =>
+      selectedIds.includes(s.id) ? { ...s, reviewed: false } : s
+    );
+    saveBankStatements(updated);
+    setSelectedIds([]);
+    setCurrentPage(1);
+    setSaveMessage(`${count} transaction(s) recalled for review!`);
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
+  const handleRecallAll = () => {
+    const reviewedTransactions = bankStatements.filter(s => s.reviewed);
+    const count = reviewedTransactions.length;
+    const updated = bankStatements.map(s => s.reviewed ? { ...s, reviewed: false } : s);
+    saveBankStatements(updated);
+    setSelectedIds([]);
+    setCurrentPage(1);
+    setSaveMessage(`${count} transaction(s) recalled for review!`);
     setTimeout(() => setSaveMessage(''), 3000);
   };
 
@@ -3764,6 +3638,28 @@ Rules:
     }
   };
 
+  // Link invoice directly (used by dropdown, takes statement ID directly)
+  const handleLinkInvoiceDirect = (statementId, invoiceId, invoiceType, invoiceNo) => {
+    const invoice = invoices.find(inv => inv.id === invoiceId);
+    const updatedStatements = bankStatements.map(s => 
+      s.id === statementId 
+        ? { ...s, linkedInvoice: invoiceId, linkedType: invoiceType, linkedInvoiceNo: invoiceNo || '' }
+        : s
+    );
+    saveBankStatements(updatedStatements);
+    
+    // Mark invoice as paid if linking
+    if (invoice && saveInvoices) {
+      const updatedInvoices = invoices.map(inv => 
+        inv.id === invoiceId ? { ...inv, status: 'Paid' } : inv
+      );
+      saveInvoices(updatedInvoices);
+    }
+    
+    setSaveMessage('Invoice linked successfully!');
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
   // Unlink invoice
   const handleUnlinkInvoice = (stmtId) => {
     const updatedStatements = bankStatements.map(s => 
@@ -3779,14 +3675,22 @@ Rules:
   // Convert to invoice
   const handleConvertToInvoice = (type) => {
     if (activeStatement && saveInvoices) {
-      const amount = type === 'client' ? (activeStatement.received || 0) : (activeStatement.spent || 0);
+      const amountInclVat = type === 'client' ? (activeStatement.received || 0) : (activeStatement.spent || 0);
+      // Use the VAT rate selected in the modal
+      const vatRateValue = getVATRate(convertVatRate);
+      
+      // Calculate Ex VAT amount (amount entered is VAT inclusive)
+      const amountExVat = vatRateValue > 0 ? amountInclVat / (1 + vatRateValue) : amountInclVat;
+      const vatAmount = amountInclVat - amountExVat;
+      
       const newInvoice = {
         id: Date.now(),
         documentNo: type === 'client' ? `INV-${Date.now()}` : `SINV-${Date.now()}`,
+        externalInvoiceNo: activeStatement.externalInvoiceNo || '', // Actual invoice number from bank
         date: activeStatement.date,
         dueDate: activeStatement.date,
-        customer: type === 'client' ? (activeStatement.description || 'Client') : '',
-        supplier: type === 'supplier' ? (activeStatement.description || 'Supplier') : '',
+        customer: type === 'client' ? (activeStatement.selection || activeStatement.description || 'Client') : '',
+        supplier: type === 'supplier' ? (activeStatement.selection || activeStatement.description || 'Supplier') : '',
         customerRef: activeStatement.reference || '',
         invoiceType: type,
         items: [{
@@ -3795,11 +3699,14 @@ Rules:
           description: activeStatement.description || 'Payment',
           unit: '',
           qty: 1,
-          price: amount,
-          vatType: activeStatement.vatRate || 'Standard Rate (15.00%)',
+          price: amountExVat, // Store Ex VAT price
+          vatType: convertVatRate, // Use selected VAT rate
           discPercent: 0
         }],
-        amount: amount,
+        amount: amountInclVat, // Total including VAT
+        subtotal: amountExVat, // Ex VAT amount
+        vat: vatAmount, // VAT amount
+        totalDiscount: 0,
         status: 'Paid',
         createdFromBank: true
       };
@@ -3817,6 +3724,7 @@ Rules:
       
       setShowConvertModal(false);
       setActiveStatement(null);
+      setConvertVatRate('Standard Rate (15.00%)'); // Reset VAT rate
       setSaveMessage(`${type === 'client' ? 'Client' : 'Supplier'} invoice created and linked!`);
       setTimeout(() => setSaveMessage(''), 3000);
     }
@@ -3827,14 +3735,74 @@ Rules:
   // Get pending/unpaid invoices for linking
   const availableInvoices = invoices.filter(inv => inv.status !== 'Paid' || !bankStatements.some(s => s.linkedInvoice === inv.id));
 
+  // Filtered transactions based on active sub-tab
+  const filteredStatements = bankingSubTab === 'new'
+    ? bankStatements.filter(s => !s.reviewed)
+    : bankStatements.filter(s => s.reviewed);
+
+  // Pagination calculations
+  const totalFiltered = filteredStatements.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / ROWS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * ROWS_PER_PAGE;
+  const endIndex = Math.min(startIndex + ROWS_PER_PAGE, totalFiltered);
+  const paginatedStatements = filteredStatements.slice(startIndex, endIndex);
+
+  // Count for each tab
+  const newCount = bankStatements.filter(s => !s.reviewed).length;
+  const reviewedCount = bankStatements.filter(s => s.reviewed).length;
+
+  // Generate page numbers for pagination
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxVisible = 10;
+    if (totalPages <= maxVisible) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      const startPage = Math.max(1, safePage - 4);
+      const endPage = Math.min(totalPages, startPage + maxVisible - 1);
+      for (let i = startPage; i <= endPage; i++) pages.push(i);
+      if (endPage < totalPages) pages.push('...');
+    }
+    return pages;
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-semibold text-slate-800">Bank Statements</h2>
-        <div className="flex gap-2">
-          <input type="file" ref={fileInputRef} onChange={handleCSVImport} accept=".csv" className="hidden" />
-          <input type="file" ref={pdfInputRef} onChange={handlePdfUpload} accept=".pdf" className="hidden" />
-          <input type="file" ref={imageInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
+    <div className="space-y-4">
+      {/* Hidden file inputs */}
+      <input type="file" ref={fileInputRef} onChange={handleCSVImport} accept=".csv" className="hidden" />
+      <input type="file" ref={pdfInputRef} onChange={handlePdfUpload} accept=".pdf" className="hidden" />
+      <input type="file" ref={imageInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
+
+      {/* Sub-tabs: New Transactions / Reviewed Transactions */}
+      <div className="border-b border-slate-300">
+        <div className="flex">
+          <button
+            onClick={() => { setBankingSubTab('new'); setCurrentPage(1); setSelectedIds([]); }}
+            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+              bankingSubTab === 'new'
+                ? 'border-blue-600 text-blue-700 bg-white'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            New Transactions {newCount > 0 && <span className="ml-1 px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs font-bold">{newCount}</span>}
+          </button>
+          <button
+            onClick={() => { setBankingSubTab('reviewed'); setCurrentPage(1); setSelectedIds([]); }}
+            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+              bankingSubTab === 'reviewed'
+                ? 'border-blue-600 text-blue-700 bg-white'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            Reviewed Transactions {reviewedCount > 0 && <span className="ml-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-bold">{reviewedCount}</span>}
+          </button>
+        </div>
+      </div>
+
+      {/* Action toolbar */}
+      <div className="flex justify-between items-center flex-wrap gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button onClick={() => imageInputRef.current?.click()} className="flex items-center gap-2 border border-blue-300 text-blue-600 px-4 py-2 rounded-lg hover:bg-blue-50 text-sm">
             <Upload className="w-4 h-4" /> Upload Image
           </button>
@@ -3852,6 +3820,13 @@ Rules:
           </button>
         </div>
       </div>
+
+      {/* Transaction count info */}
+      {totalFiltered > 0 && (
+        <p className="text-sm text-slate-600">
+          You have <span className="font-bold text-blue-700">{totalFiltered}</span> {bankingSubTab === 'new' ? 'new Bank Statement transactions to review and process.' : 'reviewed transactions.'}
+        </p>
+      )}
 
       {/* PDF Extractor Modal */}
       {showPdfExtractor && (
@@ -4015,25 +3990,26 @@ Rules:
                 <th className="text-center px-2 py-3 font-medium text-slate-600 w-10">
                   <input
                     type="checkbox"
-                    checked={bankStatements.length > 0 && selectedIds.length === bankStatements.length}
-                    onChange={(e) => toggleSelectAll(e.target.checked)}
+                    checked={paginatedStatements.length > 0 && paginatedStatements.every(s => selectedIds.includes(s.id))}
+                    onChange={(e) => toggleSelectAll(e.target.checked, paginatedStatements)}
                     className="w-4 h-4"
                   />
                 </th>
                 <th className="text-left px-3 py-3 font-medium text-slate-600 w-28">Date</th>
                 <th className="text-left px-3 py-3 font-medium text-slate-600">Description</th>
-                <th className="text-left px-3 py-3 font-medium text-slate-600 w-32">Type</th>
-                <th className="text-left px-3 py-3 font-medium text-slate-600 w-36">Category</th>
+                <th className="text-left px-3 py-3 font-medium text-slate-600 w-28">Invoice No.</th>
+                <th className="text-left px-3 py-3 font-medium text-slate-600 w-28">Type</th>
+                <th className="text-left px-3 py-3 font-medium text-slate-600 w-32">Category</th>
                 <th className="text-left px-3 py-3 font-medium text-slate-600 w-28">VAT Rate</th>
-                <th className="text-right px-3 py-3 font-medium text-slate-600 w-32">Spent</th>
-                <th className="text-right px-3 py-3 font-medium text-slate-600 w-32">Received</th>
-                <th className="text-left px-3 py-3 font-medium text-slate-600 w-56">Link / Convert</th>
+                <th className="text-right px-3 py-3 font-medium text-slate-600 w-28">Spent</th>
+                <th className="text-right px-3 py-3 font-medium text-slate-600 w-28">Received</th>
+                <th className="text-left px-3 py-3 font-medium text-slate-600 w-52">Convert / Link</th>
                 <th className="text-center px-3 py-3 font-medium text-slate-600 w-12">Rec.</th>
-                <th className="w-12"></th>
+                <th className="w-10"></th>
               </tr>
             </thead>
             <tbody>
-              {bankStatements.length > 0 ? bankStatements.map(stmt => (
+              {paginatedStatements.length > 0 ? paginatedStatements.map(stmt => (
                 <tr key={stmt.id} className={`border-t hover:bg-slate-50 ${stmt.reconciled ? 'bg-green-50' : ''} ${selectedIds.includes(stmt.id) ? 'bg-blue-50' : ''}`}>
                   <td className="px-2 py-2 text-center">
                     <input
@@ -4061,81 +4037,112 @@ Rules:
                     />
                   </td>
                   <td className="px-3 py-2">
+                    <input
+                      type="text"
+                      value={stmt.externalInvoiceNo || ''}
+                      onChange={(e) => updateStatement(stmt.id, 'externalInvoiceNo', e.target.value)}
+                      className="border rounded px-2 py-1 text-sm w-full"
+                      placeholder="Inv. No."
+                    />
+                  </td>
+                  <td className="px-3 py-2">
                     <select
-                      value={stmt.type}
-                      onChange={(e) => updateStatement(stmt.id, 'type', e.target.value)}
+                      value={stmt.type || 'Account'}
+                      onChange={(e) => {
+                        const newType = e.target.value;
+                        let newSelection = 'Unallocated Expen';
+                        let newVatRate = stmt.vatRate;
+                        if (newType === 'Customer' && clients.length > 0) {
+                          newSelection = clients[0].name;
+                          newVatRate = 'No VAT'; // VAT comes from invoice
+                        } else if (newType === 'Supplier' && suppliers.length > 0) {
+                          newSelection = suppliers[0].name;
+                          newVatRate = 'No VAT'; // VAT comes from invoice
+                        }
+                        // Update fields together
+                        saveBankStatements(bankStatements.map(s => 
+                          s.id === stmt.id ? { ...s, type: newType, selection: newSelection, vatRate: newVatRate } : s
+                        ));
+                      }}
                       className="border rounded px-2 py-1 text-sm w-full"
                     >
-                      <option>Account</option>
-                      <option>Customer</option>
-                      <option>Supplier</option>
-                      <option>Transfer</option>
-                      <option>VAT</option>
+                      <option value="Account">Account</option>
+                      <option value="Customer">Customer</option>
+                      <option value="Supplier">Supplier</option>
+                      <option value="Transfer">Transfer</option>
+                      <option value="VAT">VAT</option>
                     </select>
                   </td>
                   <td className="px-3 py-2">
                     <select
-                      value={stmt.selection}
+                      value={stmt.selection || ''}
                       onChange={(e) => updateStatement(stmt.id, 'selection', e.target.value)}
                       className="border rounded px-2 py-1 text-sm w-full"
                     >
-                      {selectionOptions.map(opt => <option key={opt}>{opt}</option>)}
+                      {stmt.type === 'Customer' ? (
+                        <>
+                          <option value="">-- Select Customer --</option>
+                          {clients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </>
+                      ) : stmt.type === 'Supplier' ? (
+                        <>
+                          <option value="">-- Select Supplier --</option>
+                          {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                        </>
+                      ) : (
+                        selectionOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)
+                      )}
                     </select>
                   </td>
                   <td className="px-3 py-2">
                     <select
-                      value={stmt.vatRate}
+                      value={stmt.vatRate || 'No VAT'}
                       onChange={(e) => updateStatement(stmt.id, 'vatRate', e.target.value)}
-                      className="border rounded px-2 py-1 text-sm w-full"
+                      disabled={stmt.type === 'Customer' || stmt.type === 'Supplier'}
+                      className={`border rounded px-2 py-1 text-sm w-full ${(stmt.type === 'Customer' || stmt.type === 'Supplier') ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`}
+                      title={stmt.type === 'Customer' || stmt.type === 'Supplier' ? 'VAT is taken from the invoice' : ''}
                     >
                       {VAT_RATES.map(vat => <option key={vat.value} value={vat.value}>{vat.label}</option>)}
                     </select>
                   </td>
                   <td className="px-3 py-2">
                     <input
-                      type="text"
-                      value={stmt.spent ? `R ${stmt.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                      type="number"
+                      step="0.01"
+                      value={stmt.spent || ''}
                       onChange={(e) => {
-                        const value = e.target.value.replace(/[^0-9.]/g, '');
-                        updateStatement(stmt.id, 'spent', parseFloat(value) || 0);
-                      }}
-                      onFocus={(e) => {
-                        e.target.value = stmt.spent || '';
-                      }}
-                      onBlur={(e) => {
-                        const value = parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0;
+                        const value = parseFloat(e.target.value) || 0;
                         updateStatement(stmt.id, 'spent', value);
                       }}
-                      className="border rounded px-3 py-1 text-sm w-full text-right min-w-[140px]"
-                      placeholder="R 0.00"
+                      className="border rounded px-3 py-1 text-sm w-full text-right min-w-[120px]"
+                      placeholder="0.00"
                     />
                   </td>
                   <td className="px-3 py-2">
                     <input
-                      type="text"
-                      value={stmt.received ? `R ${stmt.received.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                      type="number"
+                      step="0.01"
+                      value={stmt.received || ''}
                       onChange={(e) => {
-                        const value = e.target.value.replace(/[^0-9.]/g, '');
-                        updateStatement(stmt.id, 'received', parseFloat(value) || 0);
-                      }}
-                      onFocus={(e) => {
-                        e.target.value = stmt.received || '';
-                      }}
-                      onBlur={(e) => {
-                        const value = parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0;
+                        const value = parseFloat(e.target.value) || 0;
                         updateStatement(stmt.id, 'received', value);
                       }}
                       className="border rounded px-3 py-1 text-sm w-full text-right min-w-[120px]"
-                      placeholder="R 0.00"
+                      placeholder="0.00"
                     />
                   </td>
                   {/* Link Invoice Column */}
                   <td className="px-3 py-2">
                     {stmt.linkedInvoice ? (
                       <div className="flex items-center gap-1">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${stmt.linkedType === 'client' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {stmt.linkedInvoiceNo || 'Linked'}
-                        </span>
+                        <div className="flex flex-col">
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${stmt.linkedType === 'client' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                            ✓ {stmt.linkedInvoiceNo || 'Linked'}
+                          </span>
+                          {stmt.externalInvoiceNo && (
+                            <span className="text-xs text-slate-500 mt-1">Ref: {stmt.externalInvoiceNo}</span>
+                          )}
+                        </div>
                         <button 
                           onClick={() => handleUnlinkInvoice(stmt.id)}
                           className="p-1 text-red-500 hover:bg-red-50 rounded"
@@ -4145,14 +4152,8 @@ Rules:
                         </button>
                       </div>
                     ) : (
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => { setActiveStatement(stmt); setShowLinkModal(true); }}
-                          className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100 border border-blue-200"
-                          title="Link to existing invoice"
-                        >
-                          Link
-                        </button>
+                      <div className="flex gap-1 items-center">
+                        {/* Convert button first */}
                         <button
                           onClick={() => { setActiveStatement(stmt); setShowConvertModal(true); }}
                           className="px-2 py-1 text-xs bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100 border border-emerald-200"
@@ -4160,6 +4161,54 @@ Rules:
                         >
                           Convert
                         </button>
+                        {/* Link dropdown - shows relevant invoices based on transaction type */}
+                        {(() => {
+                          // Debit (Spent) = Supplier invoices, Credit (Received) = Customer invoices
+                          const isDebit = stmt.spent > 0;
+                          const relevantInvoices = invoices.filter(inv => {
+                            // Check if already linked to another transaction
+                            const isLinked = bankStatements.some(s => s.linkedInvoice === inv.id);
+                            if (isLinked) return false;
+                            // Only show unpaid invoices (not already Paid)
+                            if (inv.status === 'Paid') return false;
+                            // Filter by type based on transaction direction
+                            if (isDebit) {
+                              // Spent money = paying supplier invoices
+                              return inv.invoiceType === 'supplier';
+                            } else {
+                              // Received money = customer paying us
+                              // Customer invoices have invoiceType === 'client' OR undefined OR null
+                              return inv.invoiceType === 'client' || !inv.invoiceType || inv.invoiceType === undefined;
+                            }
+                          });
+                          
+                          return (
+                            <select
+                              className="px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 cursor-pointer min-w-[130px]"
+                              value=""
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  const inv = invoices.find(i => i.id === e.target.value);
+                                  if (inv) {
+                                    handleLinkInvoiceDirect(stmt.id, inv.id, inv.invoiceType || 'client', inv.documentNo);
+                                  }
+                                }
+                              }}
+                              disabled={relevantInvoices.length === 0}
+                            >
+                              <option value="">
+                                {relevantInvoices.length === 0 
+                                  ? `No ${isDebit ? 'supplier' : 'customer'} invoices` 
+                                  : `Link to... (${relevantInvoices.length})`}
+                              </option>
+                              {relevantInvoices.map(inv => (
+                                <option key={inv.id} value={inv.id}>
+                                  {inv.documentNo} - R{(inv.amount || 0).toLocaleString()} ({inv.customer || inv.supplier || 'Unknown'})
+                                </option>
+                              ))}
+                            </select>
+                          );
+                        })()}
                       </div>
                     )}
                   </td>
@@ -4179,15 +4228,59 @@ Rules:
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={11} className="text-center py-8 text-slate-500">
-                    No bank statements. Import a CSV or add entries manually.
+                  <td colSpan={12} className="text-center py-8 text-slate-500">
+                    {bankingSubTab === 'new'
+                      ? 'No new transactions. Import a CSV, upload a bank statement, or add entries manually.'
+                      : 'No reviewed transactions yet. Mark transactions as reviewed from the New Transactions tab.'}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        
+
+        {/* Pagination */}
+        {totalFiltered > ROWS_PER_PAGE && (
+          <div className="px-4 py-3 border-t flex items-center justify-between bg-slate-50">
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setCurrentPage(1)}
+                disabled={safePage === 1}
+                className={`px-3 py-1 text-sm border rounded ${safePage === 1 ? 'text-slate-400 bg-slate-100 cursor-not-allowed' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-600'}`}
+              >
+                First
+              </button>
+              {getPageNumbers().map((page, idx) => (
+                page === '...' ? (
+                  <span key={`ellipsis-${idx}`} className="px-2 py-1 text-slate-400 text-sm">...</span>
+                ) : (
+                  <button
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    className={`px-3 py-1 text-sm border rounded min-w-[32px] ${
+                      safePage === page
+                        ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                        : 'text-slate-600 hover:bg-blue-50 hover:text-blue-600'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                )
+              ))}
+              <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={safePage === totalPages}
+                className={`px-3 py-1 text-sm border rounded ${safePage === totalPages ? 'text-slate-400 bg-slate-100 cursor-not-allowed' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-600'}`}
+              >
+                Last
+              </button>
+            </div>
+            <span className="text-sm text-slate-500">
+              Displaying {startIndex + 1} - {endIndex} of {totalFiltered}
+            </span>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="p-4 bg-slate-100 border-t">
           {/* Success Message */}
@@ -4196,26 +4289,45 @@ Rules:
               {saveMessage}
             </div>
           )}
-          
+
           <div className="flex justify-center gap-3">
-            <button 
+            <button
               onClick={handleSaveChanges}
-              className="px-6 py-2 bg-blue-600 text-white rounded font-medium text-sm hover:bg-blue-700"
+              className="px-6 py-2 bg-emerald-600 text-white rounded font-medium text-sm hover:bg-emerald-700"
             >
               Save Changes
             </button>
-            <button 
-              onClick={handleMarkSelectedAsReviewed}
-              className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
-            >
-              Mark Selected as Reviewed
-            </button>
-            <button 
-              onClick={handleMarkAllAsReviewed}
-              className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
-            >
-              Mark All as Reviewed
-            </button>
+            {bankingSubTab === 'new' ? (
+              <>
+                <button
+                  onClick={handleMarkSelectedAsReviewed}
+                  className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
+                >
+                  Mark Selected as Reviewed
+                </button>
+                <button
+                  onClick={handleMarkAllAsReviewed}
+                  className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
+                >
+                  Mark All as Reviewed
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={handleRecallSelected}
+                  className="px-6 py-2 bg-white text-orange-600 border border-orange-600 rounded font-medium text-sm hover:bg-orange-50"
+                >
+                  Recall Selected for Review
+                </button>
+                <button
+                  onClick={handleRecallAll}
+                  className="px-6 py-2 bg-white text-orange-600 border border-orange-600 rounded font-medium text-sm hover:bg-orange-50"
+                >
+                  Recall All for Review
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -4290,13 +4402,13 @@ Rules:
       {/* Convert to Invoice Modal */}
       {showConvertModal && activeStatement && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
             <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
               <div>
                 <h3 className="font-semibold text-lg">Convert to Invoice</h3>
                 <p className="text-sm text-slate-600">Create a new invoice from this bank transaction</p>
               </div>
-              <button onClick={() => { setShowConvertModal(false); setActiveStatement(null); }} className="p-2 hover:bg-slate-100 rounded">
+              <button onClick={() => { setShowConvertModal(false); setActiveStatement(null); setConvertVatRate('Standard Rate (15.00%)'); }} className="p-2 hover:bg-slate-100 rounded">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -4307,6 +4419,9 @@ Rules:
                 <div className="space-y-1 text-sm">
                   <p><span className="text-slate-500">Date:</span> {activeStatement.date}</p>
                   <p><span className="text-slate-500">Description:</span> {activeStatement.description || 'N/A'}</p>
+                  {activeStatement.externalInvoiceNo && (
+                    <p><span className="text-slate-500">Invoice No.:</span> <span className="font-semibold">{activeStatement.externalInvoiceNo}</span></p>
+                  )}
                   {activeStatement.spent > 0 && (
                     <p><span className="text-slate-500">Amount Spent:</span> <span className="font-semibold text-red-600">R {activeStatement.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></p>
                   )}
@@ -4314,6 +4429,43 @@ Rules:
                     <p><span className="text-slate-500">Amount Received:</span> <span className="font-semibold text-emerald-600">R {activeStatement.received.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></p>
                   )}
                 </div>
+              </div>
+              
+              {/* VAT Rate Selection */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Select VAT Rate for Invoice:
+                </label>
+                <select
+                  value={convertVatRate}
+                  onChange={(e) => setConvertVatRate(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500"
+                >
+                  {VAT_RATES.map(vat => (
+                    <option key={vat.value} value={vat.value}>{vat.label}</option>
+                  ))}
+                </select>
+                
+                {/* Show calculated amounts */}
+                {(() => {
+                  const amount = activeStatement.spent > 0 ? activeStatement.spent : activeStatement.received;
+                  const vatRate = getVATRate(convertVatRate);
+                  const exVat = vatRate > 0 ? amount / (1 + vatRate) : amount;
+                  const vatAmount = amount - exVat;
+                  return (
+                    <div className="mt-3 p-3 bg-emerald-50 rounded-lg text-sm">
+                      <p className="font-medium text-emerald-800 mb-2">Invoice will be created as:</p>
+                      <div className="grid grid-cols-2 gap-2 text-emerald-700">
+                        <span>Amount (Inc VAT):</span>
+                        <span className="text-right font-semibold">R {amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span>
+                        <span>Ex VAT Amount:</span>
+                        <span className="text-right">R {exVat.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span>
+                        <span>VAT ({(vatRate * 100).toFixed(0)}%):</span>
+                        <span className="text-right">R {vatAmount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               
               <h4 className="font-medium text-sm text-slate-600 mb-3">Select invoice type:</h4>
@@ -4330,9 +4482,6 @@ Rules:
                   <Users className="w-8 h-8 mx-auto mb-2 text-blue-600" />
                   <p className="font-semibold text-blue-700">Client Invoice</p>
                   <p className="text-xs text-slate-500 mt-1">For payments received</p>
-                  {activeStatement.received > 0 && (
-                    <p className="text-xs font-semibold text-emerald-600 mt-1">R {activeStatement.received.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
-                  )}
                 </button>
                 <button
                   onClick={() => handleConvertToInvoice('supplier')}
@@ -4346,16 +4495,13 @@ Rules:
                   <Building2 className="w-8 h-8 mx-auto mb-2 text-orange-600" />
                   <p className="font-semibold text-orange-700">Supplier Invoice</p>
                   <p className="text-xs text-slate-500 mt-1">For payments made</p>
-                  {activeStatement.spent > 0 && (
-                    <p className="text-xs font-semibold text-red-600 mt-1">R {activeStatement.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
-                  )}
                 </button>
               </div>
             </div>
             
             <div className="p-4 border-t bg-slate-50 flex justify-end">
               <button 
-                onClick={() => { setShowConvertModal(false); setActiveStatement(null); }}
+                onClick={() => { setShowConvertModal(false); setActiveStatement(null); setConvertVatRate('Standard Rate (15.00%)'); }}
                 className="px-4 py-2 border rounded text-sm hover:bg-slate-100"
               >
                 Cancel
@@ -4369,6 +4515,8 @@ Rules:
 };
 
 // ==================== VAT RECONCILIATION VIEW ====================
+// VAT Recon only uses manually added transactions and imported tax boxes
+// It does NOT pull from invoices or bank statements
 const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts }) => {
   const fileInputRef = React.useRef(null);
   const [saveMessage, setSaveMessage] = useState('');
@@ -4383,15 +4531,21 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     return rate && (rate.includes('15.00%') || rate === 'Standard 15%' || rate.includes('15%'));
   };
 
-  // Filter transactions by type and rate
-  const standardOutputTxns = vatTransactions.filter(t => t.vatType === 'output' && isStandardRate(t.vatRate));
-  const zeroOutputTxns = vatTransactions.filter(t => t.vatType === 'output' && !isStandardRate(t.vatRate));
-  const standardInputTxns = vatTransactions.filter(t => t.vatType === 'input' && isStandardRate(t.vatRate));
-  const zeroInputTxns = vatTransactions.filter(t => t.vatType === 'input' && !isStandardRate(t.vatRate));
+  // Filter transactions by period
+  const filteredTransactions = vatTransactions.filter(t => {
+    if (!periodStart || !periodEnd) return true;
+    return t.date >= periodStart && t.date <= periodEnd;
+  });
+
+  // Filter transactions by type and rate (from manual/imported transactions ONLY)
+  const standardOutputTxns = filteredTransactions.filter(t => t.vatType === 'output' && isStandardRate(t.vatRate));
+  const zeroOutputTxns = filteredTransactions.filter(t => t.vatType === 'output' && !isStandardRate(t.vatRate));
+  const standardInputTxns = filteredTransactions.filter(t => t.vatType === 'input' && isStandardRate(t.vatRate));
+  const zeroInputTxns = filteredTransactions.filter(t => t.vatType === 'input' && !isStandardRate(t.vatRate));
 
   // All output and input transactions
-  const outputTransactions = vatTransactions.filter(t => t.vatType === 'output');
-  const inputTransactions = vatTransactions.filter(t => t.vatType === 'input');
+  const outputTransactions = filteredTransactions.filter(t => t.vatType === 'output');
+  const inputTransactions = filteredTransactions.filter(t => t.vatType === 'input');
 
   // Calculate totals
   const calcTotals = (txns) => ({
@@ -4448,8 +4602,39 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
         const exclusive = parseFloat(row.exclusive || row.excl || row.nett || row.amount || 0);
         const vat = parseFloat(row.vat || row.vatamount || row.tax || 0);
         const inclusive = parseFloat(row.inclusive || row.incl || row.total || 0) || (exclusive + vat);
-        const vatType = (row.vattype || row.type || '').toLowerCase().includes('input') ? 'input' : 'output';
         const vatRate = row.vatrate || row.rate || (vat > 0 ? 'Standard 15%' : 'Zero Rated');
+        
+        // Determine VAT type (input/output) based on multiple fields
+        // Check explicit vattype/type column first
+        let vatType = 'output'; // Default to output (sales)
+        const explicitType = (row.vattype || row.type || '').toLowerCase();
+        if (explicitType.includes('input') || explicitType.includes('purchase')) {
+          vatType = 'input';
+        } else if (explicitType.includes('output') || explicitType.includes('sale')) {
+          vatType = 'output';
+        } else {
+          // If no explicit type, check account/category for common purchase/expense keywords
+          const accountLower = account.toLowerCase();
+          const descLower = description.toLowerCase();
+          const purchaseKeywords = [
+            'purchase', 'expense', 'cost', 'supplier', 'creditor', 'buy', 'bought',
+            'input', 'stock', 'inventory', 'material', 'service fee', 'professional fee',
+            'rent', 'utilities', 'telephone', 'internet', 'insurance', 'repairs',
+            'maintenance', 'fuel', 'petrol', 'diesel', 'travel', 'accommodation',
+            'stationery', 'office', 'cleaning', 'security', 'subscription', 'license',
+            'accounting', 'legal', 'consulting', 'advertising', 'marketing', 'bank charge',
+            'equipment', 'asset', 'motor', 'vehicle', 'computer', 'software', 'wages', 'salary'
+          ];
+          
+          // Check if account or description contains purchase-related keywords
+          const isPurchase = purchaseKeywords.some(keyword => 
+            accountLower.includes(keyword) || descLower.includes(keyword)
+          );
+          
+          if (isPurchase) {
+            vatType = 'input';
+          }
+        }
 
         return {
           id: Date.now() + idx,
@@ -4473,7 +4658,7 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     event.target.value = '';
   };
 
-  // Add new transaction
+  // Add new transaction manually
   const addTransaction = (vatType, vatRate = 'Standard Rate (15.00%)') => {
     const newTransaction = {
       id: Date.now(),
@@ -4490,7 +4675,7 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     saveVatTransactions([...vatTransactions, newTransaction]);
   };
 
-  // Update transaction for non-amount fields
+  // Update transaction
   const updateTransaction = (id, field, value) => {
     const updated = vatTransactions.map(t => {
       if (t.id === id) {
@@ -4506,15 +4691,22 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     saveVatTransactions(vatTransactions.filter(t => t.id !== id));
   };
 
+  // Clear all transactions
+  const clearAll = () => {
+    if (vatTransactions.length > 0) {
+      saveVatTransactions([]);
+      setSaveMessage('All transactions cleared');
+      setTimeout(() => setSaveMessage(''), 3000);
+    }
+  };
+
   // Export to Excel (CSV format)
   const exportToExcel = () => {
-    // Helper to safely format numbers
     const fmt = (val) => (parseFloat(val) || 0).toFixed(2);
     
     let csv = 'VAT Reconciliation Report\n';
     csv += `Period: ${periodStart} to ${periodEnd}\n\n`;
     
-    // Summary
     csv += 'VAT SUMMARY\n';
     csv += 'Category,Exclusive,VAT,Inclusive\n';
     csv += `Standard Rate Output,${fmt(standardOutputTotals.exclusive)},${fmt(standardOutputTotals.vat)},${fmt(standardOutputTotals.inclusive)}\n`;
@@ -4525,25 +4717,18 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     csv += `Total Input,${fmt(standardInputTotals.exclusive + zeroInputTotals.exclusive)},${fmt(totalInputVAT)},${fmt(standardInputTotals.inclusive + zeroInputTotals.inclusive)}\n`;
     csv += `\n${netVAT >= 0 ? 'VAT Payable' : 'VAT Refundable'},,${fmt(Math.abs(netVAT))},\n\n`;
 
-    // Output VAT Transactions
     csv += 'OUTPUT VAT TRANSACTIONS\n';
     csv += 'Date,Reference,Account,Description,VAT Rate,Exclusive,VAT,Inclusive\n';
     outputTransactions.forEach(t => {
       csv += `${t.date},"${t.reference || ''}","${t.account || ''}","${t.description || ''}","${t.vatRate || ''}",${fmt(t.exclusive)},${fmt(t.vat)},${fmt(t.inclusive)}\n`;
     });
-    const outputTotals = calcTotals(outputTransactions);
-    csv += `Subtotal,,,,,${fmt(outputTotals.exclusive)},${fmt(outputTotals.vat)},${fmt(outputTotals.inclusive)}\n\n`;
 
-    // Input VAT Transactions
-    csv += 'INPUT VAT TRANSACTIONS\n';
+    csv += '\nINPUT VAT TRANSACTIONS\n';
     csv += 'Date,Reference,Account,Description,VAT Rate,Exclusive,VAT,Inclusive\n';
     inputTransactions.forEach(t => {
       csv += `${t.date},"${t.reference || ''}","${t.account || ''}","${t.description || ''}","${t.vatRate || ''}",${fmt(t.exclusive)},${fmt(t.vat)},${fmt(t.inclusive)}\n`;
     });
-    const inputTotals = calcTotals(inputTransactions);
-    csv += `Subtotal,,,,,${fmt(inputTotals.exclusive)},${fmt(inputTotals.vat)},${fmt(inputTotals.inclusive)}\n`;
 
-    // Create and trigger download directly
     const fileName = `VAT_Recon_${periodStart}_to_${periodEnd}.csv`;
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -4556,12 +4741,12 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     URL.revokeObjectURL(url);
   };
 
-  // Generate PDF Download (HTML file for print to PDF)
+  // Generate PDF Download
   const generatePDFDownload = () => {
     setGenerating(true);
     const fmtAmt = (amt) => `R ${(parseFloat(amt) || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     
-    const generateTableRows = (txns, showVat = true) => {
+    const generateTableRows = (txns) => {
       if (txns.length === 0) return '<tr><td colspan="7" style="text-align:center;padding:15px;color:#64748b;">No transactions</td></tr>';
       return txns.map(t => `
         <tr>
@@ -4570,7 +4755,7 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
           <td style="padding:6px;border:1px solid #d1d5db;">${t.account || ''}</td>
           <td style="padding:6px;border:1px solid #d1d5db;">${t.description || ''}</td>
           <td style="padding:6px;border:1px solid #d1d5db;text-align:right;">${fmtAmt(t.exclusive)}</td>
-          ${showVat ? `<td style="padding:6px;border:1px solid #d1d5db;text-align:right;">${fmtAmt(t.vat)}</td>` : ''}
+          <td style="padding:6px;border:1px solid #d1d5db;text-align:right;">${fmtAmt(t.vat)}</td>
           <td style="padding:6px;border:1px solid #d1d5db;text-align:right;">${fmtAmt(t.inclusive)}</td>
         </tr>
       `).join('');
@@ -4584,168 +4769,46 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
         <title>VAT Reconciliation Report</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: Arial, Helvetica, sans-serif; padding: 30px; font-size: 11px; line-height: 1.4; }
-          .header { display: flex; justify-content: space-between; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #059669; }
-          .company-info { text-align: right; }
-          .company-name { font-size: 18px; font-weight: bold; color: #1f2937; }
-          .company-details { font-size: 11px; color: #6b7280; }
-          .logo { max-width: 120px; max-height: 80px; object-fit: contain; }
-          h1 { color: #059669; font-size: 22px; margin-bottom: 5px; }
-          h2 { color: #374151; font-size: 14px; margin: 20px 0 10px 0; }
-          .period { color: #6b7280; margin-bottom: 20px; font-size: 12px; }
+          body { font-family: Arial, sans-serif; padding: 30px; font-size: 11px; }
+          h1 { font-size: 18px; margin-bottom: 10px; }
+          h2 { font-size: 14px; margin: 20px 0 10px; padding: 8px; background: #f0f0f0; }
           table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-          th { background: #f1f5f9; padding: 8px 6px; text-align: left; border: 1px solid #d1d5db; font-weight: 600; font-size: 10px; }
-          td { padding: 6px; border: 1px solid #d1d5db; font-size: 10px; }
+          th { background: #e5e7eb; padding: 8px; text-align: left; border: 1px solid #d1d5db; }
+          td { padding: 6px; border: 1px solid #d1d5db; }
           .text-right { text-align: right; }
-          .section-blue { background: #dbeafe; color: #1e40af; }
-          .section-orange { background: #ffedd5; color: #c2410c; }
-          .subtotal-row { background: #f1f5f9; font-weight: bold; }
-          .summary-header { background: #d1fae5; color: #065f46; }
-          .total-output { background: #dbeafe; font-weight: bold; }
-          .total-input { background: #ffedd5; font-weight: bold; }
-          .net-payable { background: #fee2e2; font-weight: bold; color: #991b1b; }
-          .net-refund { background: #d1fae5; font-weight: bold; color: #065f46; }
-          @media print { body { padding: 20px; } }
+          .summary { background: #f8fafc; font-weight: bold; }
+          .total-row { background: ${netVAT >= 0 ? '#fee2e2' : '#dcfce7'}; font-weight: bold; }
         </style>
       </head>
       <body>
-        <div class="header">
-          <div>
-            ${company?.logo ? `<img src="${company.logo}" class="logo" alt="Logo" />` : ''}
-            <h1>VAT Reconciliation Report</h1>
-            <p class="period">Period: ${periodStart} to ${periodEnd}</p>
-          </div>
-          <div class="company-info">
-            <p class="company-name">${company?.name || 'Company Name'}</p>
-            ${company?.tradingName ? `<p class="company-details">Trading as: ${company.tradingName}</p>` : ''}
-            ${company?.address ? `<p class="company-details">${company.address}</p>` : ''}
-            ${company?.city ? `<p class="company-details">${company.city}, ${company.postalCode || ''}</p>` : ''}
-            ${company?.vatNo ? `<p class="company-details">VAT No: ${company.vatNo}</p>` : ''}
-            ${company?.registrationNo ? `<p class="company-details">Reg No: ${company.registrationNo}</p>` : ''}
-          </div>
-        </div>
-        
+        <h1>VAT Reconciliation Report</h1>
+        <p>Period: ${periodStart} to ${periodEnd}</p>
+        <p style="margin-bottom:20px;">${company?.name || 'Company Name'}</p>
+
         <h2>VAT Summary</h2>
         <table>
-          <thead>
-            <tr class="summary-header">
-              <th>Category</th>
-              <th class="text-right">Exclusive</th>
-              <th class="text-right">VAT</th>
-              <th class="text-right">Inclusive</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr class="section-blue"><td colspan="4" style="font-weight:bold;">OUTPUT VAT (Sales)</td></tr>
-            <tr>
-              <td style="padding-left:20px;">Standard Rate (15%)</td>
-              <td class="text-right">${fmtAmt(standardOutputTotals.exclusive)}</td>
-              <td class="text-right">${fmtAmt(standardOutputTotals.vat)}</td>
-              <td class="text-right">${fmtAmt(standardOutputTotals.inclusive)}</td>
-            </tr>
-            <tr>
-              <td style="padding-left:20px;">Zero Rate (0%)</td>
-              <td class="text-right">${fmtAmt(zeroOutputTotals.exclusive)}</td>
-              <td class="text-right">${fmtAmt(0)}</td>
-              <td class="text-right">${fmtAmt(zeroOutputTotals.inclusive)}</td>
-            </tr>
-            <tr class="total-output">
-              <td>Total Output VAT</td>
-              <td class="text-right">${fmtAmt(standardOutputTotals.exclusive + zeroOutputTotals.exclusive)}</td>
-              <td class="text-right">${fmtAmt(totalOutputVAT)}</td>
-              <td class="text-right">${fmtAmt(standardOutputTotals.inclusive + zeroOutputTotals.inclusive)}</td>
-            </tr>
-            <tr class="section-orange"><td colspan="4" style="font-weight:bold;">INPUT VAT (Purchases)</td></tr>
-            <tr>
-              <td style="padding-left:20px;">Standard Rate (15%)</td>
-              <td class="text-right">${fmtAmt(standardInputTotals.exclusive)}</td>
-              <td class="text-right">${fmtAmt(standardInputTotals.vat)}</td>
-              <td class="text-right">${fmtAmt(standardInputTotals.inclusive)}</td>
-            </tr>
-            <tr>
-              <td style="padding-left:20px;">Zero Rate (0%)</td>
-              <td class="text-right">${fmtAmt(zeroInputTotals.exclusive)}</td>
-              <td class="text-right">${fmtAmt(0)}</td>
-              <td class="text-right">${fmtAmt(zeroInputTotals.inclusive)}</td>
-            </tr>
-            <tr class="total-input">
-              <td>Total Input VAT</td>
-              <td class="text-right">${fmtAmt(standardInputTotals.exclusive + zeroInputTotals.exclusive)}</td>
-              <td class="text-right">${fmtAmt(totalInputVAT)}</td>
-              <td class="text-right">${fmtAmt(standardInputTotals.inclusive + zeroInputTotals.inclusive)}</td>
-            </tr>
-            <tr class="${netVAT >= 0 ? 'net-payable' : 'net-refund'}">
-              <td>${netVAT >= 0 ? 'VAT PAYABLE TO SARS' : 'VAT REFUNDABLE FROM SARS'}</td>
-              <td></td>
-              <td class="text-right" style="font-size:14px;">${fmtAmt(Math.abs(netVAT))}</td>
-              <td></td>
-            </tr>
-          </tbody>
+          <tr class="summary"><td colspan="4"><strong>OUTPUT VAT (Sales)</strong></td></tr>
+          <tr><td>Standard Rate (15%)</td><td class="text-right">${fmtAmt(standardOutputTotals.exclusive)}</td><td class="text-right">${fmtAmt(standardOutputTotals.vat)}</td><td class="text-right">${fmtAmt(standardOutputTotals.inclusive)}</td></tr>
+          <tr><td>Zero Rate</td><td class="text-right">${fmtAmt(zeroOutputTotals.exclusive)}</td><td class="text-right">R 0.00</td><td class="text-right">${fmtAmt(zeroOutputTotals.inclusive)}</td></tr>
+          <tr class="summary"><td colspan="4"><strong>INPUT VAT (Purchases)</strong></td></tr>
+          <tr><td>Standard Rate (15%)</td><td class="text-right">${fmtAmt(standardInputTotals.exclusive)}</td><td class="text-right">${fmtAmt(standardInputTotals.vat)}</td><td class="text-right">${fmtAmt(standardInputTotals.inclusive)}</td></tr>
+          <tr><td>Zero Rate</td><td class="text-right">${fmtAmt(zeroInputTotals.exclusive)}</td><td class="text-right">R 0.00</td><td class="text-right">${fmtAmt(zeroInputTotals.inclusive)}</td></tr>
+          <tr class="total-row"><td>${netVAT >= 0 ? 'VAT PAYABLE TO SARS' : 'VAT REFUNDABLE FROM SARS'}</td><td></td><td class="text-right">${fmtAmt(Math.abs(netVAT))}</td><td></td></tr>
         </table>
 
-        <h2 class="section-blue" style="padding:8px;margin-top:30px;">Standard Rate (15%) - OUTPUT VAT</h2>
+        <h2>Output VAT Transactions</h2>
         <table>
-          <thead>
-            <tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr>
-          </thead>
-          <tbody>
-            ${generateTableRows(standardOutputTxns, true)}
-            <tr class="subtotal-row">
-              <td colspan="4" style="text-align:right;">Subtotal:</td>
-              <td class="text-right">${fmtAmt(standardOutputTotals.exclusive)}</td>
-              <td class="text-right">${fmtAmt(standardOutputTotals.vat)}</td>
-              <td class="text-right">${fmtAmt(standardOutputTotals.inclusive)}</td>
-            </tr>
-          </tbody>
+          <thead><tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr></thead>
+          <tbody>${generateTableRows(outputTransactions)}</tbody>
         </table>
 
-        <h2 class="section-blue" style="padding:8px;">Zero Rate (0%) - OUTPUT VAT</h2>
+        <h2>Input VAT Transactions</h2>
         <table>
-          <thead>
-            <tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">Inclusive</th></tr>
-          </thead>
-          <tbody>
-            ${generateTableRows(zeroOutputTxns, false)}
-            <tr class="subtotal-row">
-              <td colspan="4" style="text-align:right;">Subtotal:</td>
-              <td class="text-right">${fmtAmt(zeroOutputTotals.exclusive)}</td>
-              <td class="text-right">${fmtAmt(zeroOutputTotals.inclusive)}</td>
-            </tr>
-          </tbody>
+          <thead><tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr></thead>
+          <tbody>${generateTableRows(inputTransactions)}</tbody>
         </table>
 
-        <h2 class="section-orange" style="padding:8px;">Standard Rate (15%) - INPUT VAT</h2>
-        <table>
-          <thead>
-            <tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr>
-          </thead>
-          <tbody>
-            ${generateTableRows(standardInputTxns, true)}
-            <tr class="subtotal-row">
-              <td colspan="4" style="text-align:right;">Subtotal:</td>
-              <td class="text-right">${fmtAmt(standardInputTotals.exclusive)}</td>
-              <td class="text-right">${fmtAmt(standardInputTotals.vat)}</td>
-              <td class="text-right">${fmtAmt(standardInputTotals.inclusive)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <h2 class="section-orange" style="padding:8px;">Zero Rate (0%) - INPUT VAT</h2>
-        <table>
-          <thead>
-            <tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">Inclusive</th></tr>
-          </thead>
-          <tbody>
-            ${generateTableRows(zeroInputTxns, false)}
-            <tr class="subtotal-row">
-              <td colspan="4" style="text-align:right;">Subtotal:</td>
-              <td class="text-right">${fmtAmt(zeroInputTotals.exclusive)}</td>
-              <td class="text-right">${fmtAmt(zeroInputTotals.inclusive)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <p style="margin-top:30px;color:#6b7280;font-size:10px;">Generated on ${new Date().toLocaleDateString()} - Open this file in browser and press Ctrl+P to save as PDF</p>
+        <p style="margin-top:30px;color:#6b7280;font-size:10px;">Generated on ${new Date().toLocaleDateString()} - Open in browser and press Ctrl+P to save as PDF</p>
       </body>
       </html>
     `;
@@ -4757,39 +4820,61 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     setGenerating(false);
   };
 
-  // Clear all
-  const clearAll = () => {
-    if (vatTransactions.length > 0) {
-      saveVatTransactions([]);
-      setSaveMessage('All transactions cleared');
-      setTimeout(() => setSaveMessage(''), 3000);
-    }
-  };
-
-  // Transaction Table Component
-  // Transaction Row Component with local state for inputs
-  const TransactionRow = ({ t, vatType }) => {
+  // Transaction Row Component - uses local state to prevent input lag
+  const TransactionRow = ({ t }) => {
+    const [localDate, setLocalDate] = useState(t.date || '');
+    const [localRef, setLocalRef] = useState(t.reference || '');
+    const [localAccount, setLocalAccount] = useState(t.account || '');
+    const [localDesc, setLocalDesc] = useState(t.description || '');
+    const [localVatRate, setLocalVatRate] = useState(t.vatRate || 'Standard Rate (15.00%)');
     const [localExcl, setLocalExcl] = useState(t.exclusive ?? '');
     const [localVat, setLocalVat] = useState(t.vat ?? '');
     const [localIncl, setLocalIncl] = useState(t.inclusive ?? '');
+    const [localReviewed, setLocalReviewed] = useState(t.reviewed || false);
 
-    // Sync local state when transaction changes from outside
+    // Sync local state when transaction changes from external source
     React.useEffect(() => {
+      setLocalDate(t.date || '');
+      setLocalRef(t.reference || '');
+      setLocalAccount(t.account || '');
+      setLocalDesc(t.description || '');
+      setLocalVatRate(t.vatRate || 'Standard Rate (15.00%)');
       setLocalExcl(t.exclusive ?? '');
       setLocalVat(t.vat ?? '');
       setLocalIncl(t.inclusive ?? '');
+      setLocalReviewed(t.reviewed || false);
     }, [t.id]);
+
+    // Save all fields at once
+    const saveAllFields = (overrides = {}) => {
+      const excl = parseFloat(overrides.exclusive ?? localExcl) || 0;
+      const vat = parseFloat(overrides.vat ?? localVat) || 0;
+      const incl = parseFloat(overrides.inclusive ?? localIncl) || 0;
+      
+      saveVatTransactions(vatTransactions.map(tx => 
+        tx.id === t.id ? { 
+          ...tx, 
+          date: overrides.date ?? localDate,
+          reference: overrides.reference ?? localRef,
+          account: overrides.account ?? localAccount,
+          description: overrides.description ?? localDesc,
+          vatRate: overrides.vatRate ?? localVatRate,
+          exclusive: excl.toFixed(2), 
+          vat: vat.toFixed(2), 
+          inclusive: incl.toFixed(2),
+          reviewed: overrides.reviewed ?? localReviewed
+        } : tx
+      ));
+    };
 
     const handleExclBlur = () => {
       const excl = parseFloat(localExcl) || 0;
-      const rate = getVATRate(t.vatRate);
+      const rate = getVATRate(localVatRate);
       const vat = excl * rate;
       const incl = excl + vat;
       setLocalVat(vat.toFixed(2));
       setLocalIncl(incl.toFixed(2));
-      saveVatTransactions(vatTransactions.map(tx => 
-        tx.id === t.id ? { ...tx, exclusive: excl.toFixed(2), vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
-      ));
+      saveAllFields({ exclusive: excl, vat: vat, inclusive: incl });
     };
 
     const handleVatBlur = () => {
@@ -4797,51 +4882,66 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
       const excl = parseFloat(localExcl) || 0;
       const incl = excl + vat;
       setLocalIncl(incl.toFixed(2));
-      saveVatTransactions(vatTransactions.map(tx => 
-        tx.id === t.id ? { ...tx, vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
-      ));
+      saveAllFields({ vat: vat, inclusive: incl });
     };
 
     const handleInclBlur = () => {
       const incl = parseFloat(localIncl) || 0;
-      const rate = getVATRate(t.vatRate);
+      const rate = getVATRate(localVatRate);
       const excl = rate > 0 ? incl / (1 + rate) : incl;
       const vat = incl - excl;
       setLocalExcl(excl.toFixed(2));
       setLocalVat(vat.toFixed(2));
-      saveVatTransactions(vatTransactions.map(tx => 
-        tx.id === t.id ? { ...tx, exclusive: excl.toFixed(2), vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
-      ));
+      saveAllFields({ exclusive: excl, vat: vat, inclusive: incl });
     };
 
     const handleVatRateChange = (newRate) => {
+      setLocalVatRate(newRate);
       const excl = parseFloat(localExcl) || 0;
       const rate = getVATRate(newRate);
       const vat = excl * rate;
       const incl = excl + vat;
       setLocalVat(vat.toFixed(2));
       setLocalIncl(incl.toFixed(2));
-      saveVatTransactions(vatTransactions.map(tx => 
-        tx.id === t.id ? { ...tx, vatRate: newRate, vat: vat.toFixed(2), inclusive: incl.toFixed(2) } : tx
-      ));
+      saveAllFields({ vatRate: newRate, vat: vat, inclusive: incl });
+    };
+
+    const handleReviewedChange = (checked) => {
+      setLocalReviewed(checked);
+      saveAllFields({ reviewed: checked });
+    };
+
+    const handleFieldBlur = (field, value) => {
+      saveAllFields({ [field]: value });
     };
 
     return (
-      <tr className="border-t hover:bg-slate-50">
+      <tr className={`border-t hover:bg-slate-50 ${localReviewed ? 'bg-green-50' : ''}`}>
+        <td className="px-2 py-1 text-center">
+          <input 
+            type="checkbox" 
+            checked={localReviewed} 
+            onChange={(e) => handleReviewedChange(e.target.checked)}
+            className="w-4 h-4 text-green-600 rounded"
+            title="Mark as reviewed"
+          />
+        </td>
         <td className="px-2 py-1">
-          <input type="date" value={t.date} onChange={(e) => updateTransaction(t.id, 'date', e.target.value)}
+          <input type="date" value={localDate} 
+            onChange={(e) => setLocalDate(e.target.value)}
+            onBlur={(e) => handleFieldBlur('date', e.target.value)}
             className="border rounded px-2 py-1 text-sm w-full" />
         </td>
         <td className="px-2 py-1">
-          <input type="text" value={t.reference || ''} onChange={(e) => updateTransaction(t.id, 'reference', e.target.value)}
+          <input type="text" value={localRef} 
+            onChange={(e) => setLocalRef(e.target.value)}
+            onBlur={(e) => handleFieldBlur('reference', e.target.value)}
             className="border rounded px-2 py-1 text-sm w-full" placeholder="Ref" />
         </td>
         <td className="px-2 py-1">
-          <select 
-            value={t.account || ''} 
-            onChange={(e) => updateTransaction(t.id, 'account', e.target.value)}
-            className="border rounded px-2 py-1 text-sm w-full"
-          >
+          <select value={localAccount} 
+            onChange={(e) => { setLocalAccount(e.target.value); handleFieldBlur('account', e.target.value); }}
+            className="border rounded px-2 py-1 text-sm w-full">
             <option value="">Select Account</option>
             {accounts.filter(a => a.active !== false).map(acc => (
               <option key={acc.id} value={acc.name}>{acc.name}</option>
@@ -4849,47 +4949,28 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
           </select>
         </td>
         <td className="px-2 py-1">
-          <input type="text" value={t.description || ''} onChange={(e) => updateTransaction(t.id, 'description', e.target.value)}
+          <input type="text" value={localDesc} 
+            onChange={(e) => setLocalDesc(e.target.value)}
+            onBlur={(e) => handleFieldBlur('description', e.target.value)}
             className="border rounded px-2 py-1 text-sm w-full" placeholder="Description" />
         </td>
         <td className="px-2 py-1">
-          <select 
-            value={t.vatRate || 'Standard Rate (15.00%)'} 
-            onChange={(e) => handleVatRateChange(e.target.value)}
-            className="border rounded px-2 py-1 text-sm w-full"
-          >
+          <select value={localVatRate} onChange={(e) => handleVatRateChange(e.target.value)}
+            className="border rounded px-2 py-1 text-sm w-full">
             {VAT_RATES.map(vat => <option key={vat.value} value={vat.value}>{vat.label}</option>)}
           </select>
         </td>
         <td className="px-2 py-1">
-          <input 
-            type="text" 
-            value={localExcl} 
-            onChange={(e) => setLocalExcl(e.target.value)}
-            onBlur={handleExclBlur}
-            className="border rounded px-2 py-1 text-sm w-full text-right" 
-            placeholder="0.00"
-          />
+          <input type="text" value={localExcl} onChange={(e) => setLocalExcl(e.target.value)} onBlur={handleExclBlur}
+            className="border rounded px-2 py-1 text-sm w-full text-right" placeholder="0.00" />
         </td>
         <td className="px-2 py-1">
-          <input 
-            type="text" 
-            value={localVat} 
-            onChange={(e) => setLocalVat(e.target.value)}
-            onBlur={handleVatBlur}
-            className="border rounded px-2 py-1 text-sm w-full text-right" 
-            placeholder="0.00"
-          />
+          <input type="text" value={localVat} onChange={(e) => setLocalVat(e.target.value)} onBlur={handleVatBlur}
+            className="border rounded px-2 py-1 text-sm w-full text-right" placeholder="0.00" />
         </td>
         <td className="px-2 py-1">
-          <input 
-            type="text" 
-            value={localIncl} 
-            onChange={(e) => setLocalIncl(e.target.value)}
-            onBlur={handleInclBlur}
-            className="border rounded px-2 py-1 text-sm w-full text-right" 
-            placeholder="0.00"
-          />
+          <input type="text" value={localIncl} onChange={(e) => setLocalIncl(e.target.value)} onBlur={handleInclBlur}
+            className="border rounded px-2 py-1 text-sm w-full text-right" placeholder="0.00" />
         </td>
         <td className="px-2 py-1">
           <button onClick={() => deleteTransaction(t.id)} className="p-1 text-red-500 hover:bg-red-50 rounded">
@@ -4900,55 +4981,107 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     );
   };
 
-  // Transaction Table Component with VAT Rate dropdown
-  const TransactionTable = ({ transactions, title, bgColor, textColor, vatType }) => (
-    <div className="bg-white rounded-lg border shadow-sm overflow-hidden mb-6">
-      <div className={`p-4 ${bgColor} border-b flex justify-between items-center`}>
-        <h3 className={`font-bold ${textColor}`}>{title}</h3>
-        <button
-          onClick={() => addTransaction(vatType)}
-          className={`flex items-center gap-1 px-3 py-1.5 rounded text-sm text-white ${vatType === 'output' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-orange-600 hover:bg-orange-700'}`}
-        >
-          <Plus className="w-4 h-4" /> Add Transaction
-        </button>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-100">
-            <tr>
-              <th className="text-left px-3 py-2 font-bold text-slate-600 w-28">Date</th>
-              <th className="text-left px-3 py-2 font-bold text-slate-600 w-24">Reference</th>
-              <th className="text-left px-3 py-2 font-bold text-slate-600 w-28">Account</th>
-              <th className="text-left px-3 py-2 font-bold text-slate-600">Description</th>
-              <th className="text-left px-3 py-2 font-bold text-slate-600 w-48">VAT Rate</th>
-              <th className="text-right px-3 py-2 font-bold text-slate-600 w-28">Exclusive</th>
-              <th className="text-right px-3 py-2 font-bold text-slate-600 w-24">VAT</th>
-              <th className="text-right px-3 py-2 font-bold text-slate-600 w-28">Inclusive</th>
-              <th className="w-10"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {transactions.length > 0 ? transactions.map(t => (
-              <TransactionRow key={t.id} t={t} vatType={vatType} />
-            )) : (
-              <tr><td colSpan={9} className="text-center py-4 text-slate-500">No transactions</td></tr>
+  // Transaction Table Component
+  const TransactionTable = ({ transactions, title, bgColor, textColor, vatType }) => {
+    const reviewedCount = transactions.filter(t => t.reviewed).length;
+    const totalCount = transactions.length;
+    
+    const markAllReviewed = () => {
+      const ids = transactions.map(t => t.id);
+      saveVatTransactions(vatTransactions.map(tx => 
+        ids.includes(tx.id) ? { ...tx, reviewed: true } : tx
+      ));
+      setSaveMessage(`${transactions.length} transactions marked as reviewed`);
+      setTimeout(() => setSaveMessage(''), 3000);
+    };
+    
+    const markAllUnreviewed = () => {
+      const ids = transactions.map(t => t.id);
+      saveVatTransactions(vatTransactions.map(tx => 
+        ids.includes(tx.id) ? { ...tx, reviewed: false } : tx
+      ));
+      setSaveMessage(`${transactions.length} transactions marked as unreviewed`);
+      setTimeout(() => setSaveMessage(''), 3000);
+    };
+    
+    return (
+      <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+        <div className={`p-4 ${bgColor} border-b flex justify-between items-center`}>
+          <div className="flex items-center gap-3">
+            <h3 className={`font-semibold ${textColor}`}>{title}</h3>
+            {totalCount > 0 && (
+              <span className={`text-xs px-2 py-1 rounded ${reviewedCount === totalCount ? 'bg-green-200 text-green-800' : 'bg-white/50'} ${textColor}`}>
+                {reviewedCount}/{totalCount} reviewed
+              </span>
             )}
-          </tbody>
-          {transactions.length > 0 && (
-            <tfoot className={`${bgColor} font-semibold`}>
+          </div>
+          <div className="flex items-center gap-2">
+            {totalCount > 0 && (
+              <>
+                <button 
+                  onClick={markAllReviewed}
+                  className={`text-xs px-2 py-1 rounded border ${textColor} hover:bg-white/30`}
+                  title="Mark all as reviewed"
+                >
+                  ✓ All Reviewed
+                </button>
+                <button 
+                  onClick={markAllUnreviewed}
+                  className={`text-xs px-2 py-1 rounded border ${textColor} hover:bg-white/30`}
+                  title="Clear all review marks"
+                >
+                  Clear Reviews
+                </button>
+              </>
+            )}
+            <button onClick={() => addTransaction(vatType)} className={`text-sm ${textColor} hover:underline flex items-center gap-1`}>
+              <Plus className="w-4 h-4" /> Add Transaction
+            </button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100">
               <tr>
-                <td colSpan={5} className={`px-3 py-2 text-right ${textColor}`}>Subtotal:</td>
-                <td className={`px-3 py-2 text-right ${textColor}`}>{formatAmount(calcTotals(transactions).exclusive)}</td>
-                <td className={`px-3 py-2 text-right ${textColor}`}>{formatAmount(calcTotals(transactions).vat)}</td>
-                <td className={`px-3 py-2 text-right ${textColor}`}>{formatAmount(calcTotals(transactions).inclusive)}</td>
-                <td></td>
+                <th className="text-center px-2 py-2 font-medium text-slate-600 w-12">Rev.</th>
+                <th className="text-left px-2 py-2 font-medium text-slate-600 w-28">Date</th>
+                <th className="text-left px-2 py-2 font-medium text-slate-600 w-24">Reference</th>
+                <th className="text-left px-2 py-2 font-medium text-slate-600 w-32">Account</th>
+                <th className="text-left px-2 py-2 font-medium text-slate-600">Description</th>
+                <th className="text-left px-2 py-2 font-medium text-slate-600 w-36">VAT Rate</th>
+                <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">Exclusive</th>
+                <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">VAT</th>
+                <th className="text-right px-2 py-2 font-medium text-slate-600 w-24">Inclusive</th>
+                <th className="w-10"></th>
               </tr>
-            </tfoot>
-          )}
-        </table>
+            </thead>
+            <tbody>
+              {transactions.length > 0 ? transactions.map(t => (
+                <TransactionRow key={t.id} t={t} />
+              )) : (
+                <tr>
+                  <td colSpan={10} className="text-center py-8 text-slate-500">
+                    No transactions. Click "Add Transaction" or import a CSV file.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            {transactions.length > 0 && (
+              <tfoot className={bgColor}>
+                <tr>
+                  <td colSpan={6} className={`px-3 py-2 text-right ${textColor} font-semibold`}>Subtotal:</td>
+                  <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).exclusive)}</td>
+                  <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).vat)}</td>
+                  <td className={`px-3 py-2 text-right ${textColor} font-semibold`}>{formatAmount(calcTotals(transactions).inclusive)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -4956,7 +5089,7 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-xl font-semibold text-slate-800">VAT Reconciliation</h2>
-          <p className="text-sm text-slate-500">Import, edit and manage VAT transactions</p>
+          <p className="text-sm text-slate-500">Import tax boxes or manually add VAT transactions</p>
         </div>
         <div className="flex gap-2">
           <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".csv,.txt" className="hidden" />
@@ -4969,42 +5102,27 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
         </div>
       </div>
 
-      {/* Period Selection and Download Buttons */}
+      {/* Period Selection */}
       <div className="bg-white rounded-lg border shadow-sm p-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-slate-600">Period:</label>
-              <input
-                type="date"
-                value={periodStart}
-                onChange={(e) => setPeriodStart(e.target.value)}
-                className="border rounded px-3 py-2 text-sm"
-              />
+              <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)}
+                className="border rounded px-3 py-2 text-sm" />
               <span className="text-slate-400">to</span>
-              <input
-                type="date"
-                value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
-                className="border rounded px-3 py-2 text-sm"
-              />
+              <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)}
+                className="border rounded px-3 py-2 text-sm" />
             </div>
           </div>
           <div className="flex gap-2">
-            <button
-              onClick={generatePDFDownload}
-              disabled={generating}
-              className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 text-sm font-medium"
-            >
-              <Download className="w-4 h-4" />
-              {generating ? 'Generating...' : 'Download PDF'}
+            <button onClick={generatePDFDownload} disabled={generating}
+              className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 text-sm font-medium">
+              <Download className="w-4 h-4" /> {generating ? 'Generating...' : 'Download PDF'}
             </button>
-            <button
-              onClick={exportToExcel}
-              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm font-medium"
-            >
-              <Download className="w-4 h-4" />
-              Download Excel
+            <button onClick={exportToExcel}
+              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm font-medium">
+              <Download className="w-4 h-4" /> Download Excel
             </button>
           </div>
         </div>
@@ -5022,18 +5140,11 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <a
-                href={pdfDownloadLink.url}
-                download={pdfDownloadLink.name}
-                className="px-4 py-2 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 inline-flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                {pdfDownloadLink.name}
+              <a href={pdfDownloadLink.url} download={pdfDownloadLink.name}
+                className="px-4 py-2 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 inline-flex items-center gap-2">
+                <Download className="w-4 h-4" /> {pdfDownloadLink.name}
               </a>
-              <button
-                onClick={() => setPdfDownloadLink(null)}
-                className="p-2 text-red-600 hover:bg-red-100 rounded"
-              >
+              <button onClick={() => setPdfDownloadLink(null)} className="p-2 text-red-600 hover:bg-red-100 rounded">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -5041,35 +5152,6 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
         </div>
       )}
 
-      {/* Excel Download Link */}
-      {downloadLink && (
-        <div className="bg-green-50 border border-green-300 rounded-lg p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Download className="w-5 h-5 text-green-600" />
-              <span className="text-green-800 font-medium">Your Excel/CSV file is ready!</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <a
-                href={downloadLink.url}
-                download={downloadLink.name}
-                className="px-4 py-2 bg-green-600 text-white rounded text-sm font-medium hover:bg-green-700 inline-flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                {downloadLink.name}
-              </a>
-              <button
-                onClick={() => setDownloadLink(null)}
-                className="p-2 text-green-600 hover:bg-green-100 rounded"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Success Message */}
       {saveMessage && (
         <div className="p-3 bg-green-100 border border-green-300 text-green-800 rounded text-center text-sm font-medium">
           {saveMessage}
@@ -5079,7 +5161,7 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
       {/* VAT Summary Table */}
       <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
         <div className="p-4 bg-emerald-50 border-b">
-          <h3 className="font-semibold text-emerald-800">VAT Summary</h3>
+          <h3 className="font-semibold text-emerald-800">VAT Summary (Manual/Imported Transactions Only)</h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -5167,6 +5249,45 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
         vatType="input"
       />
 
+      {/* Action Buttons */}
+      {vatTransactions.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-4 bg-white rounded-lg border shadow-sm p-4">
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-slate-600">
+              <strong>{vatTransactions.filter(t => t.reviewed).length}</strong> of <strong>{vatTransactions.length}</strong> transactions reviewed
+            </span>
+            {vatTransactions.filter(t => !t.reviewed).length > 0 && (
+              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
+                {vatTransactions.filter(t => !t.reviewed).length} pending review
+              </span>
+            )}
+            {vatTransactions.filter(t => !t.reviewed).length === 0 && (
+              <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded flex items-center gap-1">
+                <Check className="w-3 h-3" /> All reviewed
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                saveVatTransactions(vatTransactions.map(t => ({ ...t, reviewed: true })));
+                setSaveMessage('All transactions marked as reviewed and saved!');
+                setTimeout(() => setSaveMessage(''), 3000);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium"
+            >
+              <Check className="w-4 h-4" /> Review & Save All
+            </button>
+            <button
+              onClick={clearAll}
+              className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium"
+            >
+              <Trash2 className="w-4 h-4" /> Clear All
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Import Instructions */}
       <div className="bg-slate-50 rounded-lg border p-4">
         <h4 className="font-medium text-slate-700 mb-2">CSV Import Format</h4>
@@ -5182,7 +5303,7 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
 };
 
 // ==================== REPORTS VIEW ====================
-const ReportsView = ({ bankStatements, invoices, company }) => {
+const ReportsView = ({ bankStatements, invoices, company, accounts }) => {
   const [reportType, setReportType] = useState('trial-balance');
   const [startDate, setStartDate] = useState(`${new Date().getFullYear()}-01-01`);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
@@ -5199,22 +5320,188 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
   };
 
   const generateTrialBalance = () => {
-    const filtered = filterByDateRange(bankStatements);
+    const filteredInvoices = filterByDateRange(invoices);
+    const filteredBankStatements = filterByDateRange(bankStatements);
     const categories = {};
-    
-    filtered.forEach(stmt => {
-      const cat = stmt.selection || 'Unallocated';
-      if (!categories[cat]) categories[cat] = { debit: 0, credit: 0 };
-      categories[cat].debit += stmt.spent || 0;
-      categories[cat].credit += stmt.received || 0;
+
+    // Track VAT separately to calculate net position
+    let totalVatOutput = 0; // VAT collected on sales (liability)
+    let totalVatInput = 0;  // VAT paid on purchases (asset)
+
+    // Build a set of valid account names from chart of accounts for matching
+    const accountNames = new Set((accounts || []).filter(a => a.active !== false).map(a => a.name));
+
+    // Helper: resolve a name to a chart of accounts name, or return as-is
+    const resolveAccount = (name, fallback) => {
+      if (!name) return fallback || 'Unallocated Expense';
+      if (accountNames.has(name)) return name;
+      // Try case-insensitive match
+      for (const acctName of accountNames) {
+        if (acctName.toLowerCase() === name.toLowerCase()) return acctName;
+      }
+      return fallback || name;
+    };
+
+    // Get linked invoice IDs to track payments
+    const linkedInvoiceIds = new Set();
+    filteredBankStatements.forEach(stmt => {
+      if (stmt.linkedInvoice) {
+        linkedInvoiceIds.add(stmt.linkedInvoice);
+      }
     });
+
+    // 1. Process CUSTOMER INVOICES (Sales/Income)
+    filteredInvoices.filter(inv => inv.invoiceType !== 'supplier').forEach(inv => {
+      let exVatAmount = 0;
+      let vatAmount = 0;
+
+      if (inv.items && inv.items.length > 0) {
+        inv.items.forEach(item => {
+          const itemExclusive = (item.qty || 1) * (item.price || 0);
+          const discountAmt = itemExclusive * ((item.discPercent || 0) / 100);
+          const afterDiscount = itemExclusive - discountAmt;
+          const itemVatRate = getVATRate(item.vatType);
+          const itemVat = afterDiscount * itemVatRate;
+
+          exVatAmount += afterDiscount;
+          vatAmount += itemVat;
+        });
+      } else {
+        exVatAmount = parseFloat(inv.subtotal) || 0;
+        vatAmount = parseFloat(inv.vat) || 0;
+      }
+
+      const totalAmount = exVatAmount + vatAmount;
+
+      // Credit Sales account with Ex VAT amount
+      const salesAccount = 'Sales';
+      if (!categories[salesAccount]) categories[salesAccount] = { debit: 0, credit: 0 };
+      categories[salesAccount].credit += exVatAmount;
+
+      // Trade Receivables - only if invoice is NOT paid/linked
+      if (!linkedInvoiceIds.has(inv.id) && inv.status !== 'Paid') {
+        const debtorsAccount = 'Trade Receivables';
+        if (!categories[debtorsAccount]) categories[debtorsAccount] = { debit: 0, credit: 0 };
+        categories[debtorsAccount].debit += totalAmount;
+      }
+
+      // Track VAT Output
+      totalVatOutput += vatAmount;
+    });
+
+    // 2. Process SUPPLIER INVOICES (Purchases/Expenses)
+    filteredInvoices.filter(inv => inv.invoiceType === 'supplier').forEach(inv => {
+      let exVatAmount = 0;
+      let vatAmount = 0;
+      let expenseAccount = 'Purchases'; // Default
+
+      if (inv.items && inv.items.length > 0) {
+        inv.items.forEach(item => {
+          const itemExclusive = (item.qty || 1) * (item.price || 0);
+          const discountAmt = itemExclusive * ((item.discPercent || 0) / 100);
+          const afterDiscount = itemExclusive - discountAmt;
+          const itemVatRate = getVATRate(item.vatType);
+          const itemVat = afterDiscount * itemVatRate;
+
+          exVatAmount += afterDiscount;
+          vatAmount += itemVat;
+        });
+      } else {
+        exVatAmount = parseFloat(inv.subtotal) || 0;
+        vatAmount = parseFloat(inv.vat) || 0;
+      }
+
+      // Determine the account from linked bank statement selection or invoice category
+      if (inv.items && inv.items[0] && inv.items[0].description && inv.items[0].description !== 'Payment') {
+        expenseAccount = resolveAccount(inv.items[0].description, 'Purchases');
+      }
+
+      // Check if the linked bank statement has a selection that maps to chart of accounts
+      const linkedStmt = filteredBankStatements.find(s => s.linkedInvoice === inv.id);
+      if (linkedStmt && linkedStmt.selection && linkedStmt.selection !== 'Unallocated Expen') {
+        expenseAccount = resolveAccount(linkedStmt.selection, expenseAccount);
+      }
+
+      const totalAmount = exVatAmount + vatAmount;
+
+      // Debit the expense account with Ex VAT amount
+      if (!categories[expenseAccount]) categories[expenseAccount] = { debit: 0, credit: 0 };
+      categories[expenseAccount].debit += exVatAmount;
+
+      // Trade Payables - only if invoice is NOT paid/linked
+      if (!linkedInvoiceIds.has(inv.id) && inv.status !== 'Paid') {
+        const creditorsAccount = 'Trade Payables';
+        if (!categories[creditorsAccount]) categories[creditorsAccount] = { debit: 0, credit: 0 };
+        categories[creditorsAccount].credit += totalAmount;
+      }
+
+      // Track VAT Input
+      totalVatInput += vatAmount;
+    });
+
+    // 3. Process BANK STATEMENTS - ALL Account-type and Transfer transactions not linked to invoices
+    filteredBankStatements.forEach(stmt => {
+      // Skip Customer/Supplier types (their amounts come from invoices)
+      // Skip linked transactions (already processed via invoices above)
+      if (stmt.linkedInvoice) return;
+      if (stmt.type === 'Customer' || stmt.type === 'Supplier') return;
+
+      const cat = resolveAccount(stmt.selection, 'Unallocated Expense');
+      if (!categories[cat]) categories[cat] = { debit: 0, credit: 0 };
+
+      const vatRate = getVATRate(stmt.vatRate);
+      // No VAT or vatRate is 0 → use full amount (non-VAT vendor)
+      // Has VAT rate > 0 → calculate ex-VAT amount
+
+      if (stmt.spent > 0) {
+        const exVatSpent = vatRate > 0 ? stmt.spent / (1 + vatRate) : stmt.spent;
+        categories[cat].debit += exVatSpent;
+
+        if (vatRate > 0) {
+          totalVatInput += stmt.spent - exVatSpent;
+        }
+      }
+
+      if (stmt.received > 0) {
+        const exVatReceived = vatRate > 0 ? stmt.received / (1 + vatRate) : stmt.received;
+        categories[cat].credit += exVatReceived;
+
+        if (vatRate > 0) {
+          totalVatOutput += stmt.received - exVatReceived;
+        }
+      }
+    });
+
+    // 4. Add Bank account balance from all bank transactions
+    let bankDebit = 0;
+    let bankCredit = 0;
+    filteredBankStatements.forEach(stmt => {
+      bankDebit += stmt.received || 0; // Money in = Debit Bank
+      bankCredit += stmt.spent || 0;   // Money out = Credit Bank
+    });
+    if (bankDebit > 0 || bankCredit > 0) {
+      if (!categories['Bank']) categories['Bank'] = { debit: 0, credit: 0 };
+      categories['Bank'].debit += bankDebit;
+      categories['Bank'].credit += bankCredit;
+    }
+
+    // 5. Add VAT Control account - Net position
+    const netVat = totalVatOutput - totalVatInput;
+    if (netVat !== 0) {
+      categories['VAT Control'] = { debit: 0, credit: 0 };
+      if (netVat > 0) {
+        categories['VAT Control'].credit = netVat;
+      } else {
+        categories['VAT Control'].debit = Math.abs(netVat);
+      }
+    }
 
     return Object.entries(categories).map(([name, values]) => ({
       name,
       debit: values.debit,
       credit: values.credit,
       balance: values.debit - values.credit
-    }));
+    })).sort((a, b) => a.name.localeCompare(b.name));
   };
 
   const generateVATReport = () => {
@@ -5231,8 +5518,8 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
     // Helper to check if standard rate
     const isStdRate = (rate) => rate && (rate.includes('15.00%') || rate === 'Standard 15%' || rate.includes('15%'));
 
-    // Process invoices (Output VAT)
-    filteredInvoices.forEach(inv => {
+    // Process CLIENT invoices (Output VAT - Sales)
+    filteredInvoices.filter(inv => inv.invoiceType !== 'supplier').forEach(inv => {
       if (inv.items) {
         inv.items.forEach(item => {
           const exclusive = (item.qty || 0) * (item.price || 0);
@@ -5241,7 +5528,7 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
           
           const txn = {
             date: inv.date,
-            reference: inv.documentNo,
+            reference: inv.externalInvoiceNo || inv.documentNo,
             account: inv.customer || 'Customer',
             description: item.description,
             exclusive,
@@ -5259,18 +5546,49 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
       }
     });
 
-    // Process bank statements (Input VAT)
+    // Process SUPPLIER invoices (Input VAT - Purchases)
+    filteredInvoices.filter(inv => inv.invoiceType === 'supplier').forEach(inv => {
+      if (inv.items) {
+        inv.items.forEach(item => {
+          const exclusive = (item.qty || 0) * (item.price || 0);
+          const vatRate = getVATRate(item.vatType);
+          const vat = exclusive * vatRate;
+          
+          const txn = {
+            date: inv.date,
+            reference: inv.externalInvoiceNo || inv.documentNo,
+            account: inv.supplier || 'Supplier',
+            description: item.description,
+            exclusive,
+            vat,
+            inclusive: exclusive + vat
+          };
+
+          if (isStdRate(item.vatType)) {
+            vatData.standardInput.vat += vat;
+            vatData.standardInput.transactions.push(txn);
+          } else {
+            vatData.zeroInput.transactions.push({ ...txn, vat: 0 });
+          }
+        });
+      }
+    });
+
+    // Process bank statements ONLY for Account type (expenses like insurance, bank charges)
+    // Customer/Supplier transactions are excluded as their VAT comes from invoices
     filteredStatements.forEach(stmt => {
-      if (stmt.spent > 0) {
+      // Only process Account type transactions (not Customer, Supplier, Transfer)
+      if (stmt.spent > 0 && stmt.type === 'Account' && stmt.vatRate && stmt.vatRate !== 'No VAT') {
         const isStandard = isStdRate(stmt.vatRate);
         const rate = getVATRate(stmt.vatRate);
+        // Amount is VAT inclusive, calculate exclusive
         const exclusive = rate > 0 ? stmt.spent / (1 + rate) : stmt.spent;
         const vat = rate > 0 ? stmt.spent - exclusive : 0;
         
         const txn = {
           date: stmt.date,
-          reference: stmt.reference,
-          account: stmt.payee || stmt.type,
+          reference: stmt.externalInvoiceNo || stmt.reference || 'Bank',
+          account: stmt.selection || stmt.payee || 'Expense',
           description: stmt.description,
           exclusive,
           vat,
@@ -5280,7 +5598,7 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
         if (isStandard) {
           vatData.standardInput.vat += vat;
           vatData.standardInput.transactions.push(txn);
-        } else {
+        } else if (rate > 0) {
           vatData.zeroInput.transactions.push({ ...txn, vat: 0 });
         }
       }
