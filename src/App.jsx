@@ -2117,7 +2117,20 @@ const PrintPreview = ({ invoice, onClose, company }) => {
     const inclusive = afterDiscount + vatAmount;
     return { exclusive, discountAmount, afterDiscount, vatAmount, inclusive, vatRate };
   };
-  
+
+  // Recalculate totals from items to ensure accuracy
+  const calcTotals = (() => {
+    let subtotal = 0, totalVat = 0, totalDiscount = 0;
+    (invoice.items || []).forEach(item => {
+      const calc = calculateItemTotal(item);
+      subtotal += calc.afterDiscount;
+      totalVat += calc.vatAmount;
+      totalDiscount += calc.discountAmount;
+    });
+    const grandTotal = subtotal + totalVat;
+    return { subtotal, totalVat, totalDiscount, grandTotal };
+  })();
+
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center print:static print:bg-white print:block">
       <div className="bg-white shadow-xl w-full h-full max-w-[210mm] max-h-[297mm] overflow-y-auto print:max-w-none print:max-h-none print:h-auto print:overflow-visible print:shadow-none">
@@ -2302,30 +2315,30 @@ const PrintPreview = ({ invoice, onClose, company }) => {
               <div className="space-y-2 text-sm border rounded p-4">
                 <div className="flex justify-between">
                   <span className="text-slate-600">Total Discount:</span>
-                  <span>R{(invoice.totalDiscount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span>R{calcTotals.totalDiscount.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-600">Total Exclusive:</span>
-                  <span className="font-semibold">R{(invoice.subtotal || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span className="font-semibold">R{calcTotals.subtotal.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-600">Total VAT:</span>
-                  <span>R{(invoice.vat || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span>R{calcTotals.totalVat.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between border-t pt-2">
                   <span className="text-slate-600">Sub Total:</span>
-                  <span className="font-semibold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span className="font-semibold">R{calcTotals.grandTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between pt-1">
                   <span className="text-slate-600 font-bold">Grand Total:</span>
-                  <span className="font-bold text-lg">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span className="font-bold text-lg">R{calcTotals.grandTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               </div>
-              
+
               {/* Balance Due Box */}
               <div className="mt-4 pt-4 border-t-4 border-slate-800 text-right">
                 <p className="text-sm text-slate-600 font-medium">BALANCE DUE</p>
-                <p className="text-3xl font-bold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                <p className="text-3xl font-bold">R{calcTotals.grandTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
             </div>
           </div>

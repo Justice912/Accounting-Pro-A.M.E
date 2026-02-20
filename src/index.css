@@ -8,15 +8,22 @@
     margin: 10mm;
   }
 
-  /* Hide navigation, main content, and header when printing */
-  nav, main, header {
-    display: none !important;
+  /* Hide everything except invoice content using visibility approach */
+  body * {
+    visibility: hidden;
   }
 
-  /* Invoice content area should auto-size, not force a minimum height */
+  #invoice-print,
+  #invoice-print * {
+    visibility: visible;
+  }
+
   #invoice-print {
-    min-height: auto !important;
-    padding: 0 !important;
+    position: absolute;
+    left: 0;
+    top: 0;
     width: 100% !important;
+    min-height: auto !important;
+    padding: 10mm !important;
   }
 }
