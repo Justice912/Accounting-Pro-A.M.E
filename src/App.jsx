@@ -2119,8 +2119,8 @@ const PrintPreview = ({ invoice, onClose, company }) => {
   };
   
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-      <div className="bg-white shadow-xl w-full h-full max-w-[210mm] max-h-[297mm] overflow-y-auto print:max-w-none print:max-h-none print:overflow-visible">
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center print:static print:bg-white print:block">
+      <div className="bg-white shadow-xl w-full h-full max-w-[210mm] max-h-[297mm] overflow-y-auto print:max-w-none print:max-h-none print:h-auto print:overflow-visible print:shadow-none">
         {/* Print Controls - Hidden when printing */}
         <div className="p-3 border-b flex justify-between items-center bg-slate-50 print:hidden sticky top-0 z-10">
           <h3 className="font-semibold">Print Preview - {invoice.documentNo}</h3>
@@ -2135,7 +2135,7 @@ const PrintPreview = ({ invoice, onClose, company }) => {
         </div>
         
         {/* Invoice Content - A4 Size */}
-        <div className="p-8 min-h-[297mm] print:p-12" id="invoice-print">
+        <div className="p-8 min-h-[297mm] print:p-0 print:min-h-0" id="invoice-print">
           {/* Header with Logo and Invoice Details */}
           <div className="flex justify-between items-start mb-8">
             {/* Left side - Logo and Company Name */}
