@@ -102,6 +102,7 @@ const AccountingDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [invoices, setInvoices] = useState([]);
   const [clients, setClients] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [bankStatements, setBankStatements] = useState([]);
   const [vatTransactions, setVatTransactions] = useState([]);
@@ -141,9 +142,10 @@ const AccountingDashboard = () => {
         return;
       }
 
-      const [invRes, clientRes, suppRes, bankRes, vatRes, accRes] = await Promise.all([
+      const [invRes, clientRes, customerRes, suppRes, bankRes, vatRes, accRes] = await Promise.all([
         Promise.resolve({ value: localStorage.getItem('accounting-invoices') }),
         Promise.resolve({ value: localStorage.getItem('accounting-clients') }),
+        Promise.resolve({ value: localStorage.getItem('accounting-customers') }),
         Promise.resolve({ value: localStorage.getItem('accounting-suppliers') }),
         Promise.resolve({ value: localStorage.getItem('accounting-bank-statements') }),
         Promise.resolve({ value: localStorage.getItem('accounting-vat-transactions') }),
@@ -152,6 +154,7 @@ const AccountingDashboard = () => {
       
       if (invRes?.value) setInvoices(JSON.parse(invRes.value));
       if (clientRes?.value) setClients(JSON.parse(clientRes.value));
+      if (customerRes?.value) setCustomers(JSON.parse(customerRes.value));
       if (suppRes?.value) setSuppliers(JSON.parse(suppRes.value));
       if (bankRes?.value) setBankStatements(JSON.parse(bankRes.value));
       if (vatRes?.value) setVatTransactions(JSON.parse(vatRes.value));
@@ -194,6 +197,11 @@ const AccountingDashboard = () => {
   const saveSuppliers = async (data) => {
     setSuppliers(data);
     localStorage.setItem('accounting-suppliers', JSON.stringify(data));
+  };
+
+  const saveCustomers = async (data) => {
+    setCustomers(data);
+    localStorage.setItem('accounting-customers', JSON.stringify(data));
   };
 
   const saveBankStatements = async (data) => {
@@ -374,7 +382,8 @@ const AccountingDashboard = () => {
           <CustomersView 
             invoices={invoices}
             saveInvoices={saveInvoices}
-            clients={clients}
+            customers={customers}
+            saveCustomers={saveCustomers}
             showInvoiceForm={showInvoiceForm}
             setShowInvoiceForm={setShowInvoiceForm}
             showPrintPreview={showPrintPreview}
@@ -627,8 +636,8 @@ const MetricCard = ({ title, value, color, icon }) => {
 };
 
 // ==================== CUSTOMER STATEMENTS SUB-VIEW ====================
-const CustomerStatements = ({ invoices, clients, company }) => {
-  const clientInvoices = invoices.filter(inv => inv.invoiceType !== 'supplier');
+const CustomerStatements = ({ invoices, customers, company }) => {
+  const clientInvoices = invoices.filter(inv => inv.invoiceType !== 'supplier' && inv.companyId === company?.id);
   const initToday = new Date();
   const firstOfMonth = new Date(initToday.getFullYear(), initToday.getMonth(), 1).toISOString().split('T')[0];
   const todayStr = initToday.toISOString().split('T')[0];
@@ -639,7 +648,7 @@ const CustomerStatements = ({ invoices, clients, company }) => {
 
   // Unique customers from invoices + clients list
   const customerNames = Array.from(new Set([
-    ...clients.map(c => c.name),
+    ...customers.map(c => c.name),
     ...clientInvoices.map(inv => inv.customer).filter(Boolean)
   ])).sort();
 
@@ -740,7 +749,7 @@ const CustomerStatements = ({ invoices, clients, company }) => {
 
   const handlePrintStatement = () => {
     if (!selectedCustomer) return;
-    const clientInfo = clients.find(c => c.name === selectedCustomer);
+    const clientInfo = customers.find(c => c.name === selectedCustomer);
 
     const agingHtml = aging ? `
       <div class="aging">
@@ -1066,11 +1075,12 @@ const CustomerStatements = ({ invoices, clients, company }) => {
 };
 
 // ==================== CUSTOMERS VIEW (Client Invoices) ====================
-const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setShowInvoiceForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, company }) => {
-  // Filter to only show client invoices (not supplier)
-  const clientInvoices = invoices.filter(inv => inv.invoiceType !== 'supplier');
+const CustomersView = ({ invoices, saveInvoices, customers, saveCustomers, showInvoiceForm, setShowInvoiceForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, company }) => {
+  // Filter to only show customer invoices for selected company
+  const companyCustomers = customers.filter(c => c.companyId === company?.id);
+  const clientInvoices = invoices.filter(inv => inv.invoiceType !== 'supplier' && inv.companyId === company?.id);
 
-  // Sub-tab: 'invoices' | 'statements'
+  // Sub-tab: 'invoices' | 'statements' | 'directory'
   const [activeSubTab, setActiveSubTab] = useState('invoices');
 
   // Search & filter state
@@ -1078,12 +1088,25 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
   const [statusFilter, setStatusFilter] = useState('All');
   const [sortBy, setSortBy] = useState('date-desc');
 
+  const [newCustomer, setNewCustomer] = useState({
+    name: '',
+    companyName: '',
+    vatNo: '',
+    contactPerson: '',
+    email: '',
+    phone: '',
+    address: '',
+    city: '',
+    postalCode: ''
+  });
+
   const [newInvoice, setNewInvoice] = useState({
     customer: '',
     documentNo: `INV-${Date.now()}`,
     date: new Date().toISOString().split('T')[0],
     dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     customerRef: '',
+    customerDetails: null,
     deliveryAddress: ['', '', '', '', ''],
     postalAddress: ['', '', '', '', '', ''],
     discountType: 'amount',
@@ -1160,10 +1183,13 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
   };
 
   const handleSaveInvoice = () => {
+    if (!newInvoice.customer) return;
+
     const totals = invoiceTotals();
     const invoice = {
       id: Date.now(),
       ...newInvoice,
+      companyId: company?.id,
       amount: totals.grandTotal,
       subtotal: totals.subtotal,
       vat: totals.totalVat,
@@ -1178,6 +1204,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
       date: new Date().toISOString().split('T')[0],
       dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       customerRef: '',
+      customerDetails: null,
       deliveryAddress: ['', '', '', '', ''],
       postalAddress: ['', '', '', '', '', ''],
       discountType: 'amount',
@@ -1187,6 +1214,55 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
       items: [{ id: 1, type: 'Item', description: '', unit: '', qty: 1, price: 0, vatType: 'Standard Rate (15.00%)', discPercent: 0 }],
       status: 'Pending'
     });
+  };
+
+  const handleSaveCustomer = () => {
+    if (!newCustomer.name.trim() || !company?.id) return;
+
+    const customer = {
+      id: Date.now(),
+      companyId: company.id,
+      name: newCustomer.name.trim(),
+      companyName: newCustomer.companyName.trim(),
+      vatNo: newCustomer.vatNo.trim(),
+      contactPerson: newCustomer.contactPerson.trim(),
+      email: newCustomer.email.trim(),
+      phone: newCustomer.phone.trim(),
+      address: newCustomer.address.trim(),
+      city: newCustomer.city.trim(),
+      postalCode: newCustomer.postalCode.trim()
+    };
+
+    saveCustomers([...customers, customer]);
+    setNewCustomer({
+      name: '',
+      companyName: '',
+      vatNo: '',
+      contactPerson: '',
+      email: '',
+      phone: '',
+      address: '',
+      city: '',
+      postalCode: ''
+    });
+  };
+
+  const handleCustomerSelect = (customerName) => {
+    const selected = companyCustomers.find(c => c.name === customerName);
+    setNewInvoice(prev => ({
+      ...prev,
+      customer: customerName,
+      customerDetails: selected ? {
+        companyName: selected.companyName,
+        vatNo: selected.vatNo,
+        contactPerson: selected.contactPerson,
+        email: selected.email,
+        phone: selected.phone,
+        address: selected.address,
+        city: selected.city,
+        postalCode: selected.postalCode
+      } : null
+    }));
   };
 
   const markAsPaid = (id) => {
@@ -1279,10 +1355,56 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
         >
           <TrendingUp className="w-4 h-4" /> Statements
         </button>
+        <button
+          onClick={() => setActiveSubTab('directory')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+            activeSubTab === 'directory'
+              ? 'bg-white text-emerald-700 shadow-sm'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <Users className="w-4 h-4" /> Directory
+        </button>
       </div>
 
       {activeSubTab === 'statements' ? (
-        <CustomerStatements invoices={invoices} clients={clients} company={clients?.[0]} />
+        <CustomerStatements invoices={invoices} customers={companyCustomers} company={company} />
+      ) : activeSubTab === 'directory' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="bg-white rounded-lg border p-4 space-y-3">
+            <h3 className="font-semibold text-slate-800">Add Customer for {company?.name || 'Selected Company'}</h3>
+            <input type="text" placeholder="Customer Name *" value={newCustomer.name} onChange={e => setNewCustomer({...newCustomer, name: e.target.value})} className="w-full border rounded px-3 py-2 text-sm" />
+            <input type="text" placeholder="Company / Trading Name" value={newCustomer.companyName} onChange={e => setNewCustomer({...newCustomer, companyName: e.target.value})} className="w-full border rounded px-3 py-2 text-sm" />
+            <div className="grid grid-cols-2 gap-3">
+              <input type="text" placeholder="VAT Number" value={newCustomer.vatNo} onChange={e => setNewCustomer({...newCustomer, vatNo: e.target.value})} className="border rounded px-3 py-2 text-sm" />
+              <input type="text" placeholder="Contact Person" value={newCustomer.contactPerson} onChange={e => setNewCustomer({...newCustomer, contactPerson: e.target.value})} className="border rounded px-3 py-2 text-sm" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <input type="email" placeholder="Email" value={newCustomer.email} onChange={e => setNewCustomer({...newCustomer, email: e.target.value})} className="border rounded px-3 py-2 text-sm" />
+              <input type="text" placeholder="Phone" value={newCustomer.phone} onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})} className="border rounded px-3 py-2 text-sm" />
+            </div>
+            <input type="text" placeholder="Address" value={newCustomer.address} onChange={e => setNewCustomer({...newCustomer, address: e.target.value})} className="w-full border rounded px-3 py-2 text-sm" />
+            <div className="grid grid-cols-2 gap-3">
+              <input type="text" placeholder="City" value={newCustomer.city} onChange={e => setNewCustomer({...newCustomer, city: e.target.value})} className="border rounded px-3 py-2 text-sm" />
+              <input type="text" placeholder="Postal Code" value={newCustomer.postalCode} onChange={e => setNewCustomer({...newCustomer, postalCode: e.target.value})} className="border rounded px-3 py-2 text-sm" />
+            </div>
+            <button onClick={handleSaveCustomer} className="bg-emerald-600 text-white px-4 py-2 rounded text-sm hover:bg-emerald-700">Save Customer</button>
+          </div>
+          <div className="bg-white rounded-lg border p-4">
+            <h3 className="font-semibold text-slate-800 mb-3">Customer List ({companyCustomers.length})</h3>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {companyCustomers.map(c => (
+                <div key={c.id} className="border rounded-lg p-3">
+                  <p className="font-medium text-slate-800">{c.name}</p>
+                  <p className="text-xs text-slate-500">{c.companyName || 'No company name'} {c.vatNo ? `• VAT: ${c.vatNo}` : ''}</p>
+                  <p className="text-xs text-slate-500">{c.contactPerson || 'No contact person'} {c.phone ? `• ${c.phone}` : ''}</p>
+                  <p className="text-xs text-slate-500">{c.address || ''} {c.city || ''} {c.postalCode || ''}</p>
+                </div>
+              ))}
+              {!companyCustomers.length && <p className="text-sm text-slate-500">No customers captured for this company yet.</p>}
+            </div>
+          </div>
+        </div>
       ) : (
         <>
           {/* Summary Stats Bar */}
@@ -1414,12 +1536,13 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                   <label className="block text-xs font-medium text-slate-600 mb-1">Customer</label>
                   <select 
                     value={newInvoice.customer}
-                    onChange={(e) => setNewInvoice({...newInvoice, customer: e.target.value})}
+                    onChange={(e) => handleCustomerSelect(e.target.value)}
                     className="w-full border rounded px-3 py-2 text-sm"
                   >
                     <option value="">Select Customer</option>
-                    {clients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    {companyCustomers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                   </select>
+                  <p className="text-xs text-slate-500 mt-1">Create customers in the Directory tab for this selected company.</p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -1657,6 +1780,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                       date: new Date().toISOString().split('T')[0],
                       dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
                       customerRef: '',
+                      customerDetails: null,
                       deliveryAddress: ['', '', '', '', ''],
                       postalAddress: ['', '', '', '', '', ''],
                       discountType: 'amount',
@@ -1936,6 +2060,19 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           <div className="mb-5">
             <h4 className="font-semibold text-slate-600 text-sm mb-1">BILL TO</h4>
             <p className="font-medium">{invoice.supplier || invoice.customer || 'Customer'}</p>
+            {invoice.customerDetails?.companyName && <p className="text-sm text-slate-600">{invoice.customerDetails.companyName}</p>}
+            {invoice.customerDetails?.contactPerson && <p className="text-sm text-slate-600">Att: {invoice.customerDetails.contactPerson}</p>}
+            {invoice.customerDetails?.vatNo && <p className="text-sm text-slate-600">VAT: {invoice.customerDetails.vatNo}</p>}
+            {(invoice.customerDetails?.address || invoice.customerDetails?.city || invoice.customerDetails?.postalCode) && (
+              <p className="text-sm text-slate-600">
+                {[invoice.customerDetails?.address, invoice.customerDetails?.city, invoice.customerDetails?.postalCode].filter(Boolean).join(', ')}
+              </p>
+            )}
+            {(invoice.customerDetails?.email || invoice.customerDetails?.phone) && (
+              <p className="text-sm text-slate-600">
+                {[invoice.customerDetails?.email, invoice.customerDetails?.phone].filter(Boolean).join(' • ')}
+              </p>
+            )}
           </div>
           
           <div className="border rounded-xl overflow-hidden mb-6">
