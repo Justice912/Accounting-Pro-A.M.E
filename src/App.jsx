@@ -2041,7 +2041,13 @@ const PrintPreview = ({ invoice, onClose, company }) => {
 
           <div className="flex justify-between mb-6">
             <div className="flex items-start gap-4">
-              {company?.logo && <img src={company.logo} alt="Company Logo" className="w-20 h-20 object-contain" />}
+              {company?.logo && (
+                <img
+                  src={company.logo}
+                  alt="Company Logo"
+                  className="max-w-[220px] max-h-[110px] w-auto h-auto object-contain"
+                />
+              )}
               <div>
                 <p className="font-semibold text-lg">{company?.name || 'Your Company Name'}</p>
                 {company?.address && <p className="text-sm text-slate-600">{company.address}</p>}
