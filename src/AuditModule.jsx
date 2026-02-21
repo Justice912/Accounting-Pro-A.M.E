@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Search, MessageSquare, ClipboardCheck, Shield, FileText, Send, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, XCircle, Clock, Download, RotateCcw } from "lucide-react";
+import AuditReportsTab from "./AuditReportsTab";
+import { DEFAULT_RISKS, DEFAULT_FINDINGS } from "./auditDefaults";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const ISA_COMPONENTS = [
