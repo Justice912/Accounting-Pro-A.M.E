@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "check:audit-module": "node scripts/check-audit-module.mjs",
-    "build:ci": "npm run check:audit-module && npm run build"
+    "build:ci": "npm run check:node-engine && npm run check:audit-module && npm run build",
+    "check:node-engine": "node scripts/check-node-engine.mjs"
   },
   "dependencies": {
     "react": "^18.2.0",
