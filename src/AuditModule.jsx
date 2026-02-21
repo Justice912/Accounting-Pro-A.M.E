@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Search, MessageSquare, ClipboardCheck, Shield, FileText, Send, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, XCircle, Clock, Download, RotateCcw } from "lucide-react";
+import AuditReportsTab from "./AuditReportsTab";
+import { DEFAULT_RISKS, DEFAULT_FINDINGS } from "./auditDefaults";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const ISA_COMPONENTS = [
@@ -198,6 +200,8 @@ const theme = {
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function AuditModule() {
   const [activeTab, setActiveTab] = useState("programs");
+  const [risks, setRisks] = useState(DEFAULT_RISKS);
+  const [findings, setFindings] = useState(DEFAULT_FINDINGS);
   const [engagement, setEngagement] = useState({
     clientName: "",
     yearEnd: "",
@@ -210,6 +214,7 @@ export default function AuditModule() {
     { id: "programs", label: "Audit Programs", icon: ClipboardCheck },
     { id: "risk", label: "Risk Assessment", icon: Shield },
     { id: "findings", label: "Findings Tracker", icon: AlertTriangle },
+    { id: "reports", label: "Audit Reports", icon: FileText },
     { id: "chatbot", label: "Audit AI Assistant", icon: MessageSquare },
   ];
 
@@ -244,8 +249,9 @@ export default function AuditModule() {
       {/* ── CONTENT ────────────────────────────────────────────────── */}
       <div style={{ padding: "20px 24px", maxHeight: "calc(100vh - 230px)", overflowY: "auto" }}>
         {activeTab === "programs" && <AuditProgramsTab engagement={engagement} />}
-        {activeTab === "risk" && <RiskAssessmentTab engagement={engagement} />}
-        {activeTab === "findings" && <FindingsTab engagement={engagement} />}
+        {activeTab === "risk" && <RiskAssessmentTab engagement={engagement} risks={risks} setRisks={setRisks} />}
+        {activeTab === "findings" && <FindingsTab engagement={engagement} findings={findings} setFindings={setFindings} />}
+        {activeTab === "reports" && <AuditReportsTab engagement={engagement} risks={risks} findings={findings} />}
         {activeTab === "chatbot" && <ChatbotTab />}
       </div>
     </div>
@@ -448,12 +454,7 @@ function AuditProgramsTab({ engagement }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB 2: RISK ASSESSMENT BUILDER
 // ═══════════════════════════════════════════════════════════════════════════════
-function RiskAssessmentTab({ engagement }) {
-  const [risks, setRisks] = useState([
-    { id: 1, area: "Revenue Recognition", description: "Risk of material misstatement due to fraud in revenue recognition per ISA 240", inherentLikelihood: 4, inherentImpact: 5, controls: "Segregation of duties, automated invoice matching, monthly analytical review", controlEffectiveness: 3, residualLikelihood: 2, residualImpact: 4, response: "Extended substantive testing, cut-off testing, journal entry analysis" },
-    { id: 2, area: "Management Override", description: "Risk of management override of controls per ISA 240 — presumed risk", inherentLikelihood: 3, inherentImpact: 5, controls: "Board oversight, independent audit committee, whistleblower policy", controlEffectiveness: 2, residualLikelihood: 2, residualImpact: 4, response: "Journal entry testing, review of estimates, evaluate business rationale of significant transactions" },
-    { id: 3, area: "Going Concern", description: "Risk that entity may not continue as a going concern per ISA 570", inherentLikelihood: 2, inherentImpact: 5, controls: "Cash flow monitoring, covenant tracking, board review of forecasts", controlEffectiveness: 3, residualLikelihood: 1, residualImpact: 5, response: "Review cash flow forecasts, assess loan covenants, evaluate subsequent events" },
-  ]);
+function RiskAssessmentTab({ engagement, risks, setRisks }) {
   const [showAddRisk, setShowAddRisk] = useState(false);
 
   const getRiskScore = (likelihood, impact) => likelihood * impact;
@@ -630,11 +631,7 @@ function AddRiskModal({ onAdd, onClose }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB 3: FINDINGS TRACKER & MANAGEMENT LETTER
 // ═══════════════════════════════════════════════════════════════════════════════
-function FindingsTab({ engagement }) {
-  const [findings, setFindings] = useState([
-    { id: 1, ref: "F-001", title: "Lack of segregation of duties in cash receipting", component: "Cash & Bank", severity: "high", condition: "One individual is responsible for receiving, recording, and depositing cash receipts without independent review.", criteria: "ISA 315 — Effective internal controls require adequate segregation of duties to prevent and detect errors or fraud.", cause: "Small finance team with limited staff capacity.", effect: "Increased risk of misappropriation of cash receipts going undetected.", recommendation: "Assign cash receipt recording to a different staff member than the person handling physical cash. Implement daily supervisory review of cash receipts journal.", managementResponse: "", targetDate: "", status: "open" },
-    { id: 2, ref: "F-002", title: "Revenue cut-off error identified", component: "Revenue & Income", severity: "medium", condition: "Three sales invoices totaling R245,000 dated in January were recorded in the December general ledger.", criteria: "IFRS 15 — Revenue should be recognised when control passes to the customer. IAS 1 requires proper period allocation.", cause: "Month-end close procedures do not include a formal cut-off review checklist.", effect: "Revenue overstated by R245,000 at year-end (below materiality but noted for management attention).", recommendation: "Implement a formal month-end cut-off checklist that requires matching of delivery notes to invoice dates. Review all invoices within 5 days of year-end.", managementResponse: "", targetDate: "", status: "open" },
-  ]);
+function FindingsTab({ engagement, findings, setFindings }) {
   const [showAddFinding, setShowAddFinding] = useState(false);
   const [showLetter, setShowLetter] = useState(false);
 
