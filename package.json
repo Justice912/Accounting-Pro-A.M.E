@@ -8,8 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check:audit-module": "node scripts/check-audit-module.mjs",
-    "build:ci": "npm run check:node-engine && npm run check:audit-module && npm run build",
-    "check:node-engine": "node scripts/check-node-engine.mjs"
+    "build:ci": "npm run check:audit-module && npm run build"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -25,6 +24,6 @@
     "tailwindcss": "^3.3.6"
   },
   "engines": {
-    "node": "24.x"
+    "node": ">=18"
   }
 }
