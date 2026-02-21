@@ -3648,12 +3648,27 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
   const [extractedPdfData, setExtractedPdfData] = useState([]);
   const [pdfProcessing, setPdfProcessing] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
+  const [activeBankSubTab, setActiveBankSubTab] = useState('new');
 
   // Build selection options from accounts
   const selectionOptions = [
     'Unallocated Expen',
     ...accounts.filter(a => a.active !== false).map(a => a.name)
   ];
+
+  const attachedTransactions = bankStatements;
+  const newTransactions = bankStatements.filter(stmt => !stmt.reviewed);
+  const reviewedTransactions = bankStatements.filter(stmt => stmt.reviewed);
+  const displayedTransactions = activeBankSubTab === 'attached'
+    ? attachedTransactions
+    : activeBankSubTab === 'reviewed'
+      ? reviewedTransactions
+      : newTransactions;
+
+  useEffect(() => {
+    const visibleIds = new Set(displayedTransactions.map(stmt => stmt.id));
+    setSelectedIds(prev => prev.filter(id => visibleIds.has(id)));
+  }, [activeBankSubTab, bankStatements]);
 
   // AI-powered extraction for bank statements using Claude API
   const extractBankStatementWithAI = async (imageData, fileName) => {
@@ -3943,6 +3958,7 @@ Rules:
           vatRate: 'No VAT',
           spent: amount < 0 ? Math.abs(amount) : 0,
           received: amount > 0 ? amount : 0,
+          reviewed: false,
           reconciled: false,
           linkedInvoice: null,
           linkedType: null
@@ -3967,6 +3983,7 @@ Rules:
       vatRate: 'No VAT',
       spent: 0,
       received: 0,
+      reviewed: false,
       reconciled: false,
       linkedInvoice: null,
       linkedType: null
@@ -3996,7 +4013,7 @@ Rules:
 
   const toggleSelectAll = (checked) => {
     if (checked) {
-      setSelectedIds(bankStatements.map(s => s.id));
+      setSelectedIds(displayedTransactions.map(s => s.id));
     } else {
       setSelectedIds([]);
     }
@@ -4011,8 +4028,9 @@ Rules:
   };
 
   const handleSaveChanges = () => {
-    saveBankStatements([...bankStatements]);
-    setSaveMessage('Changes saved successfully!');
+    const updated = bankStatements.map(stmt => stmt.reconciled ? { ...stmt, reviewed: true } : stmt);
+    saveBankStatements(updated);
+    setSaveMessage('Changes saved successfully. Reconciled transactions moved to Reviewed Transactions.');
     setTimeout(() => setSaveMessage(''), 3000);
   };
 
@@ -4032,10 +4050,18 @@ Rules:
   };
 
   const handleMarkAllAsReviewed = () => {
-    const updated = bankStatements.map(s => ({ ...s, reconciled: true, reviewed: true }));
+    const visibleIds = new Set(displayedTransactions.map(s => s.id));
+    const updated = bankStatements.map(s => visibleIds.has(s.id) ? { ...s, reconciled: true, reviewed: true } : s);
     saveBankStatements(updated);
     setSelectedIds([]);
-    setSaveMessage('All transactions marked as reviewed!');
+    setSaveMessage(`${displayedTransactions.length} transaction(s) marked as reviewed!`);
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
+  const handleRecallTransaction = (id) => {
+    const updated = bankStatements.map(s => s.id === id ? { ...s, reviewed: false, reconciled: false } : s);
+    saveBankStatements(updated);
+    setSaveMessage('Transaction recalled to New Transactions for re-allocation.');
     setTimeout(() => setSaveMessage(''), 3000);
   };
 
@@ -4309,6 +4335,24 @@ Rules:
       )}
 
       <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+        <div className="border-b flex flex-wrap">
+          {[
+            { id: 'attached', label: 'Attached', count: attachedTransactions.length },
+            { id: 'new', label: 'New Transactions', count: newTransactions.length },
+            { id: 'reviewed', label: 'Reviewed Transactions', count: reviewedTransactions.length },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveBankSubTab(tab.id)}
+              className={`px-5 py-3 text-sm font-medium border-b-2 transition ${activeBankSubTab === tab.id ? 'border-blue-600 text-blue-700 bg-blue-50/60' : 'border-transparent text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}
+            >
+              {tab.label} <span className="text-xs text-slate-500">({tab.count})</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-100">
@@ -4316,7 +4360,7 @@ Rules:
                 <th className="text-center px-2 py-3 font-medium text-slate-600 w-10">
                   <input
                     type="checkbox"
-                    checked={bankStatements.length > 0 && selectedIds.length === bankStatements.length}
+                    checked={displayedTransactions.length > 0 && selectedIds.length === displayedTransactions.length}
                     onChange={(e) => toggleSelectAll(e.target.checked)}
                     className="w-4 h-4"
                   />
@@ -4334,7 +4378,7 @@ Rules:
               </tr>
             </thead>
             <tbody>
-              {bankStatements.length > 0 ? bankStatements.map(stmt => (
+              {displayedTransactions.length > 0 ? displayedTransactions.map(stmt => (
                 <tr key={stmt.id} className={`border-t hover:bg-slate-50 ${stmt.reconciled ? 'bg-green-50' : ''} ${selectedIds.includes(stmt.id) ? 'bg-blue-50' : ''}`}>
                   <td className="px-2 py-2 text-center">
                     <input
@@ -4473,15 +4517,30 @@ Rules:
                     />
                   </td>
                   <td className="px-3 py-2">
-                    <button onClick={() => deleteStatement(stmt.id)} className="p-1 text-red-500 hover:bg-red-50 rounded">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      {activeBankSubTab === 'reviewed' && (
+                        <button
+                          onClick={() => handleRecallTransaction(stmt.id)}
+                          className="px-2 py-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100"
+                          title="Move back to New Transactions"
+                        >
+                          Recall
+                        </button>
+                      )}
+                      <button onClick={() => deleteStatement(stmt.id)} className="p-1 text-red-500 hover:bg-red-50 rounded">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               )) : (
                 <tr>
                   <td colSpan={11} className="text-center py-8 text-slate-500">
-                    No bank statements. Import a CSV or add entries manually.
+                    {activeBankSubTab === 'reviewed'
+                      ? 'No reviewed transactions yet.'
+                      : activeBankSubTab === 'new'
+                        ? 'No new transactions. Upload a statement or recall a reviewed transaction.'
+                        : 'No attached transactions. Import a CSV/PDF/image or add entries manually.'}
                   </td>
                 </tr>
               )}
@@ -4505,18 +4564,22 @@ Rules:
             >
               Save Changes
             </button>
-            <button 
-              onClick={handleMarkSelectedAsReviewed}
-              className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
-            >
-              Mark Selected as Reviewed
-            </button>
-            <button 
-              onClick={handleMarkAllAsReviewed}
-              className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
-            >
-              Mark All as Reviewed
-            </button>
+            {activeBankSubTab !== 'reviewed' && (
+              <>
+                <button 
+                  onClick={handleMarkSelectedAsReviewed}
+                  className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
+                >
+                  Mark Selected as Reviewed
+                </button>
+                <button 
+                  onClick={handleMarkAllAsReviewed}
+                  className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
+                >
+                  Mark All as Reviewed
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
