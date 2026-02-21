@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:audit-module": "node scripts/check-audit-module.mjs",
+    "build:ci": "npm run check:audit-module && npm run build"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -20,5 +22,8 @@
     "autoprefixer": "^10.4.16",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.3.6"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }
