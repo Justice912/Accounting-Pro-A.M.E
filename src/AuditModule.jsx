@@ -35,6 +35,17 @@ const FINDING_SEVERITY = {
   critical: { label: "Critical", color: "#991b1b", icon: "◆" },
 };
 
+const DEFAULT_RISKS = [
+  { id: 1, area: "Revenue Recognition", description: "Risk of material misstatement due to fraud in revenue recognition per ISA 240", inherentLikelihood: 4, inherentImpact: 5, controls: "Segregation of duties, automated invoice matching, monthly analytical review", controlEffectiveness: 3, residualLikelihood: 2, residualImpact: 4, response: "Extended substantive testing, cut-off testing, journal entry analysis" },
+  { id: 2, area: "Management Override", description: "Risk of management override of controls per ISA 240 — presumed risk", inherentLikelihood: 3, inherentImpact: 5, controls: "Board oversight, independent audit committee, whistleblower policy", controlEffectiveness: 2, residualLikelihood: 2, residualImpact: 4, response: "Journal entry testing, review of estimates, evaluate business rationale of significant transactions" },
+  { id: 3, area: "Going Concern", description: "Risk that entity may not continue as a going concern per ISA 570", inherentLikelihood: 2, inherentImpact: 5, controls: "Cash flow monitoring, covenant tracking, board review of forecasts", controlEffectiveness: 3, residualLikelihood: 1, residualImpact: 5, response: "Review cash flow forecasts, assess loan covenants, evaluate subsequent events" },
+];
+
+const DEFAULT_FINDINGS = [
+  { id: 1, ref: "F-001", title: "Lack of segregation of duties in cash receipting", component: "Cash & Bank", severity: "high", condition: "One individual is responsible for receiving, recording, and depositing cash receipts without independent review.", criteria: "ISA 315 — Effective internal controls require adequate segregation of duties to prevent and detect errors or fraud.", cause: "Small finance team with limited staff capacity.", effect: "Increased risk of misappropriation of cash receipts going undetected.", recommendation: "Assign cash receipt recording to a different staff member than the person handling physical cash. Implement daily supervisory review of cash receipts journal.", managementResponse: "", targetDate: "", status: "open" },
+  { id: 2, ref: "F-002", title: "Revenue cut-off error identified", component: "Revenue & Income", severity: "medium", condition: "Three sales invoices totaling R245,000 dated in January were recorded in the December general ledger.", criteria: "IFRS 15 — Revenue should be recognised when control passes to the customer. IAS 1 requires proper period allocation.", cause: "Month-end close procedures do not include a formal cut-off review checklist.", effect: "Revenue overstated by R245,000 at year-end (below materiality but noted for management attention).", recommendation: "Implement a formal month-end cut-off checklist that requires matching of delivery notes to invoice dates. Review all invoices within 5 days of year-end.", managementResponse: "", targetDate: "", status: "open" },
+];
+
 // ─── AUDIT PROCEDURES DATABASE ────────────────────────────────────────────────
 const AUDIT_PROCEDURES = {
   revenue: [
@@ -198,6 +209,8 @@ const theme = {
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function AuditModule() {
   const [activeTab, setActiveTab] = useState("programs");
+  const [risks, setRisks] = useState(DEFAULT_RISKS);
+  const [findings, setFindings] = useState(DEFAULT_FINDINGS);
   const [engagement, setEngagement] = useState({
     clientName: "",
     yearEnd: "",
@@ -210,6 +223,7 @@ export default function AuditModule() {
     { id: "programs", label: "Audit Programs", icon: ClipboardCheck },
     { id: "risk", label: "Risk Assessment", icon: Shield },
     { id: "findings", label: "Findings Tracker", icon: AlertTriangle },
+    { id: "reports", label: "Audit Reports", icon: FileText },
     { id: "chatbot", label: "Audit AI Assistant", icon: MessageSquare },
   ];
 
@@ -244,8 +258,9 @@ export default function AuditModule() {
       {/* ── CONTENT ────────────────────────────────────────────────── */}
       <div style={{ padding: "20px 24px", maxHeight: "calc(100vh - 230px)", overflowY: "auto" }}>
         {activeTab === "programs" && <AuditProgramsTab engagement={engagement} />}
-        {activeTab === "risk" && <RiskAssessmentTab engagement={engagement} />}
-        {activeTab === "findings" && <FindingsTab engagement={engagement} />}
+        {activeTab === "risk" && <RiskAssessmentTab engagement={engagement} risks={risks} setRisks={setRisks} />}
+        {activeTab === "findings" && <FindingsTab engagement={engagement} findings={findings} setFindings={setFindings} />}
+        {activeTab === "reports" && <AuditReportsTab engagement={engagement} risks={risks} findings={findings} />}
         {activeTab === "chatbot" && <ChatbotTab />}
       </div>
     </div>
@@ -448,12 +463,7 @@ function AuditProgramsTab({ engagement }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB 2: RISK ASSESSMENT BUILDER
 // ═══════════════════════════════════════════════════════════════════════════════
-function RiskAssessmentTab({ engagement }) {
-  const [risks, setRisks] = useState([
-    { id: 1, area: "Revenue Recognition", description: "Risk of material misstatement due to fraud in revenue recognition per ISA 240", inherentLikelihood: 4, inherentImpact: 5, controls: "Segregation of duties, automated invoice matching, monthly analytical review", controlEffectiveness: 3, residualLikelihood: 2, residualImpact: 4, response: "Extended substantive testing, cut-off testing, journal entry analysis" },
-    { id: 2, area: "Management Override", description: "Risk of management override of controls per ISA 240 — presumed risk", inherentLikelihood: 3, inherentImpact: 5, controls: "Board oversight, independent audit committee, whistleblower policy", controlEffectiveness: 2, residualLikelihood: 2, residualImpact: 4, response: "Journal entry testing, review of estimates, evaluate business rationale of significant transactions" },
-    { id: 3, area: "Going Concern", description: "Risk that entity may not continue as a going concern per ISA 570", inherentLikelihood: 2, inherentImpact: 5, controls: "Cash flow monitoring, covenant tracking, board review of forecasts", controlEffectiveness: 3, residualLikelihood: 1, residualImpact: 5, response: "Review cash flow forecasts, assess loan covenants, evaluate subsequent events" },
-  ]);
+function RiskAssessmentTab({ engagement, risks, setRisks }) {
   const [showAddRisk, setShowAddRisk] = useState(false);
 
   const getRiskScore = (likelihood, impact) => likelihood * impact;
@@ -630,11 +640,7 @@ function AddRiskModal({ onAdd, onClose }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB 3: FINDINGS TRACKER & MANAGEMENT LETTER
 // ═══════════════════════════════════════════════════════════════════════════════
-function FindingsTab({ engagement }) {
-  const [findings, setFindings] = useState([
-    { id: 1, ref: "F-001", title: "Lack of segregation of duties in cash receipting", component: "Cash & Bank", severity: "high", condition: "One individual is responsible for receiving, recording, and depositing cash receipts without independent review.", criteria: "ISA 315 — Effective internal controls require adequate segregation of duties to prevent and detect errors or fraud.", cause: "Small finance team with limited staff capacity.", effect: "Increased risk of misappropriation of cash receipts going undetected.", recommendation: "Assign cash receipt recording to a different staff member than the person handling physical cash. Implement daily supervisory review of cash receipts journal.", managementResponse: "", targetDate: "", status: "open" },
-    { id: 2, ref: "F-002", title: "Revenue cut-off error identified", component: "Revenue & Income", severity: "medium", condition: "Three sales invoices totaling R245,000 dated in January were recorded in the December general ledger.", criteria: "IFRS 15 — Revenue should be recognised when control passes to the customer. IAS 1 requires proper period allocation.", cause: "Month-end close procedures do not include a formal cut-off review checklist.", effect: "Revenue overstated by R245,000 at year-end (below materiality but noted for management attention).", recommendation: "Implement a formal month-end cut-off checklist that requires matching of delivery notes to invoice dates. Review all invoices within 5 days of year-end.", managementResponse: "", targetDate: "", status: "open" },
-  ]);
+function FindingsTab({ engagement, findings, setFindings }) {
   const [showAddFinding, setShowAddFinding] = useState(false);
   const [showLetter, setShowLetter] = useState(false);
 
@@ -819,6 +825,106 @@ function ManagementLetterModal({ findings, engagement, onClose }) {
 
           <p style={{ marginTop: 24 }}>We would appreciate a written response to each finding, indicating the action to be taken and the expected completion date. This letter is intended solely for the use of management and those charged with governance and is not intended for any other purpose.</p>
           <p>Yours faithfully,<br /><strong>AME Business Accountants</strong><br />Registered Auditors</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuditReportsTab({ engagement, risks, findings }) {
+  const [reportType, setReportType] = useState("management");
+
+  const openFindings = findings.filter((f) => f.status === "open");
+  const highRiskItems = risks.filter((r) => r.residualLikelihood * r.residualImpact >= 10);
+  const completionRate = findings.length ? Math.round(((findings.length - openFindings.length) / findings.length) * 100) : 100;
+  const issueValue = findings.length * 125000;
+
+  const downloadReport = () => {
+    const lines = [
+      "AME PRO ACCOUNTING - AUDIT REPORT",
+      `Client: ${engagement.clientName || "[Client Name]"}`,
+      `Year End: ${engagement.yearEnd || "[Year End]"}`,
+      `Report Type: ${reportType === "management" ? "Management Letter" : reportType === "executive" ? "Executive Summary" : "Audit Completion Memo"}`,
+      `Date: ${new Date().toLocaleDateString("en-ZA")}`,
+      "",
+      `Total Risks Assessed: ${risks.length}`,
+      `High/Critical Residual Risks: ${highRiskItems.length}`,
+      `Total Findings: ${findings.length}`,
+      `Open Findings: ${openFindings.length}`,
+      `Estimated Exposure: R ${issueValue.toLocaleString("en-ZA")}`,
+      "",
+      "Key Open Findings:",
+      ...openFindings.map((f, index) => `${index + 1}. [${f.ref}] ${f.title} (${FINDING_SEVERITY[f.severity]?.label || f.severity})`),
+    ];
+
+    const file = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(file);
+    link.download = `audit-report-${(engagement.clientName || "client").replace(/\s+/g, "-").toLowerCase()}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Audit Report Centre</h2>
+          <p style={{ fontSize: 13, color: theme.textMuted, margin: "4px 0 0" }}>Generate audit-ready summaries from live risk and findings data</p>
+        </div>
+        <button onClick={downloadReport} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", background: theme.primary, color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}>
+          <Download size={14} /> Download Report
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 18 }}>
+        {[
+          { label: "Risks Assessed", value: risks.length, color: theme.primary },
+          { label: "High Residual Risks", value: highRiskItems.length, color: theme.warning },
+          { label: "Open Findings", value: openFindings.length, color: theme.danger },
+          { label: "Audit Completion", value: `${completionRate}%`, color: theme.success },
+        ].map((s) => (
+          <div key={s.label} style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "14px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: theme.textMuted }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
+        <label style={{ fontSize: 11, color: theme.textMuted, display: "block", marginBottom: 6 }}>Report Template</label>
+        <select value={reportType} onChange={(e) => setReportType(e.target.value)} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.surface, color: theme.text, fontSize: 13, fontFamily: "inherit" }}>
+          <option value="management">Management Letter Summary</option>
+          <option value="executive">Executive Audit Summary</option>
+          <option value="completion">Audit Completion Memo</option>
+        </select>
+      </div>
+
+      <div style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 18 }}>
+        <h3 style={{ marginTop: 0, fontSize: 15, marginBottom: 12 }}>
+          {reportType === "management" ? "Management Letter Extract" : reportType === "executive" ? "Executive Summary" : "Completion Memo"}
+        </h3>
+        <div style={{ fontSize: 13, color: theme.textMuted, lineHeight: 1.7 }}>
+          <p><strong>Client:</strong> {engagement.clientName || "[Client Name]"}</p>
+          <p><strong>Reporting period:</strong> Year ended {engagement.yearEnd || "[Year End]"}</p>
+          <p><strong>Overall status:</strong> {highRiskItems.length > 0 || openFindings.length > 0 ? "Attention required before sign-off" : "Ready for sign-off"}</p>
+          <p><strong>Estimated potential exposure:</strong> R {issueValue.toLocaleString("en-ZA")}</p>
+          <p><strong>Top risks requiring audit focus:</strong></p>
+          <ul>
+            {highRiskItems.slice(0, 3).map((risk) => (
+              <li key={risk.id}>{risk.area} — residual score {risk.residualLikelihood * risk.residualImpact}</li>
+            ))}
+            {highRiskItems.length === 0 && <li>No high residual risks identified.</li>}
+          </ul>
+          <p><strong>Open audit findings:</strong></p>
+          <ul>
+            {openFindings.slice(0, 4).map((finding) => (
+              <li key={finding.id}>{finding.ref}: {finding.title} ({FINDING_SEVERITY[finding.severity]?.label || finding.severity})</li>
+            ))}
+            {openFindings.length === 0 && <li>No open findings remain.</li>}
+          </ul>
         </div>
       </div>
     </div>
