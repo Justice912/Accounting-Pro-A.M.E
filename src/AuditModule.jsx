@@ -263,7 +263,7 @@ export default function AuditModule() {
         {activeTab === "programs" && <AuditProgramsTab engagement={engagement} />}
         {activeTab === "risk" && <RiskAssessmentTab engagement={engagement} risks={risks} setRisks={setRisks} />}
         {activeTab === "findings" && <FindingsTab engagement={engagement} findings={findings} setFindings={setFindings} />}
-        {activeTab === "reports" && <AuditReportsTab engagement={engagement} risks={risks} findings={findings} theme={theme} findingSeverity={FINDING_SEVERITY} />}
+        {activeTab === "reports" && <AuditReportsTab engagement={engagement} risks={risks} findings={findings} />}
         {activeTab === "chatbot" && <ChatbotTab />}
       </div>
     </div>
