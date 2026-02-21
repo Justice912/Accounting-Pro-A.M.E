@@ -90,6 +90,13 @@ const DEFAULT_ACCOUNTS = [
   { id: 50, name: 'Owners Contribution', category: 'Equity', active: true, description: '', openingBalance: 0 },
 ];
 
+
+const getCompanyInitials = (name = '') => {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return 'CO';
+  return words.slice(0, 2).map(w => w[0].toUpperCase()).join('');
+};
+
 // ==================== MAIN APP ====================
 const AccountingDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -108,6 +115,8 @@ const AccountingDashboard = () => {
   const [showPrintPreview, setShowPrintPreview] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [showAccountForm, setShowAccountForm] = useState(false);
+  const [activeCompanyId, setActiveCompanyId] = useState(null);
+  const [showClientSelector, setShowClientSelector] = useState(false);
 
   // Load data on mount
   useEffect(() => {
@@ -209,6 +218,30 @@ const AccountingDashboard = () => {
   const pendingInvoices = invoices.filter(inv => inv.status === 'Pending').length;
   const unallocatedCount = bankStatements.filter(s => s.selection === 'Unallocated Expen').length;
 
+
+  useEffect(() => {
+    if (!clients.length) {
+      setActiveCompanyId(null);
+      setShowClientForm(true);
+      return;
+    }
+
+    const currentCompanyExists = clients.some(c => c.id === activeCompanyId);
+    if (!activeCompanyId || !currentCompanyExists) {
+      setActiveCompanyId(clients[0].id);
+    }
+
+    if (clients.length === 1) {
+      const only = clients[0];
+      const defaultLike = !only.name || only.name.toLowerCase().includes('default');
+      if (defaultLike) {
+        setShowClientForm(true);
+      }
+    }
+  }, [clients, activeCompanyId]);
+
+  const activeCompany = clients.find(c => c.id === activeCompanyId) || clients[0] || null;
+
   // Navigation tabs
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: Home },
@@ -234,8 +267,65 @@ const AccountingDashboard = () => {
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
       {/* Header */}
       <header className="bg-gradient-to-r from-emerald-700 to-emerald-600 text-white shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between gap-4">
           <h1 className="text-xl font-bold tracking-tight">Accounting Pro</h1>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                onClick={() => setShowClientSelector(prev => !prev)}
+                className="flex items-center gap-3 bg-white/15 hover:bg-white/20 border border-white/20 rounded-lg px-3 py-2 min-w-64"
+              >
+                {activeCompany?.logo ? (
+                  <img src={activeCompany.logo} alt={activeCompany?.name} className="w-9 h-9 rounded-md object-cover border border-white/30" />
+                ) : (
+                  <div className="w-9 h-9 rounded-md bg-white/20 flex items-center justify-center text-xs font-bold">
+                    {getCompanyInitials(activeCompany?.name)}
+                  </div>
+                )}
+                <div className="text-left leading-tight">
+                  <p className="text-xs text-emerald-100">Client Selector</p>
+                  <p className="font-medium text-sm truncate max-w-36">{activeCompany?.name || 'Select company'}</p>
+                </div>
+                <ChevronDown className="w-4 h-4 ml-auto" />
+              </button>
+              {showClientSelector && (
+                <div className="absolute right-0 mt-2 w-80 bg-white text-slate-800 rounded-lg shadow-xl border z-50">
+                  <div className="max-h-72 overflow-y-auto p-1">
+                    {clients.map(company => (
+                      <button
+                        key={company.id}
+                        onClick={() => {
+                          setActiveCompanyId(company.id);
+                          setShowClientSelector(false);
+                        }}
+                        className={`w-full flex items-center gap-3 p-2.5 rounded-md hover:bg-slate-50 ${company.id === activeCompany?.id ? 'bg-emerald-50' : ''}`}
+                      >
+                        {company.logo ? (
+                          <img src={company.logo} alt={company.name} className="w-9 h-9 rounded-md object-cover border" />
+                        ) : (
+                          <div className="w-9 h-9 rounded-md bg-emerald-100 text-emerald-700 text-xs font-bold flex items-center justify-center">
+                            {getCompanyInitials(company.name)}
+                          </div>
+                        )}
+                        <div className="text-left">
+                          <p className="font-medium text-sm">{company.name || 'Unnamed Company'}</p>
+                          <p className="text-xs text-slate-500">{company.email || 'No email set'}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => { setShowClientSelector(false); setActiveTab('companies'); }}
+                    className="w-full text-left px-3 py-2.5 border-t text-sm text-emerald-700 hover:bg-emerald-50"
+                  >
+                    Manage Companies
+                  </button>
+                </div>
+              )}
+            </div>
+            <button onClick={() => setActiveTab('companies')} className="px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-sm hover:bg-white/20">Manage</button>
+            <button onClick={() => { setShowClientForm(true); setActiveTab('companies'); }} className="px-3 py-2 rounded-lg bg-white text-emerald-700 text-sm font-semibold hover:bg-emerald-50">Add</button>
+          </div>
         </div>
       </header>
 
@@ -291,6 +381,7 @@ const AccountingDashboard = () => {
             setShowPrintPreview={setShowPrintPreview}
             selectedInvoice={selectedInvoice}
             setSelectedInvoice={setSelectedInvoice}
+            company={activeCompany}
           />
         )}
         {activeTab === 'suppliers' && (
@@ -307,6 +398,7 @@ const AccountingDashboard = () => {
             selectedInvoice={selectedInvoice}
             setSelectedInvoice={setSelectedInvoice}
             accounts={accounts}
+            company={activeCompany}
           />
         )}
         {activeTab === 'companies' && (
@@ -315,6 +407,7 @@ const AccountingDashboard = () => {
             saveClients={saveClients}
             showClientForm={showClientForm}
             setShowClientForm={setShowClientForm}
+            setActiveCompanyId={setActiveCompanyId}
           />
         )}
         {activeTab === 'accounts' && (
@@ -340,7 +433,7 @@ const AccountingDashboard = () => {
           <VATReconView 
             vatTransactions={vatTransactions}
             saveVatTransactions={saveVatTransactions}
-            company={clients[0]}
+            company={activeCompany}
             accounts={accounts}
           />
         )}
@@ -348,7 +441,7 @@ const AccountingDashboard = () => {
           <ReportsView 
             bankStatements={bankStatements}
             invoices={invoices}
-            company={clients[0]}
+            company={activeCompany}
           />
         )}
       </main>
@@ -973,7 +1066,7 @@ const CustomerStatements = ({ invoices, clients, company }) => {
 };
 
 // ==================== CUSTOMERS VIEW (Client Invoices) ====================
-const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setShowInvoiceForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice }) => {
+const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setShowInvoiceForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, company }) => {
   // Filter to only show client invoices (not supplier)
   const clientInvoices = invoices.filter(inv => inv.invoiceType !== 'supplier');
 
@@ -993,7 +1086,10 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
     customerRef: '',
     deliveryAddress: ['', '', '', '', ''],
     postalAddress: ['', '', '', '', '', ''],
-    discount: 0,
+    discountType: 'amount',
+    discountValue: 0,
+    paymentTerms: 'Due on receipt',
+    notes: '',
     invoiceType: 'client',
     items: [{ id: 1, type: 'Item', description: '', unit: '', qty: 1, price: 0, vatType: 'Standard Rate (15.00%)', discPercent: 0 }],
     status: 'Pending'
@@ -1033,14 +1129,34 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
   };
 
   const invoiceTotals = () => {
-    let subtotal = 0, totalVat = 0, totalDiscount = 0;
+    let subtotalBeforeInvoiceDiscount = 0;
+    let totalVatBeforeInvoiceDiscount = 0;
+    let itemDiscountTotal = 0;
+
     newInvoice.items.forEach(item => {
       const calc = calculateItemTotals(item);
-      subtotal += calc.afterDiscount;
-      totalVat += calc.vat;
-      totalDiscount += calc.discount;
+      subtotalBeforeInvoiceDiscount += calc.afterDiscount;
+      totalVatBeforeInvoiceDiscount += calc.vat;
+      itemDiscountTotal += calc.discount;
     });
-    return { subtotal, totalVat, totalDiscount, grandTotal: subtotal + totalVat };
+
+    const rawInvoiceDiscount = newInvoice.discountType === 'percent'
+      ? subtotalBeforeInvoiceDiscount * ((newInvoice.discountValue || 0) / 100)
+      : (newInvoice.discountValue || 0);
+
+    const invoiceDiscount = Math.min(Math.max(rawInvoiceDiscount, 0), subtotalBeforeInvoiceDiscount);
+    const discountRatio = subtotalBeforeInvoiceDiscount > 0 ? invoiceDiscount / subtotalBeforeInvoiceDiscount : 0;
+    const subtotal = subtotalBeforeInvoiceDiscount - invoiceDiscount;
+    const totalVat = totalVatBeforeInvoiceDiscount * (1 - discountRatio);
+
+    return {
+      subtotal,
+      subtotalBeforeInvoiceDiscount,
+      totalVat,
+      totalDiscount: itemDiscountTotal,
+      invoiceDiscount,
+      grandTotal: subtotal + totalVat
+    };
   };
 
   const handleSaveInvoice = () => {
@@ -1051,7 +1167,8 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
       amount: totals.grandTotal,
       subtotal: totals.subtotal,
       vat: totals.totalVat,
-      discount: totals.totalDiscount
+      discount: totals.totalDiscount,
+      invoiceDiscount: totals.invoiceDiscount
     };
     saveInvoices([...invoices, invoice]);
     setShowInvoiceForm(false);
@@ -1063,7 +1180,10 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
       customerRef: '',
       deliveryAddress: ['', '', '', '', ''],
       postalAddress: ['', '', '', '', '', ''],
-      discount: 0,
+      discountType: 'amount',
+      discountValue: 0,
+      paymentTerms: 'Due on receipt',
+      notes: '',
       items: [{ id: 1, type: 'Item', description: '', unit: '', qty: 1, price: 0, vatType: 'Standard Rate (15.00%)', discPercent: 0 }],
       status: 'Pending'
     });
@@ -1274,7 +1394,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                   </button>
                   <div className="absolute right-0 mt-1 w-48 bg-white border rounded shadow-lg hidden group-hover:block">
                     <button 
-                      onClick={() => { const t = invoiceTotals(); setSelectedInvoice({...newInvoice, subtotal: t.subtotal, vat: t.totalVat, amount: t.grandTotal, discount: t.totalDiscount}); setShowPrintPreview(true); }}
+                      onClick={() => { const t = invoiceTotals(); setSelectedInvoice({...newInvoice, subtotal: t.subtotal, vat: t.totalVat, amount: t.grandTotal, discount: t.totalDiscount, invoiceDiscount: t.invoiceDiscount}); setShowPrintPreview(true); }}
                       className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
                     >
                       <Printer className="w-4 h-4" /> Print Preview
@@ -1318,7 +1438,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Customer Reference</label>
                   <input 
@@ -1338,14 +1458,48 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Discount %</label>
-                  <input 
-                    type="number" 
-                    value={newInvoice.discount}
-                    onChange={(e) => setNewInvoice({...newInvoice, discount: parseFloat(e.target.value) || 0})}
-                    className="w-full border rounded px-3 py-2 text-sm"
-                  />
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Discount</label>
+                  <div className="flex gap-2">
+                    <select
+                      value={newInvoice.discountType}
+                      onChange={(e) => setNewInvoice({...newInvoice, discountType: e.target.value})}
+                      className="w-28 border rounded px-2 py-2 text-sm"
+                    >
+                      <option value="amount">Amount</option>
+                      <option value="percent">Percent</option>
+                    </select>
+                    <input 
+                      type="number" 
+                      value={newInvoice.discountValue}
+                      onChange={(e) => setNewInvoice({...newInvoice, discountValue: parseFloat(e.target.value) || 0})}
+                      className="flex-1 border rounded px-3 py-2 text-sm"
+                    />
+                  </div>
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Payment Terms</label>
+                  <select
+                    value={newInvoice.paymentTerms}
+                    onChange={(e) => setNewInvoice({...newInvoice, paymentTerms: e.target.value})}
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  >
+                    <option>Due on receipt</option>
+                    <option>Net 7</option>
+                    <option>Net 14</option>
+                    <option>Net 30</option>
+                    <option>Net 60</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Notes</label>
+                <textarea
+                  value={newInvoice.notes}
+                  onChange={(e) => setNewInvoice({...newInvoice, notes: e.target.value})}
+                  className="w-full border rounded px-3 py-2 text-sm min-h-20"
+                  placeholder="Additional notes to include on the invoice"
+                />
               </div>
 
               {/* Items Table */}
@@ -1461,6 +1615,12 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                     <span className="text-slate-600">Subtotal:</span>
                     <span>R {totals.subtotal.toFixed(2)}</span>
                   </div>
+                  {totals.invoiceDiscount > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-600">Invoice Discount:</span>
+                      <span className="text-red-600">- R {totals.invoiceDiscount.toFixed(2)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-600">VAT (15%):</span>
                     <span>R {totals.totalVat.toFixed(2)}</span>
@@ -1499,8 +1659,11 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                       customerRef: '',
                       deliveryAddress: ['', '', '', '', ''],
                       postalAddress: ['', '', '', '', '', ''],
-                      discount: 0,
-                      items: [{ id: 1, type: 'Item', description: '', unit: '', qty: 1, price: 0, vatType: 'Standard 15%', discPercent: 0 }],
+                      discountType: 'amount',
+                      discountValue: 0,
+                      paymentTerms: 'Due on receipt',
+                      notes: '',
+                      items: [{ id: 1, type: 'Item', description: '', unit: '', qty: 1, price: 0, vatType: 'Standard Rate (15.00%)', discPercent: 0 }],
                       status: 'Pending'
                     });
                   }}
@@ -1509,7 +1672,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                   Save and New
                 </button>
                 <button 
-                  onClick={() => { const t = invoiceTotals(); setSelectedInvoice({...newInvoice, subtotal: t.subtotal, vat: t.totalVat, amount: t.grandTotal, discount: t.totalDiscount}); setShowPrintPreview(true); }}
+                  onClick={() => { const t = invoiceTotals(); setSelectedInvoice({...newInvoice, subtotal: t.subtotal, vat: t.totalVat, amount: t.grandTotal, discount: t.totalDiscount, invoiceDiscount: t.invoiceDiscount}); setShowPrintPreview(true); }}
                   className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
                 >
                   Print Preview
@@ -1518,7 +1681,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                   onClick={() => {
                     const email = clients.find(c => c.name === newInvoice.customer)?.email || '';
                     const subject = `Invoice ${newInvoice.documentNo}`;
-                    const body = `Dear ${newInvoice.customer || 'Customer'},\n\nPlease find attached invoice ${newInvoice.documentNo}.\n\nTotal Amount: R ${totals.grandTotal.toFixed(2)}\nDue Date: ${newInvoice.dueDate}\n\nThank you for your business.`;
+                    const body = `Dear ${newInvoice.customer || 'Customer'},\n\nPlease find attached invoice ${newInvoice.documentNo}.\n\nTotal Amount: R ${totals.grandTotal.toFixed(2)}\n${totals.invoiceDiscount > 0 ? `Discount: R ${totals.invoiceDiscount.toFixed(2)}\n` : ''}Due Date: ${newInvoice.dueDate}\n${newInvoice.paymentTerms ? `Payment Terms: ${newInvoice.paymentTerms}\n` : ''}${newInvoice.notes ? `Notes: ${newInvoice.notes}\n` : ''}\nThank you for your business.`;
                     window.open(`mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
                   }}
                   className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
@@ -1621,7 +1784,7 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
 
       {/* Print Preview Modal */}
       {showPrintPreview && selectedInvoice && (
-        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={clients[0]} />
+        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={company} />
       )}
 
           {/* Client Invoices List */}
@@ -1637,6 +1800,9 @@ const CustomersView = ({ invoices, saveInvoices, clients, showInvoiceForm, setSh
                       <div>
                         <h4 className="font-semibold text-slate-800 text-sm">{invoice.documentNo}</h4>
                         <p className="text-sm font-medium text-slate-700 mt-0.5">{invoice.customer || 'No customer'}</p>
+                        {(invoice.customerRef || invoice.externalInvoiceNo || invoice.customerVatNo) && (
+                          <p className="text-xs text-slate-500 mt-1">Bill To: {[invoice.customerRef, invoice.externalInvoiceNo, invoice.customerVatNo].filter(Boolean).join(' • ')}</p>
+                        )}
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadge(invoice.status)}`}>
@@ -1730,7 +1896,7 @@ const PrintPreview = ({ invoice, onClose, company }) => {
   
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-8">
-      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
         <div className="p-4 border-b flex justify-between items-center bg-slate-50 sticky top-0">
           <h3 className="font-semibold">Print Preview</h3>
           <div className="flex gap-2">
@@ -1744,103 +1910,87 @@ const PrintPreview = ({ invoice, onClose, company }) => {
         </div>
         
         <div className="p-8" id="invoice-print">
-          <div className="flex justify-between mb-8">
+          <div className="bg-emerald-700 text-white rounded-lg px-6 py-3 flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold">Tax Invoice</h1>
+            <p className="text-sm text-emerald-100">{company?.name || 'Your Company'} • Professional Accounting Services</p>
+          </div>
+
+          <div className="flex justify-between mb-6">
             <div className="flex items-start gap-4">
-              {company?.logo && (
-                <img src={company.logo} alt="Company Logo" className="w-20 h-20 object-contain" />
-              )}
+              {company?.logo && <img src={company.logo} alt="Company Logo" className="w-20 h-20 object-contain" />}
               <div>
-                <h1 className="text-2xl font-bold text-emerald-700">
-                  {invoice.invoiceType === 'supplier' ? 'SUPPLIER INVOICE' : 'INVOICE'}
-                </h1>
-                <p className="text-slate-600 mt-1">{invoice.documentNo}</p>
+                <p className="font-semibold text-lg">{company?.name || 'Your Company Name'}</p>
+                {company?.address && <p className="text-sm text-slate-600">{company.address}</p>}
+                {company?.email && <p className="text-sm text-slate-600">{company.email}</p>}
               </div>
             </div>
-            <div className="text-right">
-              <p className="font-semibold text-lg">{company?.name || 'Your Company Name'}</p>
-              {company?.tradingName && <p className="text-sm text-slate-600">Trading as: {company.tradingName}</p>}
-              {company?.address && <p className="text-sm text-slate-600">{company.address}</p>}
-              {company?.city && <p className="text-sm text-slate-600">{company.city}, {company.postalCode}</p>}
-              {company?.phone && <p className="text-sm text-slate-600">Tel: {company.phone}</p>}
-              {company?.email && <p className="text-sm text-slate-600">{company.email}</p>}
-              {company?.vatNo && <p className="text-sm text-slate-600 mt-1">VAT No: {company.vatNo}</p>}
-              {company?.registrationNo && <p className="text-sm text-slate-600">Reg No: {company.registrationNo}</p>}
+            <div className="bg-slate-50 rounded-lg border p-4 min-w-64">
+              <h4 className="font-semibold text-slate-700 mb-2">Invoice Details</h4>
+              <p className="text-sm"><span className="text-slate-500">Number:</span> {invoice.documentNo}</p>
+              <p className="text-sm"><span className="text-slate-500">Date:</span> {invoice.date}</p>
+              <p className="text-sm"><span className="text-slate-500">Due Date:</span> {invoice.dueDate}</p>
+              {invoice.customerRef && <p className="text-sm"><span className="text-slate-500">Ref:</span> {invoice.customerRef}</p>}
             </div>
           </div>
-          
-          <div className="grid grid-cols-2 gap-8 mb-8">
-            <div>
-              <h4 className="font-semibold text-slate-600 text-sm mb-2">
-                {invoice.invoiceType === 'supplier' ? 'SUPPLIER:' : 'BILL TO:'}
-              </h4>
-              <p className="font-medium">{invoice.supplier || invoice.customer || 'Customer'}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-sm"><span className="text-slate-600">Date:</span> {invoice.date}</p>
-              <p className="text-sm"><span className="text-slate-600">Due:</span> {invoice.dueDate}</p>
-              {invoice.customerRef && <p className="text-sm"><span className="text-slate-600">Ref:</span> {invoice.customerRef}</p>}
-            </div>
+
+          <div className="mb-5">
+            <h4 className="font-semibold text-slate-600 text-sm mb-1">BILL TO</h4>
+            <p className="font-medium">{invoice.supplier || invoice.customer || 'Customer'}</p>
           </div>
           
-          <table className="w-full mb-8">
-            <thead>
-              <tr className="border-b-2 border-emerald-600">
-                <th className="text-left py-2 text-sm">Description</th>
-                <th className="text-right py-2 text-sm">Qty</th>
-                <th className="text-right py-2 text-sm">Price</th>
-                <th className="text-right py-2 text-sm">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoice.items?.map((item, idx) => (
-                <tr key={idx} className="border-b">
-                  <td className="py-2 text-sm">{item.description || 'Item'}</td>
-                  <td className="py-2 text-sm text-right">{item.qty}</td>
-                  <td className="py-2 text-sm text-right">R {(item.price || 0).toFixed(2)}</td>
-                  <td className="py-2 text-sm text-right">R {((item.qty || 0) * (item.price || 0)).toFixed(2)}</td>
+          <div className="border rounded-xl overflow-hidden mb-6">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-slate-100 border-b">
+                  <th className="text-left py-2 px-3 text-sm">Description</th>
+                  <th className="text-right py-2 px-3 text-sm">Qty</th>
+                  <th className="text-right py-2 px-3 text-sm">Price</th>
+                  <th className="text-right py-2 px-3 text-sm">Total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          
-          <div className="flex justify-end">
-            <div className="w-72">
-              <div className="flex justify-between py-1 text-sm">
-                <span className="text-slate-600">Subtotal:</span>
-                <span>R {(invoice.subtotal || 0).toFixed(2)}</span>
-              </div>
-              {(invoice.discount || 0) > 0 && (
-                <div className="flex justify-between py-1 text-sm">
-                  <span className="text-slate-600">Discount:</span>
-                  <span className="text-red-600">- R {(invoice.discount || 0).toFixed(2)}</span>
+              </thead>
+              <tbody>
+                {invoice.items?.map((item, idx) => (
+                  <tr key={idx} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'} border-b last:border-b-0`}>
+                    <td className="py-2 px-3 text-sm">{item.description || 'Item'}</td>
+                    <td className="py-2 px-3 text-sm text-right">{item.qty}</td>
+                    <td className="py-2 px-3 text-sm text-right">R {(item.price || 0).toFixed(2)}</td>
+                    <td className="py-2 px-3 text-sm text-right">R {((item.qty || 0) * (item.price || 0)).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {(invoice.paymentTerms || invoice.notes) && (
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {invoice.paymentTerms && (
+                <div className="border rounded-lg p-3 bg-slate-50">
+                  <p className="text-xs font-semibold text-slate-500 mb-1">Payment Terms</p>
+                  <p className="text-sm text-slate-700">{invoice.paymentTerms}</p>
                 </div>
               )}
-              <div className="flex justify-between py-1 text-sm">
-                <span className="text-slate-600">VAT (15%):</span>
-                <span>R {(invoice.vat || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between py-2 font-bold text-lg border-t-2 border-emerald-600 mt-2">
-                <span>Grand Total:</span>
-                <span className="text-emerald-700">R {(invoice.amount || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between py-2 font-bold text-base border-t border-slate-300 mt-1">
-                <span className="text-slate-700">Amount Due:</span>
-                <span className="text-emerald-700">R {(invoice.status === 'Paid' ? 0 : (invoice.amount || 0)).toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
-          
-          {/* Banking Details */}
-          {company?.bankName && (
-            <div className="mt-8 pt-6 border-t">
-              <h4 className="font-semibold text-sm text-slate-600 mb-2">BANKING DETAILS</h4>
-              <div className="text-sm text-slate-600">
-                <p>Bank: {company.bankName}</p>
-                <p>Account: {company.bankAccountNo}</p>
-                {company.bankBranchCode && <p>Branch Code: {company.bankBranchCode}</p>}
-              </div>
+              {invoice.notes && (
+                <div className="border rounded-lg p-3 bg-slate-50">
+                  <p className="text-xs font-semibold text-slate-500 mb-1">Notes</p>
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{invoice.notes}</p>
+                </div>
+              )}
             </div>
           )}
+          
+          <div className="flex justify-end">
+            <div className="w-80 border rounded-lg p-4 bg-slate-50">
+              <div className="flex justify-between py-1 text-sm"><span className="text-slate-600">Subtotal:</span><span>R {(invoice.subtotal || 0).toFixed(2)}</span></div>
+              {(invoice.invoiceDiscount || 0) > 0 && <div className="flex justify-between py-1 text-sm"><span className="text-slate-600">Invoice Discount:</span><span className="text-red-600">- R {(invoice.invoiceDiscount || 0).toFixed(2)}</span></div>}
+              <div className="flex justify-between py-1 text-sm"><span className="text-slate-600">VAT:</span><span>R {(invoice.vat || 0).toFixed(2)}</span></div>
+              <div className="flex justify-between py-2 font-bold text-lg border-t-2 border-emerald-600 mt-2"><span>Grand Total:</span><span className="text-emerald-700">R {(invoice.amount || 0).toFixed(2)}</span></div>
+            </div>
+          </div>
+
+          <div className="mt-8 pt-4 border-t text-center text-sm text-slate-600">
+            <p>Thank you for your business.</p>
+            <p className="mt-1">Payment due by {invoice.dueDate}.</p>
+          </div>
         </div>
       </div>
     </div>
@@ -1848,7 +1998,7 @@ const PrintPreview = ({ invoice, onClose, company }) => {
 };
 
 // ==================== SUPPLIERS VIEW (with Supplier Invoices) ====================
-const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clients, showSupplierForm, setShowSupplierForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, accounts = [] }) => {
+const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clients, showSupplierForm, setShowSupplierForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, accounts = [], company }) => {
   const [formData, setFormData] = useState({ name: '', company: '', email: '', phone: '' });
   const [activeTab, setActiveTab] = useState('invoices');
   const pdfInvoiceInputRef = React.useRef(null);
@@ -2637,14 +2787,14 @@ Rules:
       
       {/* Print Preview Modal */}
       {showPrintPreview && selectedInvoice && (
-        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={clients?.[0]} />
+        <PrintPreview invoice={selectedInvoice} onClose={() => setShowPrintPreview(false)} company={company} />
       )}
     </div>
   );
 };
 
 // ==================== COMPANIES VIEW ====================
-const CompaniesView = ({ clients, saveClients, showClientForm, setShowClientForm }) => {
+const CompaniesView = ({ clients, saveClients, showClientForm, setShowClientForm, setActiveCompanyId }) => {
   const logoInputRef = React.useRef(null);
   const [formData, setFormData] = useState({ 
     name: '', 
@@ -2686,7 +2836,9 @@ const CompaniesView = ({ clients, saveClients, showClientForm, setShowClientForm
         saveClients(clients.map(c => c.id === editingId ? { ...formData, id: editingId } : c));
         setEditingId(null);
       } else {
-        saveClients([...clients, { id: Date.now(), ...formData }]);
+        const newId = Date.now();
+        saveClients([...clients, { id: newId, ...formData }]);
+        setActiveCompanyId(newId);
       }
       resetForm();
       setShowClientForm(false);
@@ -2737,7 +2889,13 @@ const CompaniesView = ({ clients, saveClients, showClientForm, setShowClientForm
   };
 
   const deleteClient = (id) => {
-    saveClients(clients.filter(c => c.id !== id));
+    const remaining = clients.filter(c => c.id !== id);
+    saveClients(remaining);
+    if (remaining.length) {
+      setActiveCompanyId(remaining[0].id);
+    } else {
+      setShowClientForm(true);
+    }
   };
 
   const cancelForm = () => {
