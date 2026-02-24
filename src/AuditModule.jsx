@@ -257,7 +257,7 @@ export default function AuditModule() {
         {activeTab === "risk" && <RiskAssessmentTab engagement={engagement} risks={risks} setRisks={setRisks} />}
         {activeTab === "findings" && <FindingsTab engagement={engagement} findings={findings} setFindings={setFindings} />}
         {activeTab === "completion" && <AuditCompletionTab engagement={engagement} risks={risks} findings={findings} />}
-        {activeTab === "reports" && <AuditReportsTab engagement={engagement} risks={risks} findings={findings} />}
+        {activeTab === "reports" && <AuditReportsTab engagement={engagement} risks={risks} findings={findings} theme={theme} findingSeverity={FINDING_SEVERITY} />}
         {activeTab === "chatbot" && <ChatbotTab />}
       </div>
     </div>
@@ -833,10 +833,11 @@ function ManagementLetterModal({ findings, engagement, onClose }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 function ChatbotTab() {
   const [messages, setMessages] = useState([
-    { role: "assistant", content: "Welcome to the Audit AI Assistant! I'm your expert external audit advisor, specialising in ISA standards, IFRS, South African compliance (SARS, IRBA, Companies Act), and Draftworx navigation.\n\nAsk me anything — audit procedures, risk assessments, materiality calculations, how to handle specific audit findings, ISA requirements, or Draftworx guidance. I'll give you practical, actionable answers with the relevant standards cited." },
+    { role: "assistant", content: "Welcome to the Audit AI Assistant! I'm your expert external audit advisor, specialising in ISA standards, IFRS, South African compliance (SARS, IRBA, Companies Act), and Draftworx navigation.\n\nAsk me anything — audit procedures, risk assessments, materiality calculations, how to handle specific audit findings, ISA requirements, or Draftworx guidance. I'll give you practical, actionable answers with the relevant standards cited.\n\nNote: You'll need an Anthropic API key to use this feature. Get one at console.anthropic.com" },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [apiKey, setApiKey] = useState("");
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -856,9 +857,20 @@ function ChatbotTab() {
         content: m.content,
       }));
 
+      if (!apiKey) {
+        setMessages((prev) => [...prev, { role: "assistant", content: "Please enter your Anthropic API key above to use the AI Assistant. You can get one at console.anthropic.com" }]);
+        setLoading(false);
+        return;
+      }
+
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
@@ -922,6 +934,19 @@ function ChatbotTab() {
               {q}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* API Key Input */}
+      {!apiKey && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="Enter your Anthropic API key (sk-ant-...)"
+            style={{ flex: 1, padding: "8px 14px", background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, fontSize: 12, outline: "none", fontFamily: "inherit" }}
+          />
         </div>
       )}
 
