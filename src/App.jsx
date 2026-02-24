@@ -5562,23 +5562,114 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
     });
   };
 
+  // Sage One account category classification
+  const SAGE_CATEGORY_ORDER = [
+    { group: 'Balance Sheet', type: 'heading' },
+    { group: 'Non-Current Assets', type: 'section', code: '1000', nature: 'debit' },
+    { group: 'Current Assets', type: 'section', code: '2000', nature: 'debit' },
+    { group: 'Equity', type: 'section', code: '3000', nature: 'credit' },
+    { group: 'Non-Current Liabilities', type: 'section', code: '4000', nature: 'credit' },
+    { group: 'Current Liabilities', type: 'section', code: '5000', nature: 'credit' },
+    { group: 'Income Statement', type: 'heading' },
+    { group: 'Sales', type: 'section', code: '6000', nature: 'credit' },
+    { group: 'Cost of Sales', type: 'section', code: '7000', nature: 'debit' },
+    { group: 'Other Income', type: 'section', code: '7500', nature: 'credit' },
+    { group: 'Expenses', type: 'section', code: '8000', nature: 'debit' },
+    { group: 'Income Tax', type: 'section', code: '9000', nature: 'debit' },
+  ];
+
   const generateTrialBalance = () => {
     const filtered = filterByDateRange(bankStatements);
-    const categories = {};
-    
+    const accountBalances = {};
+
+    // Build balances from bank statements mapped to account selections
     filtered.forEach(stmt => {
       const cat = stmt.selection || 'Unallocated';
-      if (!categories[cat]) categories[cat] = { debit: 0, credit: 0 };
-      categories[cat].debit += stmt.spent || 0;
-      categories[cat].credit += stmt.received || 0;
+      if (!accountBalances[cat]) accountBalances[cat] = { debit: 0, credit: 0 };
+      accountBalances[cat].debit += stmt.spent || 0;
+      accountBalances[cat].credit += stmt.received || 0;
     });
 
-    return Object.entries(categories).map(([name, values]) => ({
-      name,
-      debit: values.debit,
-      credit: values.credit,
-      balance: values.debit - values.credit
-    }));
+    // Map accounts to Sage One categories with account codes
+    const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
+    const accountMap = {};
+    accountsList.forEach(acc => { accountMap[acc.name] = acc; });
+
+    // Build structured trial balance
+    const result = [];
+    let totalDebit = 0;
+    let totalCredit = 0;
+
+    SAGE_CATEGORY_ORDER.forEach(section => {
+      if (section.type === 'heading') {
+        result.push({ isHeading: true, name: section.group });
+        return;
+      }
+
+      // Find all accounts in this category
+      const catAccounts = accountsList.filter(a => a.category === section.group && a.active);
+      const sectionRows = [];
+      let sectionDebit = 0;
+      let sectionCredit = 0;
+
+      catAccounts.forEach((acc, idx) => {
+        const accCode = `${section.code.slice(0, -2)}${String(idx + 1).padStart(2, '0')}`;
+        const bal = accountBalances[acc.name] || { debit: 0, credit: 0 };
+        const opening = acc.openingBalance || 0;
+        let debit = bal.debit;
+        let credit = bal.credit;
+        // Add opening balances based on account nature
+        if (section.nature === 'debit') debit += opening;
+        else credit += opening;
+
+        if (debit > 0 || credit > 0 || opening !== 0) {
+          sectionRows.push({
+            code: accCode,
+            name: acc.name,
+            debit,
+            credit,
+            balance: debit - credit
+          });
+          sectionDebit += debit;
+          sectionCredit += credit;
+        }
+      });
+
+      // Also catch unallocated items that match this category name
+      if (accountBalances[section.group]) {
+        const bal = accountBalances[section.group];
+        if (bal.debit > 0 || bal.credit > 0) {
+          sectionRows.push({ code: `${section.code.slice(0, -2)}99`, name: `${section.group} (Unallocated)`, debit: bal.debit, credit: bal.credit, balance: bal.debit - bal.credit });
+          sectionDebit += bal.debit;
+          sectionCredit += bal.credit;
+        }
+      }
+
+      if (sectionRows.length > 0) {
+        result.push({ isSectionHeader: true, name: section.group, code: section.code });
+        sectionRows.forEach(row => result.push(row));
+        result.push({ isSectionTotal: true, name: `Total ${section.group}`, debit: sectionDebit, credit: sectionCredit, balance: sectionDebit - sectionCredit });
+        totalDebit += sectionDebit;
+        totalCredit += sectionCredit;
+      }
+    });
+
+    // Catch any remaining unallocated
+    const mappedNames = new Set(accountsList.map(a => a.name));
+    const sageGroups = new Set(SAGE_CATEGORY_ORDER.filter(s => s.type === 'section').map(s => s.group));
+    Object.entries(accountBalances).forEach(([name, bal]) => {
+      if (!mappedNames.has(name) && !sageGroups.has(name) && (bal.debit > 0 || bal.credit > 0)) {
+        if (!result.some(r => r.isHeading && r.name === 'Unallocated')) {
+          result.push({ isSectionHeader: true, name: 'Unallocated', code: '9900' });
+        }
+        result.push({ code: '9999', name, debit: bal.debit, credit: bal.credit, balance: bal.debit - bal.credit });
+        totalDebit += bal.debit;
+        totalCredit += bal.credit;
+      }
+    });
+
+    result.push({ isGrandTotal: true, name: 'Grand Total', debit: totalDebit, credit: totalCredit, balance: totalDebit - totalCredit });
+    return result;
   };
 
   const generateVATReport = () => {
@@ -5658,15 +5749,20 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
     let csv = '';
     const formatAmount = (amt) => amt.toFixed(2);
     
-    if (reportType === 'trial-balance') {
+    if (reportType === 'trial-balance' || reportType === 'income-statement' || reportType === 'balance-sheet') {
       const data = generateTrialBalance();
-      csv = 'Trial Balance Report\n';
+      const reportTitle = reportType === 'trial-balance' ? 'Trial Balance' : reportType === 'income-statement' ? 'Income Statement' : 'Balance Sheet';
+      csv = `${reportTitle} Report\n`;
+      csv += `${company?.name || 'Company'}\n`;
       csv += `Period: ${startDate} to ${endDate}\n\n`;
-      csv += 'Account,Debit,Credit,Balance\n';
+      csv += 'Code,Account,Debit,Credit,Balance\n';
       data.forEach(row => {
-        csv += `"${row.name}",${formatAmount(row.debit)},${formatAmount(row.credit)},${formatAmount(row.balance)}\n`;
+        if (row.isHeading) { csv += `\n"${row.name}"\n`; return; }
+        if (row.isSectionHeader) { csv += `"${row.code}","${row.name}"\n`; return; }
+        if (row.isSectionTotal) { csv += `,"${row.name}",${formatAmount(row.debit)},${formatAmount(row.credit)},${formatAmount(row.balance)}\n\n`; return; }
+        if (row.isGrandTotal) { csv += `\n,"${row.name}",${formatAmount(row.debit)},${formatAmount(row.credit)},${formatAmount(row.balance)}\n`; return; }
+        csv += `"${row.code}","${row.name}",${formatAmount(row.debit)},${formatAmount(row.credit)},${formatAmount(row.balance)}\n`;
       });
-      csv += `\nTotal,${formatAmount(data.reduce((s, r) => s + r.debit, 0))},${formatAmount(data.reduce((s, r) => s + r.credit, 0))},${formatAmount(data.reduce((s, r) => s + r.balance, 0))}\n`;
     } else {
       const vatData = generateVATReport();
       csv = 'VAT Report\n';
@@ -5716,7 +5812,8 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
       });
     }
     
-    const fileName = `${reportType === 'trial-balance' ? 'Trial_Balance' : 'VAT_Report'}_${startDate}_to_${endDate}.csv`;
+    const reportNames = { 'trial-balance': 'Trial_Balance', 'income-statement': 'Income_Statement', 'balance-sheet': 'Balance_Sheet', 'vat': 'VAT_Report' };
+    const fileName = `${reportNames[reportType] || 'Report'}_${startDate}_to_${endDate}.csv`;
     
     // Create blob and download link
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -6294,6 +6391,8 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
               className="border rounded px-3 py-2 text-sm"
             >
               <option value="trial-balance">Trial Balance</option>
+              <option value="income-statement">Income Statement</option>
+              <option value="balance-sheet">Balance Sheet</option>
               <option value="vat">VAT Report</option>
             </select>
           </div>
@@ -6406,43 +6505,245 @@ const ReportsView = ({ bankStatements, invoices, company }) => {
       {/* Print View Modal */}
       {showPrintView && <PrintView />}
 
-      {/* Trial Balance Report */}
+      {/* Trial Balance Report — Sage One Style */}
       {reportType === 'trial-balance' && (
         <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
-          <div className="p-4 border-b bg-slate-50">
-            <h3 className="font-semibold">Trial Balance</h3>
-            <p className="text-sm text-slate-600">{startDate} to {endDate}</p>
+          <div className="p-4 border-b bg-gradient-to-r from-emerald-700 to-emerald-600">
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="font-bold text-white text-lg">Trial Balance</h3>
+                <p className="text-emerald-100 text-sm">{company?.name || 'Company'} • {startDate} to {endDate}</p>
+              </div>
+              <div className="text-right text-emerald-100 text-xs">
+                <div>Generated: {new Date().toLocaleDateString('en-ZA')}</div>
+                {company?.registrationNo && <div>Reg: {company.registrationNo}</div>}
+              </div>
+            </div>
           </div>
           <table className="w-full text-sm">
-            <thead className="bg-slate-100">
+            <thead className="bg-slate-100 sticky top-0">
               <tr>
-                <th className="text-left px-4 py-3">Account</th>
-                <th className="text-right px-4 py-3">Debit</th>
-                <th className="text-right px-4 py-3">Credit</th>
-                <th className="text-right px-4 py-3">Balance</th>
+                <th className="text-left px-4 py-3 text-slate-500 font-semibold text-xs w-20">Code</th>
+                <th className="text-left px-4 py-3 text-slate-500 font-semibold text-xs">Account</th>
+                <th className="text-right px-4 py-3 text-slate-500 font-semibold text-xs w-36">Debit (R)</th>
+                <th className="text-right px-4 py-3 text-slate-500 font-semibold text-xs w-36">Credit (R)</th>
+                <th className="text-right px-4 py-3 text-slate-500 font-semibold text-xs w-36">Balance (R)</th>
               </tr>
             </thead>
             <tbody>
-              {trialBalance.map((row, idx) => (
-                <tr key={idx} className="border-t">
-                  <td className="px-4 py-3">{row.name}</td>
-                  <td className="px-4 py-3 text-right">R {row.debit.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-right">R {row.credit.toFixed(2)}</td>
-                  <td className={`px-4 py-3 text-right font-medium ${row.balance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                    R {row.balance.toFixed(2)}
-                  </td>
-                </tr>
-              ))}
-              <tr className="bg-slate-100 font-bold">
-                <td className="px-4 py-3">Total</td>
-                <td className="px-4 py-3 text-right">R {trialBalance.reduce((s, r) => s + r.debit, 0).toFixed(2)}</td>
-                <td className="px-4 py-3 text-right">R {trialBalance.reduce((s, r) => s + r.credit, 0).toFixed(2)}</td>
-                <td className="px-4 py-3 text-right">R {trialBalance.reduce((s, r) => s + r.balance, 0).toFixed(2)}</td>
-              </tr>
+              {trialBalance.map((row, idx) => {
+                if (row.isHeading) return (
+                  <tr key={idx} className="bg-slate-700">
+                    <td colSpan={5} className="px-4 py-3 text-white font-bold text-sm tracking-wide">{row.name}</td>
+                  </tr>
+                );
+                if (row.isSectionHeader) return (
+                  <tr key={idx} className="bg-slate-50 border-t-2 border-slate-200">
+                    <td className="px-4 py-2 text-slate-400 font-mono text-xs">{row.code}</td>
+                    <td colSpan={4} className="px-4 py-2 font-semibold text-slate-700 text-xs uppercase tracking-wider">{row.name}</td>
+                  </tr>
+                );
+                if (row.isSectionTotal) return (
+                  <tr key={idx} className="bg-slate-50 border-t border-slate-300">
+                    <td className="px-4 py-2"></td>
+                    <td className="px-4 py-2 font-semibold text-slate-600 text-xs">{row.name}</td>
+                    <td className="px-4 py-2 text-right font-semibold text-slate-700 border-t border-slate-300">{row.debit > 0 ? row.debit.toLocaleString('en-ZA', {minimumFractionDigits: 2}) : '—'}</td>
+                    <td className="px-4 py-2 text-right font-semibold text-slate-700 border-t border-slate-300">{row.credit > 0 ? row.credit.toLocaleString('en-ZA', {minimumFractionDigits: 2}) : '—'}</td>
+                    <td className={`px-4 py-2 text-right font-semibold border-t border-slate-300 ${row.balance >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{row.balance.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+                  </tr>
+                );
+                if (row.isGrandTotal) return (
+                  <tr key={idx} className="bg-emerald-50 border-t-2 border-emerald-600 font-bold">
+                    <td className="px-4 py-4"></td>
+                    <td className="px-4 py-4 text-emerald-800 text-sm">{row.name}</td>
+                    <td className="px-4 py-4 text-right text-emerald-800 border-t-2 border-b-2 border-emerald-600">{row.debit.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+                    <td className="px-4 py-4 text-right text-emerald-800 border-t-2 border-b-2 border-emerald-600">{row.credit.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+                    <td className={`px-4 py-4 text-right border-t-2 border-b-2 border-emerald-600 ${row.balance >= 0 ? 'text-emerald-800' : 'text-red-600'}`}>{row.balance.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+                  </tr>
+                );
+                return (
+                  <tr key={idx} className="border-t border-slate-100 hover:bg-slate-50">
+                    <td className="px-4 py-2 text-slate-400 font-mono text-xs">{row.code}</td>
+                    <td className="px-4 py-2 text-slate-700">{row.name}</td>
+                    <td className="px-4 py-2 text-right text-slate-600">{row.debit > 0 ? row.debit.toLocaleString('en-ZA', {minimumFractionDigits: 2}) : '—'}</td>
+                    <td className="px-4 py-2 text-right text-slate-600">{row.credit > 0 ? row.credit.toLocaleString('en-ZA', {minimumFractionDigits: 2}) : '—'}</td>
+                    <td className={`px-4 py-2 text-right font-medium ${row.balance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{row.balance.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
+
+      {/* Income Statement — Sage One Style */}
+      {reportType === 'income-statement' && (() => {
+        const incomeCategories = ['Sales', 'Cost of Sales', 'Other Income', 'Expenses', 'Income Tax'];
+        const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
+        const filtered = filterByDateRange(bankStatements);
+        const accountBalances = {};
+        filtered.forEach(stmt => {
+          const cat = stmt.selection || 'Unallocated';
+          if (!accountBalances[cat]) accountBalances[cat] = { debit: 0, credit: 0 };
+          accountBalances[cat].debit += stmt.spent || 0;
+          accountBalances[cat].credit += stmt.received || 0;
+        });
+
+        let totalRevenue = 0;
+        let totalCOS = 0;
+        let totalOtherIncome = 0;
+        let totalExpenses = 0;
+        let totalTax = 0;
+
+        const categoryData = incomeCategories.map(cat => {
+          const catAccounts = accountsList.filter(a => a.category === cat && a.active);
+          const rows = catAccounts.map(acc => {
+            const bal = accountBalances[acc.name] || { debit: 0, credit: 0 };
+            const amount = (cat === 'Sales' || cat === 'Other Income') ? (bal.credit - bal.debit) : (bal.debit - bal.credit);
+            return { name: acc.name, amount };
+          }).filter(r => r.amount !== 0);
+          const total = rows.reduce((s, r) => s + r.amount, 0);
+          if (cat === 'Sales') totalRevenue = total;
+          if (cat === 'Cost of Sales') totalCOS = total;
+          if (cat === 'Other Income') totalOtherIncome = total;
+          if (cat === 'Expenses') totalExpenses = total;
+          if (cat === 'Income Tax') totalTax = total;
+          return { category: cat, rows, total };
+        });
+
+        const grossProfit = totalRevenue - totalCOS;
+        const operatingProfit = grossProfit + totalOtherIncome - totalExpenses;
+        const netProfit = operatingProfit - totalTax;
+        const fmt = (v) => v.toLocaleString('en-ZA', { minimumFractionDigits: 2 });
+
+        return (
+          <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+            <div className="p-4 border-b bg-gradient-to-r from-blue-700 to-blue-600">
+              <h3 className="font-bold text-white text-lg">Income Statement</h3>
+              <p className="text-blue-100 text-sm">{company?.name || 'Company'} • For the period {startDate} to {endDate}</p>
+            </div>
+            <div className="p-6">
+              {categoryData.map(({ category, rows, total }) => (
+                <div key={category} className="mb-4">
+                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-1 mb-2">{category}</div>
+                  {rows.map((r, i) => (
+                    <div key={i} className="flex justify-between py-1 px-2 text-sm text-slate-700 hover:bg-slate-50">
+                      <span className="pl-4">{r.name}</span>
+                      <span className={r.amount >= 0 ? 'text-slate-700' : 'text-red-600'}>{fmt(r.amount)}</span>
+                    </div>
+                  ))}
+                  {rows.length === 0 && <div className="text-sm text-slate-400 pl-4 py-1">No transactions</div>}
+                  <div className="flex justify-between py-2 px-2 text-sm font-semibold text-slate-800 border-t border-slate-200 mt-1">
+                    <span>Total {category}</span>
+                    <span>{fmt(total)}</span>
+                  </div>
+                  {category === 'Cost of Sales' && (
+                    <div className="flex justify-between py-3 px-2 text-sm font-bold text-emerald-700 bg-emerald-50 rounded mt-2 mb-2">
+                      <span>Gross Profit</span><span>{fmt(grossProfit)}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div className="flex justify-between py-3 px-2 font-bold text-blue-700 bg-blue-50 rounded mt-2 border border-blue-200">
+                <span>Operating Profit</span><span>{fmt(operatingProfit)}</span>
+              </div>
+              <div className="flex justify-between py-4 px-2 font-bold text-lg text-emerald-800 bg-emerald-50 rounded mt-3 border-2 border-emerald-600">
+                <span>Net Profit / (Loss)</span><span className={netProfit >= 0 ? '' : 'text-red-600'}>{fmt(netProfit)}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Balance Sheet — Sage One Style */}
+      {reportType === 'balance-sheet' && (() => {
+        const bsCategories = ['Non-Current Assets', 'Current Assets', 'Equity', 'Non-Current Liabilities', 'Current Liabilities'];
+        const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
+        const filtered = filterByDateRange(bankStatements);
+        const accountBalances = {};
+        filtered.forEach(stmt => {
+          const cat = stmt.selection || 'Unallocated';
+          if (!accountBalances[cat]) accountBalances[cat] = { debit: 0, credit: 0 };
+          accountBalances[cat].debit += stmt.spent || 0;
+          accountBalances[cat].credit += stmt.received || 0;
+        });
+
+        const assetNatures = new Set(['Non-Current Assets', 'Current Assets']);
+
+        const categoryData = bsCategories.map(cat => {
+          const catAccounts = accountsList.filter(a => a.category === cat && a.active);
+          const rows = catAccounts.map(acc => {
+            const bal = accountBalances[acc.name] || { debit: 0, credit: 0 };
+            const opening = acc.openingBalance || 0;
+            const amount = assetNatures.has(cat)
+              ? (bal.debit - bal.credit + opening)
+              : (bal.credit - bal.debit + opening);
+            return { name: acc.name, amount };
+          }).filter(r => r.amount !== 0);
+          const total = rows.reduce((s, r) => s + r.amount, 0);
+          return { category: cat, rows, total };
+        });
+
+        const totalAssets = categoryData.filter(c => assetNatures.has(c.category)).reduce((s, c) => s + c.total, 0);
+        const totalEquityLiabilities = categoryData.filter(c => !assetNatures.has(c.category)).reduce((s, c) => s + c.total, 0);
+        const fmt = (v) => v.toLocaleString('en-ZA', { minimumFractionDigits: 2 });
+
+        return (
+          <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+            <div className="p-4 border-b bg-gradient-to-r from-indigo-700 to-indigo-600">
+              <h3 className="font-bold text-white text-lg">Statement of Financial Position</h3>
+              <p className="text-indigo-100 text-sm">{company?.name || 'Company'} • As at {endDate}</p>
+            </div>
+            <div className="p-6">
+              <div className="text-sm font-bold text-slate-800 uppercase tracking-wider border-b-2 border-slate-300 pb-2 mb-4">ASSETS</div>
+              {categoryData.filter(c => assetNatures.has(c.category)).map(({ category, rows, total }) => (
+                <div key={category} className="mb-4">
+                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wider pb-1 mb-2">{category}</div>
+                  {rows.map((r, i) => (
+                    <div key={i} className="flex justify-between py-1 px-2 text-sm text-slate-700 hover:bg-slate-50">
+                      <span className="pl-4">{r.name}</span>
+                      <span>{fmt(r.amount)}</span>
+                    </div>
+                  ))}
+                  {rows.length === 0 && <div className="text-sm text-slate-400 pl-4 py-1">—</div>}
+                  <div className="flex justify-between py-2 px-2 text-sm font-semibold text-slate-800 border-t border-slate-200 mt-1">
+                    <span>Total {category}</span><span>{fmt(total)}</span>
+                  </div>
+                </div>
+              ))}
+              <div className="flex justify-between py-3 px-2 font-bold text-indigo-700 bg-indigo-50 rounded border border-indigo-200 mb-6">
+                <span>Total Assets</span><span>{fmt(totalAssets)}</span>
+              </div>
+
+              <div className="text-sm font-bold text-slate-800 uppercase tracking-wider border-b-2 border-slate-300 pb-2 mb-4">EQUITY & LIABILITIES</div>
+              {categoryData.filter(c => !assetNatures.has(c.category)).map(({ category, rows, total }) => (
+                <div key={category} className="mb-4">
+                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wider pb-1 mb-2">{category}</div>
+                  {rows.map((r, i) => (
+                    <div key={i} className="flex justify-between py-1 px-2 text-sm text-slate-700 hover:bg-slate-50">
+                      <span className="pl-4">{r.name}</span>
+                      <span>{fmt(r.amount)}</span>
+                    </div>
+                  ))}
+                  {rows.length === 0 && <div className="text-sm text-slate-400 pl-4 py-1">—</div>}
+                  <div className="flex justify-between py-2 px-2 text-sm font-semibold text-slate-800 border-t border-slate-200 mt-1">
+                    <span>Total {category}</span><span>{fmt(total)}</span>
+                  </div>
+                </div>
+              ))}
+              <div className="flex justify-between py-3 px-2 font-bold text-indigo-700 bg-indigo-50 rounded border border-indigo-200">
+                <span>Total Equity & Liabilities</span><span>{fmt(totalEquityLiabilities)}</span>
+              </div>
+
+              {Math.abs(totalAssets - totalEquityLiabilities) > 0.01 && (
+                <div className="mt-4 p-3 bg-amber-50 border border-amber-300 rounded text-amber-800 text-sm">
+                  Balance sheet does not balance. Difference: R {fmt(totalAssets - totalEquityLiabilities)}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* VAT Report */}
       {reportType === 'vat' && (
