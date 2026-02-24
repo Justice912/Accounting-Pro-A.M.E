@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, MessageSquare, ClipboardCheck, Shield, FileText, Send, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, XCircle, Clock, Download, RotateCcw } from "lucide-react";
+import { Search, MessageSquare, ClipboardCheck, Shield, FileText, Send, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, XCircle, Clock, Download, RotateCcw, BookOpen, ListChecks } from "lucide-react";
 import AuditReportsTab from "./AuditReportsTab";
+import AuditPlanningTab from "./AuditPlanningTab";
+import AuditCompletionTab from "./AuditCompletionTab";
 import { DEFAULT_RISKS, DEFAULT_FINDINGS } from "./auditDefaults";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -199,7 +201,7 @@ const theme = {
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function AuditModule() {
-  const [activeTab, setActiveTab] = useState("programs");
+  const [activeTab, setActiveTab] = useState("planning");
   const [risks, setRisks] = useState(DEFAULT_RISKS);
   const [findings, setFindings] = useState(DEFAULT_FINDINGS);
   const [engagement, setEngagement] = useState({
@@ -211,9 +213,11 @@ export default function AuditModule() {
   });
 
   const tabs = [
+    { id: "planning", label: "Planning", icon: BookOpen },
     { id: "programs", label: "Audit Programs", icon: ClipboardCheck },
     { id: "risk", label: "Risk Assessment", icon: Shield },
     { id: "findings", label: "Findings Tracker", icon: AlertTriangle },
+    { id: "completion", label: "Completion", icon: ListChecks },
     { id: "reports", label: "Audit Reports", icon: FileText },
     { id: "chatbot", label: "Audit AI Assistant", icon: MessageSquare },
   ];
@@ -248,9 +252,11 @@ export default function AuditModule() {
 
       {/* ── CONTENT ────────────────────────────────────────────────── */}
       <div style={{ padding: "20px 24px", maxHeight: "calc(100vh - 230px)", overflowY: "auto" }}>
+        {activeTab === "planning" && <AuditPlanningTab engagement={engagement} setEngagement={setEngagement} />}
         {activeTab === "programs" && <AuditProgramsTab engagement={engagement} />}
         {activeTab === "risk" && <RiskAssessmentTab engagement={engagement} risks={risks} setRisks={setRisks} />}
         {activeTab === "findings" && <FindingsTab engagement={engagement} findings={findings} setFindings={setFindings} />}
+        {activeTab === "completion" && <AuditCompletionTab engagement={engagement} risks={risks} findings={findings} />}
         {activeTab === "reports" && <AuditReportsTab engagement={engagement} risks={risks} findings={findings} />}
         {activeTab === "chatbot" && <ChatbotTab />}
       </div>
