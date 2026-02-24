@@ -5883,10 +5883,10 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
     
     if (reportType === 'trial-balance') {
       const data = generateTrialBalance();
-      const totalDebit = data.reduce((s, r) => s + r.debit, 0);
-      const totalCredit = data.reduce((s, r) => s + r.credit, 0);
-      const totalBalance = data.reduce((s, r) => s + r.balance, 0);
-      
+      const totalDebit = data.reduce((s, r) => s + (r.debit || 0), 0);
+      const totalCredit = data.reduce((s, r) => s + (r.credit || 0), 0);
+      const totalBalance = data.reduce((s, r) => s + (r.balance || 0), 0);
+
       htmlContent += `
         <h1>TRIAL BALANCE REPORT</h1>
         <p class="period">Period: ${startDate} to ${endDate}</p>
@@ -5901,22 +5901,123 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
             </tr>
           </thead>
           <tbody>
-            ${data.map(row => `
-              <tr>
-                <td>${row.name}</td>
-                <td class="text-right">${formatAmount(row.debit)}</td>
-                <td class="text-right">${formatAmount(row.credit)}</td>
-                <td class="text-right ${row.balance >= 0 ? 'positive' : 'negative'}">${formatAmount(row.balance)}</td>
-              </tr>
-            `).join('')}
-            <tr class="total-row">
-              <td><strong>TOTAL</strong></td>
-              <td class="text-right"><strong>${formatAmount(totalDebit)}</strong></td>
-              <td class="text-right"><strong>${formatAmount(totalCredit)}</strong></td>
-              <td class="text-right ${totalBalance >= 0 ? 'positive' : 'negative'}"><strong>${formatAmount(totalBalance)}</strong></td>
-            </tr>
+            ${data.map(row => {
+              if (row.isHeading) return `<tr><td colspan="4" class="section-header" style="background:#e2e8f0;color:#1e293b;font-size:13px;font-weight:bold;padding:10px 6px;">${row.name}</td></tr>`;
+              if (row.isSectionHeader) return `<tr><td colspan="4" class="section-header" style="background:#dbeafe;color:#1e40af;">${row.code} — ${row.name}</td></tr>`;
+              if (row.isSectionTotal) return `<tr class="total-row"><td colspan="1"><strong>${row.name}</strong></td><td class="text-right"><strong>${formatAmount(row.debit)}</strong></td><td class="text-right"><strong>${formatAmount(row.credit)}</strong></td><td class="text-right"><strong>${formatAmount(row.balance)}</strong></td></tr>`;
+              if (row.isGrandTotal) return `<tr style="background:#059669;color:#fff;font-weight:bold;"><td>${row.name}</td><td class="text-right">${formatAmount(row.debit)}</td><td class="text-right">${formatAmount(row.credit)}</td><td class="text-right">${formatAmount(row.balance)}</td></tr>`;
+              return `<tr><td style="padding-left:20px">${row.code || ''} ${row.name}</td><td class="text-right">${formatAmount(row.debit || 0)}</td><td class="text-right">${formatAmount(row.credit || 0)}</td><td class="text-right ${(row.balance || 0) >= 0 ? 'positive' : 'negative'}">${formatAmount(row.balance || 0)}</td></tr>`;
+            }).join('')}
           </tbody>
         </table>
+      `;
+    } else if (reportType === 'income-statement') {
+      const incomeCategories = ['Sales', 'Cost of Sales', 'Other Income', 'Expenses', 'Income Tax'];
+      const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
+      const filtered = filterByDateRange(bankStatements);
+      const accountBalances = {};
+      filtered.forEach(stmt => {
+        const cat = stmt.selection || 'Unallocated';
+        if (!accountBalances[cat]) accountBalances[cat] = { debit: 0, credit: 0 };
+        accountBalances[cat].debit += stmt.spent || 0;
+        accountBalances[cat].credit += stmt.received || 0;
+      });
+      let totalRevenue = 0, totalCOS = 0, totalOtherIncome = 0, totalExp = 0, totalTax = 0;
+      const categoryData = incomeCategories.map(cat => {
+        const catAccounts = accountsList.filter(a => a.category === cat && a.active);
+        const rows = catAccounts.map(acc => {
+          const bal = accountBalances[acc.name] || { debit: 0, credit: 0 };
+          const amount = (cat === 'Sales' || cat === 'Other Income') ? (bal.credit - bal.debit) : (bal.debit - bal.credit);
+          return { name: acc.name, amount };
+        }).filter(r => r.amount !== 0);
+        const total = rows.reduce((s, r) => s + r.amount, 0);
+        if (cat === 'Sales') totalRevenue = total;
+        if (cat === 'Cost of Sales') totalCOS = total;
+        if (cat === 'Other Income') totalOtherIncome = total;
+        if (cat === 'Expenses') totalExp = total;
+        if (cat === 'Income Tax') totalTax = total;
+        return { category: cat, rows, total };
+      });
+      const grossProfit = totalRevenue - totalCOS;
+      const operatingProfit = grossProfit + totalOtherIncome - totalExp;
+      const netProfit = operatingProfit - totalTax;
+
+      htmlContent += `
+        <h1>INCOME STATEMENT</h1>
+        <p class="period">For the period ${startDate} to ${endDate}</p>
+        <p class="period">Generated: ${new Date().toLocaleDateString()}</p>
+        <table>
+          <thead><tr><th style="width:70%">Description</th><th class="text-right" style="width:30%">Amount (R)</th></tr></thead>
+          <tbody>
+            ${categoryData.map(({ category, rows, total }) => `
+              <tr><td colspan="2" class="section-header" style="background:#dbeafe;color:#1e40af;">${category}</td></tr>
+              ${rows.map(r => `<tr><td style="padding-left:20px">${r.name}</td><td class="text-right ${r.amount < 0 ? 'negative' : ''}">${formatAmount(r.amount)}</td></tr>`).join('')}
+              ${rows.length === 0 ? '<tr><td colspan="2" style="padding-left:20px;color:#6b7280;">No transactions</td></tr>' : ''}
+              <tr class="total-row"><td><strong>Total ${category}</strong></td><td class="text-right"><strong>${formatAmount(total)}</strong></td></tr>
+              ${category === 'Cost of Sales' ? `<tr style="background:#dcfce7;"><td><strong>Gross Profit</strong></td><td class="text-right"><strong class="positive">${formatAmount(grossProfit)}</strong></td></tr>` : ''}
+            `).join('')}
+            <tr style="background:#dbeafe;"><td><strong>Operating Profit</strong></td><td class="text-right"><strong>${formatAmount(operatingProfit)}</strong></td></tr>
+            <tr style="background:#059669;color:#fff;font-size:13px;"><td><strong>Net Profit / (Loss)</strong></td><td class="text-right"><strong>${formatAmount(netProfit)}</strong></td></tr>
+          </tbody>
+        </table>
+      `;
+    } else if (reportType === 'balance-sheet') {
+      const bsCategories = ['Non-Current Assets', 'Current Assets', 'Equity', 'Non-Current Liabilities', 'Current Liabilities'];
+      const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
+      const filtered = filterByDateRange(bankStatements);
+      const accountBalances = {};
+      filtered.forEach(stmt => {
+        const cat = stmt.selection || 'Unallocated';
+        if (!accountBalances[cat]) accountBalances[cat] = { debit: 0, credit: 0 };
+        accountBalances[cat].debit += stmt.spent || 0;
+        accountBalances[cat].credit += stmt.received || 0;
+      });
+      const assetNatures = new Set(['Non-Current Assets', 'Current Assets']);
+      const categoryData = bsCategories.map(cat => {
+        const catAccounts = accountsList.filter(a => a.category === cat && a.active);
+        const rows = catAccounts.map(acc => {
+          const bal = accountBalances[acc.name] || { debit: 0, credit: 0 };
+          const opening = acc.openingBalance || 0;
+          const amount = assetNatures.has(cat) ? (bal.debit - bal.credit + opening) : (bal.credit - bal.debit + opening);
+          return { name: acc.name, amount };
+        }).filter(r => r.amount !== 0);
+        const total = rows.reduce((s, r) => s + r.amount, 0);
+        return { category: cat, rows, total };
+      });
+      const totalAssets = categoryData.filter(c => assetNatures.has(c.category)).reduce((s, c) => s + c.total, 0);
+      const totalEquityLiabilities = categoryData.filter(c => !assetNatures.has(c.category)).reduce((s, c) => s + c.total, 0);
+
+      htmlContent += `
+        <h1>STATEMENT OF FINANCIAL POSITION</h1>
+        <p class="period">As at ${endDate}</p>
+        <p class="period">Generated: ${new Date().toLocaleDateString()}</p>
+        <h2 style="border-bottom:2px solid #374151;">ASSETS</h2>
+        <table>
+          <thead><tr><th style="width:70%">Description</th><th class="text-right" style="width:30%">Amount (R)</th></tr></thead>
+          <tbody>
+            ${categoryData.filter(c => assetNatures.has(c.category)).map(({ category, rows, total }) => `
+              <tr><td colspan="2" class="section-header" style="background:#dbeafe;color:#1e40af;">${category}</td></tr>
+              ${rows.map(r => `<tr><td style="padding-left:20px">${r.name}</td><td class="text-right">${formatAmount(r.amount)}</td></tr>`).join('')}
+              ${rows.length === 0 ? '<tr><td colspan="2" style="padding-left:20px;color:#6b7280;">—</td></tr>' : ''}
+              <tr class="total-row"><td><strong>Total ${category}</strong></td><td class="text-right"><strong>${formatAmount(total)}</strong></td></tr>
+            `).join('')}
+            <tr style="background:#4f46e5;color:#fff;font-weight:bold;"><td>Total Assets</td><td class="text-right">${formatAmount(totalAssets)}</td></tr>
+          </tbody>
+        </table>
+        <h2 style="border-bottom:2px solid #374151;margin-top:20px;">EQUITY & LIABILITIES</h2>
+        <table>
+          <thead><tr><th style="width:70%">Description</th><th class="text-right" style="width:30%">Amount (R)</th></tr></thead>
+          <tbody>
+            ${categoryData.filter(c => !assetNatures.has(c.category)).map(({ category, rows, total }) => `
+              <tr><td colspan="2" class="section-header" style="background:#dbeafe;color:#1e40af;">${category}</td></tr>
+              ${rows.map(r => `<tr><td style="padding-left:20px">${r.name}</td><td class="text-right">${formatAmount(r.amount)}</td></tr>`).join('')}
+              ${rows.length === 0 ? '<tr><td colspan="2" style="padding-left:20px;color:#6b7280;">—</td></tr>' : ''}
+              <tr class="total-row"><td><strong>Total ${category}</strong></td><td class="text-right"><strong>${formatAmount(total)}</strong></td></tr>
+            `).join('')}
+            <tr style="background:#4f46e5;color:#fff;font-weight:bold;"><td>Total Equity & Liabilities</td><td class="text-right">${formatAmount(totalEquityLiabilities)}</td></tr>
+          </tbody>
+        </table>
+        ${Math.abs(totalAssets - totalEquityLiabilities) > 0.01 ? `<div style="margin-top:15px;padding:10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:4px;color:#92400e;">Balance sheet does not balance. Difference: ${formatAmount(totalAssets - totalEquityLiabilities)}</div>` : ''}
       `;
     } else {
       const vatData = generateVATReport();
@@ -6041,13 +6142,16 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
     }
     
     htmlContent += `</body></html>`;
-    
-    // Create downloadable HTML file that can be opened and printed as PDF
-    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const fileName = `${reportType === 'trial-balance' ? 'Trial_Balance' : 'VAT_Report'}_${startDate}_to_${endDate}.html`;
-    
-    setPdfDownloadLink({ url, name: fileName });
+
+    // Open in new window for browser print-to-PDF
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(htmlContent);
+      printWindow.document.close();
+      printWindow.onload = () => {
+        printWindow.print();
+      };
+    }
     setGenerating(false);
   };
 
@@ -6083,7 +6187,7 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
           </div>
           
           <div className="p-8 print:p-4" id="print-content">
-            {reportType === 'trial-balance' ? (
+            {reportType === 'trial-balance' && (
               <>
                 <h1 className="text-2xl font-bold text-emerald-700 mb-1">TRIAL BALANCE</h1>
                 <p className="text-slate-600 mb-6">Period: {startDate} to {endDate}</p>
@@ -6097,26 +6201,96 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {trialBalance.map((row, idx) => (
-                      <tr key={idx}>
-                        <td className="border px-4 py-2">{row.name}</td>
-                        <td className="border px-4 py-2 text-right">{formatAmount(row.debit)}</td>
-                        <td className="border px-4 py-2 text-right">{formatAmount(row.credit)}</td>
-                        <td className={`border px-4 py-2 text-right font-medium ${row.balance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                          {formatAmount(row.balance)}
-                        </td>
-                      </tr>
-                    ))}
-                    <tr className="bg-slate-100 font-bold">
-                      <td className="border px-4 py-2">Total</td>
-                      <td className="border px-4 py-2 text-right">{formatAmount(trialBalance.reduce((s, r) => s + r.debit, 0))}</td>
-                      <td className="border px-4 py-2 text-right">{formatAmount(trialBalance.reduce((s, r) => s + r.credit, 0))}</td>
-                      <td className="border px-4 py-2 text-right">{formatAmount(trialBalance.reduce((s, r) => s + r.balance, 0))}</td>
-                    </tr>
+                    {trialBalance.map((row, idx) => {
+                      if (row.isHeading) return <tr key={idx}><td colSpan={4} className="border px-4 py-2 bg-slate-200 font-bold text-slate-800">{row.name}</td></tr>;
+                      if (row.isSectionHeader) return <tr key={idx}><td colSpan={4} className="border px-4 py-2 bg-blue-50 font-semibold text-blue-800">{row.code} — {row.name}</td></tr>;
+                      if (row.isSectionTotal) return <tr key={idx} className="bg-slate-50 font-semibold"><td className="border px-4 py-2">{row.name}</td><td className="border px-4 py-2 text-right">{formatAmount(row.debit)}</td><td className="border px-4 py-2 text-right">{formatAmount(row.credit)}</td><td className="border px-4 py-2 text-right">{formatAmount(row.balance)}</td></tr>;
+                      if (row.isGrandTotal) return <tr key={idx} className="bg-emerald-600 text-white font-bold"><td className="border px-4 py-2">{row.name}</td><td className="border px-4 py-2 text-right">{formatAmount(row.debit)}</td><td className="border px-4 py-2 text-right">{formatAmount(row.credit)}</td><td className="border px-4 py-2 text-right">{formatAmount(row.balance)}</td></tr>;
+                      return (
+                        <tr key={idx}>
+                          <td className="border px-4 py-2 pl-8">{row.code} {row.name}</td>
+                          <td className="border px-4 py-2 text-right">{formatAmount(row.debit || 0)}</td>
+                          <td className="border px-4 py-2 text-right">{formatAmount(row.credit || 0)}</td>
+                          <td className={`border px-4 py-2 text-right font-medium ${(row.balance || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            {formatAmount(row.balance || 0)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </>
-            ) : (
+            )}
+            {reportType === 'income-statement' && (() => {
+              const incomeCategories = ['Sales', 'Cost of Sales', 'Other Income', 'Expenses', 'Income Tax'];
+              const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
+              const filtered = filterByDateRange(bankStatements);
+              const ab = {};
+              filtered.forEach(stmt => { const c = stmt.selection || 'Unallocated'; if (!ab[c]) ab[c] = { debit: 0, credit: 0 }; ab[c].debit += stmt.spent || 0; ab[c].credit += stmt.received || 0; });
+              let tRev = 0, tCOS = 0, tOI = 0, tEx = 0, tTax = 0;
+              const catData = incomeCategories.map(cat => {
+                const rows = accountsList.filter(a => a.category === cat && a.active).map(acc => { const bal = ab[acc.name] || { debit: 0, credit: 0 }; return { name: acc.name, amount: (cat === 'Sales' || cat === 'Other Income') ? (bal.credit - bal.debit) : (bal.debit - bal.credit) }; }).filter(r => r.amount !== 0);
+                const total = rows.reduce((s, r) => s + r.amount, 0);
+                if (cat === 'Sales') tRev = total; if (cat === 'Cost of Sales') tCOS = total; if (cat === 'Other Income') tOI = total; if (cat === 'Expenses') tEx = total; if (cat === 'Income Tax') tTax = total;
+                return { category: cat, rows, total };
+              });
+              const gp = tRev - tCOS, op = gp + tOI - tEx, np = op - tTax;
+              return (
+                <>
+                  <h1 className="text-2xl font-bold text-blue-700 mb-1">INCOME STATEMENT</h1>
+                  <p className="text-slate-600 mb-6">For the period {startDate} to {endDate}</p>
+                  {catData.map(({ category, rows, total }) => (
+                    <div key={category} className="mb-3">
+                      <div className="bg-blue-50 px-4 py-2 font-semibold text-blue-800 border border-blue-200">{category}</div>
+                      {rows.map((r, i) => <div key={i} className="flex justify-between px-6 py-1 text-sm border-x border-slate-200"><span>{r.name}</span><span className={r.amount < 0 ? 'text-red-600' : ''}>{formatAmount(r.amount)}</span></div>)}
+                      {rows.length === 0 && <div className="px-6 py-1 text-sm text-slate-400 border-x border-slate-200">No transactions</div>}
+                      <div className="flex justify-between px-4 py-2 font-semibold border border-slate-200 bg-slate-50"><span>Total {category}</span><span>{formatAmount(total)}</span></div>
+                      {category === 'Cost of Sales' && <div className="flex justify-between px-4 py-2 font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 mt-1"><span>Gross Profit</span><span>{formatAmount(gp)}</span></div>}
+                    </div>
+                  ))}
+                  <div className="flex justify-between px-4 py-2 font-bold text-blue-700 bg-blue-50 border border-blue-200 mt-2"><span>Operating Profit</span><span>{formatAmount(op)}</span></div>
+                  <div className="flex justify-between px-4 py-3 font-bold text-lg text-white bg-emerald-600 rounded mt-2"><span>Net Profit / (Loss)</span><span>{formatAmount(np)}</span></div>
+                </>
+              );
+            })()}
+            {reportType === 'balance-sheet' && (() => {
+              const bsCats = ['Non-Current Assets', 'Current Assets', 'Equity', 'Non-Current Liabilities', 'Current Liabilities'];
+              const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
+              const filtered = filterByDateRange(bankStatements);
+              const ab = {};
+              filtered.forEach(stmt => { const c = stmt.selection || 'Unallocated'; if (!ab[c]) ab[c] = { debit: 0, credit: 0 }; ab[c].debit += stmt.spent || 0; ab[c].credit += stmt.received || 0; });
+              const assetSet = new Set(['Non-Current Assets', 'Current Assets']);
+              const catData = bsCats.map(cat => {
+                const rows = accountsList.filter(a => a.category === cat && a.active).map(acc => { const bal = ab[acc.name] || { debit: 0, credit: 0 }; const op = acc.openingBalance || 0; return { name: acc.name, amount: assetSet.has(cat) ? (bal.debit - bal.credit + op) : (bal.credit - bal.debit + op) }; }).filter(r => r.amount !== 0);
+                return { category: cat, rows, total: rows.reduce((s, r) => s + r.amount, 0) };
+              });
+              const totA = catData.filter(c => assetSet.has(c.category)).reduce((s, c) => s + c.total, 0);
+              const totEL = catData.filter(c => !assetSet.has(c.category)).reduce((s, c) => s + c.total, 0);
+              const renderSection = (title, cats, totLabel, tot) => (
+                <>
+                  <div className="font-bold text-slate-800 uppercase border-b-2 border-slate-300 pb-2 mb-3 mt-4">{title}</div>
+                  {cats.map(({ category, rows, total }) => (
+                    <div key={category} className="mb-3">
+                      <div className="bg-blue-50 px-4 py-2 font-semibold text-blue-800 border border-blue-200">{category}</div>
+                      {rows.map((r, i) => <div key={i} className="flex justify-between px-6 py-1 text-sm border-x border-slate-200"><span>{r.name}</span><span>{formatAmount(r.amount)}</span></div>)}
+                      {rows.length === 0 && <div className="px-6 py-1 text-sm text-slate-400 border-x border-slate-200">—</div>}
+                      <div className="flex justify-between px-4 py-2 font-semibold border border-slate-200 bg-slate-50"><span>Total {category}</span><span>{formatAmount(total)}</span></div>
+                    </div>
+                  ))}
+                  <div className="flex justify-between px-4 py-2 font-bold text-white bg-indigo-600 rounded"><span>{totLabel}</span><span>{formatAmount(tot)}</span></div>
+                </>
+              );
+              return (
+                <>
+                  <h1 className="text-2xl font-bold text-indigo-700 mb-1">STATEMENT OF FINANCIAL POSITION</h1>
+                  <p className="text-slate-600 mb-4">As at {endDate}</p>
+                  {renderSection('ASSETS', catData.filter(c => assetSet.has(c.category)), 'Total Assets', totA)}
+                  {renderSection('EQUITY & LIABILITIES', catData.filter(c => !assetSet.has(c.category)), 'Total Equity & Liabilities', totEL)}
+                  {Math.abs(totA - totEL) > 0.01 && <div className="mt-4 p-3 bg-amber-50 border border-amber-300 rounded text-amber-800 text-sm">Balance sheet does not balance. Difference: R {formatAmount(totA - totEL)}</div>}
+                </>
+              );
+            })()}
+            {reportType === 'vat' && (
               <>
                 <h1 className="text-2xl font-bold text-emerald-700 mb-1">VAT REPORT</h1>
                 <p className="text-slate-600 mb-6">Period: {startDate} to {endDate}</p>
