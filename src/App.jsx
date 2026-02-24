@@ -447,10 +447,11 @@ const AccountingDashboard = () => {
           />
         )}
         {activeTab === 'reports' && (
-          <ReportsView 
+          <ReportsView
             bankStatements={bankStatements}
             invoices={invoices}
             company={activeCompany}
+            accounts={accounts}
           />
         )}
       </main>
@@ -5546,7 +5547,7 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
 };
 
 // ==================== REPORTS VIEW ====================
-const ReportsView = ({ bankStatements, invoices, company }) => {
+const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
   const [reportType, setReportType] = useState('trial-balance');
   const [startDate, setStartDate] = useState(`${new Date().getFullYear()}-01-01`);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
