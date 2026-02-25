@@ -3654,6 +3654,9 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
   const [pdfProcessing, setPdfProcessing] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [activeBankSubTab, setActiveBankSubTab] = useState('new');
+  const [expandedIds, setExpandedIds] = useState([]);
+  const [aiAllocating, setAiAllocating] = useState(false);
+  const [aiAllocatingIds, setAiAllocatingIds] = useState([]);
 
   // Build selection options from accounts
   const selectionOptions = [
@@ -4160,6 +4163,175 @@ Rules:
 
   const expenseCategories = ['Unallocated Expen', 'Travelling', 'Purchases', 'Office Supplies', 'Marketing', 'Utilities', 'Salaries', 'Rent', 'Insurance', 'Maintenance', 'Professional Fees', 'Bank Charges', 'Other'];
 
+  const toggleExpand = (id) => {
+    setExpandedIds(prev => prev.includes(id) ? prev.filter(eid => eid !== id) : [...prev, id]);
+  };
+
+  // SA VAT categorization rules for AI allocation
+  const SA_VAT_RULES = {
+    'Entertainment': 'Exempt and Non-Supplies (0.00%)',
+    'Staff Welfare': 'Exempt and Non-Supplies (0.00%)',
+    'Donations': 'Exempt and Non-Supplies (0.00%)',
+    'Insurance': 'Exempt and Non-Supplies (0.00%)',
+    'Bank Charges': 'Exempt and Non-Supplies (0.00%)',
+    'Interest Paid': 'Exempt and Non-Supplies (0.00%)',
+    'Interest Received': 'Exempt and Non-Supplies (0.00%)',
+    'Salaries & Wages': 'No VAT',
+    'Rent Paid': 'Standard Rate (15.00%)',
+    'Telephone & Internet': 'Standard Rate (15.00%)',
+    'Motor Vehicle Expenses': 'Standard Rate (15.00%)',
+    'Repairs & Maintenance': 'Standard Rate (15.00%)',
+    'Printing & Stationery': 'Standard Rate (15.00%)',
+    'Computer Expenses': 'Standard Rate (15.00%)',
+    'Advertising': 'Standard Rate (15.00%)',
+    'Electricity & Water': 'Standard Rate (15.00%)',
+    'Accounting Fees': 'Standard Rate (15.00%)',
+    'Security': 'Standard Rate (15.00%)',
+    'General Expenses': 'Standard Rate (15.00%)',
+    'Travel & Accommodation': 'Standard Rate (15.00%)',
+    'Purchases': 'Standard Rate (15.00%)',
+    'Sales': 'Standard Rate (15.00%)',
+    'Fixed Assets - Equipment': 'Standard Rate (Capital Goods) (15.00%)',
+    'Fixed Assets - Furniture & Fittings': 'Standard Rate (Capital Goods) (15.00%)',
+    'Fixed Assets - Motor Vehicles': 'Standard Rate (Capital Goods) (15.00%)',
+  };
+
+  // AI-powered transaction allocation
+  const aiAllocateTransactions = async (stmtIds) => {
+    const stmtsToAllocate = bankStatements.filter(s => stmtIds.includes(s.id));
+    if (stmtsToAllocate.length === 0) return;
+
+    setAiAllocating(true);
+    setAiAllocatingIds(stmtIds);
+
+    try {
+      const accountNames = selectionOptions.join(', ');
+      const vatRateNames = VAT_RATES.map(v => v.value).join(', ');
+      const txnDescriptions = stmtsToAllocate.map((s, i) => `${i + 1}. Date: ${s.date} | Description: "${s.description || 'N/A'}" | Payee: "${s.payee || 'N/A'}" | Spent: ${s.spent || 0} | Received: ${s.received || 0}`).join('\n');
+
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 4000,
+          messages: [{
+            role: "user",
+            content: `You are a South African accounting assistant. Allocate bank transactions to the correct account category and VAT rate.
+
+Available accounts: ${accountNames}
+
+Available VAT rates: ${vatRateNames}
+
+SA VAT Rules:
+- Entertainment, staff welfare, donations, insurance premiums, bank charges, interest = Exempt and Non-Supplies (0.00%)
+- Salaries, wages, PAYE, UIF = No VAT
+- Most business purchases (stationery, repairs, phone, rent, advertising, fuel, professional fees) = Standard Rate (15.00%)
+- Capital goods (equipment, vehicles, furniture) = Standard Rate (Capital Goods) (15.00%)
+- Exported goods/services = Zero Rate Exports (0.00%)
+- Basic food items, petrol levy portion = Zero Rate (0.00%)
+
+Transactions to allocate:
+${txnDescriptions}
+
+Return ONLY a JSON array (no markdown, no code blocks):
+[{"index":1,"account":"account name","vatRate":"vat rate value","payee":"suggested payee name"}]
+
+Use EXACT account and vatRate names from the lists above. Match the most appropriate account based on the description.`
+          }]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const text = data.content?.[0]?.text || '';
+      let jsonStr = text.trim().replace(/```json\s*/gi, '').replace(/```\s*/gi, '');
+      const jsonMatch = jsonStr.match(/\[[\s\S]*\]/);
+
+      if (jsonMatch) {
+        const allocations = JSON.parse(jsonMatch[0]);
+        const updatedStatements = bankStatements.map(s => {
+          const stmtIdx = stmtsToAllocate.findIndex(st => st.id === s.id);
+          if (stmtIdx === -1) return s;
+          const alloc = allocations.find(a => a.index === stmtIdx + 1);
+          if (!alloc) return s;
+
+          const matchedAccount = selectionOptions.find(opt => opt === alloc.account) || s.selection;
+          const matchedVat = VAT_RATES.find(v => v.value === alloc.vatRate)?.value || s.vatRate;
+
+          return {
+            ...s,
+            selection: matchedAccount,
+            vatRate: matchedVat,
+            payee: alloc.payee || s.payee,
+            aiAllocated: true
+          };
+        });
+
+        saveBankStatements(updatedStatements);
+        setSaveMessage(`AI allocated ${allocations.length} transaction(s) successfully!`);
+      } else {
+        setSaveMessage('AI could not parse allocation results. Please try again.');
+      }
+    } catch (error) {
+      console.error('AI allocation error:', error);
+      setSaveMessage(`AI allocation failed: ${error.message}. You can also use the local rules-based allocation.`);
+    }
+
+    setAiAllocating(false);
+    setAiAllocatingIds([]);
+    setTimeout(() => setSaveMessage(''), 5000);
+  };
+
+  // Local rules-based allocation (no API needed)
+  const localAllocateTransactions = (stmtIds) => {
+    const updatedStatements = bankStatements.map(s => {
+      if (!stmtIds.includes(s.id)) return s;
+      const desc = (s.description || '').toLowerCase();
+      const payee = (s.payee || '').toLowerCase();
+      const combined = `${desc} ${payee}`;
+
+      let account = s.selection;
+      let vatRate = s.vatRate;
+
+      // Rules-based matching
+      if (combined.match(/salary|wages|payroll|paye|uif|sdl/i)) { account = 'Salaries & Wages'; vatRate = 'No VAT'; }
+      else if (combined.match(/entertainment|dining|restaurant|bar|drinks|catering/i)) { account = 'Entertainment'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
+      else if (combined.match(/insurance|sanlam|old mutual|discovery.*life|hollard/i)) { account = 'Insurance'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
+      else if (combined.match(/bank.*charge|service.*fee|monthly.*fee|transaction.*fee|overdraft/i)) { account = 'Bank Charges'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
+      else if (combined.match(/interest.*paid|loan.*interest|finance.*charge/i)) { account = 'Interest Paid'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
+      else if (combined.match(/interest.*received/i)) { account = 'Interest Received'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
+      else if (combined.match(/donation|charity|ngo|npo/i)) { account = 'General Expenses'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
+      else if (combined.match(/rent|lease.*premises|office.*space/i)) { account = 'Rent Paid'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/telkom|vodacom|mtn|cell\s*c|fibre|internet|wifi|airtime/i)) { account = 'Telephone & Internet'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/fuel|petrol|diesel|shell|sasol|engen|caltex|bp\s/i)) { account = 'Motor Vehicle Expenses'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/repair|maintenance|plumber|electrician|fix/i)) { account = 'Repairs & Maintenance'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/stationery|paper|ink|toner|cartridge|office.*suppl/i)) { account = 'Printing & Stationery'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/computer|software|laptop|microsoft|google|cloud|hosting/i)) { account = 'Computer Expenses'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/advert|marketing|facebook|google.*ads|promo/i)) { account = 'Advertising'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/electric|water|municipal|eskom|city.*power/i)) { account = 'Electricity & Water'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/accounting|audit|tax.*consult|bookkeep/i)) { account = 'Accounting Fees'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/security|guard|alarm|adt|chubb/i)) { account = 'Security'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/travel|flight|hotel|accommodation|uber|taxi/i)) { account = 'Travel & Accommodation'; vatRate = 'Standard Rate (15.00%)'; }
+      else if (combined.match(/depreciation/i)) { account = 'Depreciation'; vatRate = 'No VAT'; }
+      else if (s.received > 0) { account = 'Sales'; vatRate = 'Standard Rate (15.00%)'; }
+
+      // Only update if account exists in our options
+      const validAccount = selectionOptions.includes(account) ? account : s.selection;
+      const validVat = VAT_RATES.find(v => v.value === vatRate) ? vatRate : s.vatRate;
+
+      return { ...s, selection: validAccount, vatRate: validVat, aiAllocated: true };
+    });
+
+    saveBankStatements(updatedStatements);
+    const count = stmtIds.length;
+    setSaveMessage(`${count} transaction(s) allocated using rules-based matching!`);
+    setTimeout(() => setSaveMessage(''), 5000);
+  };
+
   // Get pending/unpaid invoices for linking
   const availableInvoices = invoices.filter(inv => inv.status !== 'Paid' || !bankStatements.some(s => s.linkedInvoice === inv.id));
 
@@ -4388,7 +4560,8 @@ Rules:
             </thead>
             <tbody>
               {displayedTransactions.length > 0 ? displayedTransactions.map(stmt => (
-                <tr key={stmt.id} className={`border-t hover:bg-slate-50 ${stmt.reconciled ? 'bg-green-50' : ''} ${selectedIds.includes(stmt.id) ? 'bg-blue-50' : ''}`}>
+                <React.Fragment key={stmt.id}>
+                <tr className={`border-t hover:bg-slate-50 ${stmt.reconciled ? 'bg-green-50' : ''} ${selectedIds.includes(stmt.id) ? 'bg-blue-50' : ''} ${stmt.aiAllocated ? 'ring-1 ring-inset ring-emerald-200' : ''}`}>
                   <td className="px-2 py-2 text-center">
                     <input
                       type="checkbox"
@@ -4406,13 +4579,22 @@ Rules:
                     />
                   </td>
                   <td className="px-3 py-2">
-                    <input
-                      type="text"
-                      value={stmt.description || ''}
-                      onChange={(e) => updateStatement(stmt.id, 'description', e.target.value)}
-                      className="border rounded px-2 py-1 text-sm w-full"
-                      placeholder="Description"
-                    />
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => toggleExpand(stmt.id)}
+                        className="p-0.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded flex-shrink-0"
+                        title="Show details"
+                      >
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expandedIds.includes(stmt.id) ? 'rotate-180' : ''}`} />
+                      </button>
+                      <input
+                        type="text"
+                        value={stmt.description || ''}
+                        onChange={(e) => updateStatement(stmt.id, 'description', e.target.value)}
+                        className="border rounded px-2 py-1 text-sm w-full"
+                        placeholder="Description"
+                      />
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     <select
@@ -4536,12 +4718,72 @@ Rules:
                           Recall
                         </button>
                       )}
+                      <button
+                        onClick={() => aiAllocateTransactions([stmt.id])}
+                        disabled={aiAllocatingIds.includes(stmt.id)}
+                        className="p-1 text-purple-500 hover:bg-purple-50 rounded disabled:opacity-50"
+                        title="AI Allocate this transaction"
+                      >
+                        {aiAllocatingIds.includes(stmt.id) ? (
+                          <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Calculator className="w-4 h-4" />
+                        )}
+                      </button>
                       <button onClick={() => deleteStatement(stmt.id)} className="p-1 text-red-500 hover:bg-red-50 rounded">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </td>
                 </tr>
+                {/* Expanded transaction detail row */}
+                {expandedIds.includes(stmt.id) && (
+                  <tr className="bg-slate-50 border-t border-dashed">
+                    <td colSpan={11} className="px-4 py-3">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                        <div>
+                          <span className="font-medium text-slate-500 block">Full Description</span>
+                          <span className="text-slate-800">{stmt.description || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-500 block">Payee</span>
+                          <span className="text-slate-800">{stmt.payee || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-500 block">Reference</span>
+                          <span className="text-slate-800">{stmt.reference || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-500 block">Category</span>
+                          <span className="text-slate-800">{stmt.selection || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-500 block">VAT Rate</span>
+                          <span className="text-slate-800">{stmt.vatRate || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-500 block">Spent</span>
+                          <span className="text-red-600 font-medium">{stmt.spent ? `R ${stmt.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-500 block">Received</span>
+                          <span className="text-emerald-600 font-medium">{stmt.received ? `R ${stmt.received.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-500 block">Status</span>
+                          <div className="flex gap-1 mt-0.5">
+                            {stmt.reconciled && <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px]">Reconciled</span>}
+                            {stmt.reviewed && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px]">Reviewed</span>}
+                            {stmt.linkedInvoice && <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px]">Linked: {stmt.linkedInvoiceNo}</span>}
+                            {stmt.aiAllocated && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">AI Allocated</span>}
+                            {!stmt.reconciled && !stmt.reviewed && !stmt.linkedInvoice && <span className="text-slate-400">Unprocessed</span>}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
               )) : (
                 <tr>
                   <td colSpan={11} className="text-center py-8 text-slate-500">
@@ -4566,8 +4808,8 @@ Rules:
             </div>
           )}
           
-          <div className="flex justify-center gap-3">
-            <button 
+          <div className="flex justify-center gap-3 flex-wrap">
+            <button
               onClick={handleSaveChanges}
               className="px-6 py-2 bg-blue-600 text-white rounded font-medium text-sm hover:bg-blue-700"
             >
@@ -4575,13 +4817,13 @@ Rules:
             </button>
             {activeBankSubTab !== 'reviewed' && (
               <>
-                <button 
+                <button
                   onClick={handleMarkSelectedAsReviewed}
                   className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
                 >
                   Mark Selected as Reviewed
                 </button>
-                <button 
+                <button
                   onClick={handleMarkAllAsReviewed}
                   className="px-6 py-2 bg-white text-blue-600 border border-blue-600 rounded font-medium text-sm hover:bg-blue-50"
                 >
@@ -4589,6 +4831,30 @@ Rules:
                 </button>
               </>
             )}
+            {/* AI Allocation Buttons */}
+            <button
+              onClick={() => {
+                const ids = selectedIds.length > 0 ? selectedIds : displayedTransactions.map(s => s.id);
+                aiAllocateTransactions(ids);
+              }}
+              disabled={aiAllocating}
+              className="px-6 py-2 bg-purple-600 text-white rounded font-medium text-sm hover:bg-purple-700 disabled:bg-purple-400 flex items-center gap-2"
+            >
+              {aiAllocating ? (
+                <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> AI Allocating...</>
+              ) : (
+                <><Calculator className="w-4 h-4" /> AI Allocate {selectedIds.length > 0 ? `Selected (${selectedIds.length})` : 'All'}</>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                const ids = selectedIds.length > 0 ? selectedIds : displayedTransactions.map(s => s.id);
+                localAllocateTransactions(ids);
+              }}
+              className="px-6 py-2 bg-white text-purple-600 border border-purple-600 rounded font-medium text-sm hover:bg-purple-50 flex items-center gap-2"
+            >
+              <Filter className="w-4 h-4" /> Rules Allocate {selectedIds.length > 0 ? `Selected (${selectedIds.length})` : 'All'}
+            </button>
           </div>
         </div>
       </div>
@@ -5575,6 +5841,75 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
     });
   };
 
+  // VAT category classifier for proper SA categorization
+  const getVATCategory = (rate) => {
+    if (!rate || rate === 'No VAT') return 'none';
+    if (rate.includes('Exempt')) return 'exempt';
+    if (rate.includes('15.00%') || rate.includes('15%') || rate === 'Standard 15%') return 'standard';
+    if (rate.includes('Zero Rate') || rate.includes('Zero Rated') || rate === 'Zero Rated') return 'zero';
+    if (rate.includes('100.00%') || rate.includes('Imported') || rate.includes('Adjustment')) return 'capital';
+    return 'none';
+  };
+
+  // Helper: build account balances from both bank statements AND invoices
+  const getAccountBalancesWithInvoices = () => {
+    const companyStatements = company?.id ? bankStatements.filter(s => s.companyId === company.id) : bankStatements;
+    const companyInvoices = company?.id ? invoices.filter(inv => inv.companyId === company.id) : invoices;
+    const filteredStmts = filterByDateRange(companyStatements);
+    const filteredInvs = filterByDateRange(companyInvoices);
+    const accountBalances = {};
+
+    // Bank statements -> account balances (existing logic)
+    filteredStmts.forEach(stmt => {
+      const cat = stmt.selection || 'Unallocated';
+      if (!accountBalances[cat]) accountBalances[cat] = { debit: 0, credit: 0 };
+      accountBalances[cat].debit += stmt.spent || 0;
+      accountBalances[cat].credit += stmt.received || 0;
+    });
+
+    // Customer invoices -> Sales revenue (credit side)
+    const customerInvs = filteredInvs.filter(inv => inv.invoiceType !== 'supplier');
+    customerInvs.forEach(inv => {
+      const salesKey = 'Sales';
+      if (!accountBalances[salesKey]) accountBalances[salesKey] = { debit: 0, credit: 0 };
+      const invoiceTotal = inv.amount || (inv.items || []).reduce((sum, item) => {
+        const excl = (item.qty || 0) * (item.price || 0);
+        const vat = excl * getVATRate(item.vatType);
+        return sum + excl + vat;
+      }, 0);
+      accountBalances[salesKey].credit += invoiceTotal;
+
+      // Add to Trade Receivables (debit) if not paid
+      if (inv.status !== 'Paid') {
+        const trKey = 'Trade Receivables';
+        if (!accountBalances[trKey]) accountBalances[trKey] = { debit: 0, credit: 0 };
+        accountBalances[trKey].debit += invoiceTotal;
+      }
+    });
+
+    // Supplier invoices -> Purchases / Cost of Sales (debit side)
+    const supplierInvs = filteredInvs.filter(inv => inv.invoiceType === 'supplier');
+    supplierInvs.forEach(inv => {
+      const purchKey = inv.account || 'Purchases';
+      if (!accountBalances[purchKey]) accountBalances[purchKey] = { debit: 0, credit: 0 };
+      const invoiceTotal = inv.amount || (inv.items || []).reduce((sum, item) => {
+        const excl = (item.qty || 0) * (item.price || 0);
+        const vat = excl * getVATRate(item.vatType);
+        return sum + excl + vat;
+      }, 0);
+      accountBalances[purchKey].debit += invoiceTotal;
+
+      // Add to Trade Payables (credit) if not paid
+      if (inv.status !== 'Paid') {
+        const tpKey = 'Trade Payables';
+        if (!accountBalances[tpKey]) accountBalances[tpKey] = { debit: 0, credit: 0 };
+        accountBalances[tpKey].credit += invoiceTotal;
+      }
+    });
+
+    return accountBalances;
+  };
+
   // Sage One account category classification
   const SAGE_CATEGORY_ORDER = [
     { group: 'Balance Sheet', type: 'heading' },
@@ -5592,17 +5927,8 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
   ];
 
   const generateTrialBalance = () => {
-    const companyStatements = company?.id ? bankStatements.filter(s => s.companyId === company.id) : bankStatements;
-    const filtered = filterByDateRange(companyStatements);
-    const accountBalances = {};
-
-    // Build balances from bank statements mapped to account selections
-    filtered.forEach(stmt => {
-      const cat = stmt.selection || 'Unallocated';
-      if (!accountBalances[cat]) accountBalances[cat] = { debit: 0, credit: 0 };
-      accountBalances[cat].debit += stmt.spent || 0;
-      accountBalances[cat].credit += stmt.received || 0;
-    });
+    // Use combined bank statements + invoice data
+    const accountBalances = getAccountBalancesWithInvoices();
 
     // Map accounts to Sage One categories with account codes
     const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
@@ -5695,21 +6021,23 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
     const vatData = {
       standardOutput: { vat: 0, transactions: [] },
       zeroOutput: { vat: 0, transactions: [] },
+      exemptOutput: { vat: 0, transactions: [] },
+      capitalOutput: { vat: 0, transactions: [] },
       standardInput: { vat: 0, transactions: [] },
-      zeroInput: { vat: 0, transactions: [] }
+      zeroInput: { vat: 0, transactions: [] },
+      exemptInput: { vat: 0, transactions: [] },
+      capitalInput: { vat: 0, transactions: [] }
     };
 
-    // Helper to check if standard rate
-    const isStdRate = (rate) => rate && (rate.includes('15.00%') || rate === 'Standard 15%' || rate.includes('15%'));
-
-    // Process invoices (Output VAT)
-    filteredInvoices.forEach(inv => {
+    // Process CUSTOMER invoices only as Output VAT (revenue)
+    const customerInvoices = filteredInvoices.filter(inv => inv.invoiceType !== 'supplier');
+    customerInvoices.forEach(inv => {
       if (inv.items) {
         inv.items.forEach(item => {
           const exclusive = (item.qty || 0) * (item.price || 0);
           const vatRate = getVATRate(item.vatType);
           const vat = exclusive * vatRate;
-          
+
           const txn = {
             date: inv.date,
             reference: inv.documentNo,
@@ -5720,39 +6048,118 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
             inclusive: exclusive + vat
           };
 
-          if (isStdRate(item.vatType)) {
+          const category = getVATCategory(item.vatType);
+          if (category === 'standard') {
             vatData.standardOutput.vat += vat;
             vatData.standardOutput.transactions.push(txn);
-          } else {
+          } else if (category === 'exempt') {
+            vatData.exemptOutput.transactions.push({ ...txn, vat: 0 });
+          } else if (category === 'capital') {
+            vatData.capitalOutput.vat += vat;
+            vatData.capitalOutput.transactions.push(txn);
+          } else if (category === 'zero') {
             vatData.zeroOutput.transactions.push({ ...txn, vat: 0 });
+          }
+          // 'none' (No VAT) transactions are excluded from VAT report
+        });
+      }
+    });
+
+    // Process SUPPLIER invoices as Input VAT
+    const supplierInvoices = filteredInvoices.filter(inv => inv.invoiceType === 'supplier');
+    supplierInvoices.forEach(inv => {
+      if (inv.items) {
+        inv.items.forEach(item => {
+          const exclusive = (item.qty || 0) * (item.price || 0);
+          const vatRate = getVATRate(item.vatType);
+          const vat = exclusive * vatRate;
+
+          const txn = {
+            date: inv.date,
+            reference: inv.documentNo,
+            account: inv.supplier || 'Supplier',
+            description: item.description,
+            exclusive,
+            vat,
+            inclusive: exclusive + vat
+          };
+
+          const category = getVATCategory(item.vatType);
+          if (category === 'standard') {
+            vatData.standardInput.vat += vat;
+            vatData.standardInput.transactions.push(txn);
+          } else if (category === 'exempt') {
+            vatData.exemptInput.transactions.push({ ...txn, vat: 0 });
+          } else if (category === 'capital') {
+            vatData.capitalInput.vat += vat;
+            vatData.capitalInput.transactions.push(txn);
+          } else if (category === 'zero') {
+            vatData.zeroInput.transactions.push({ ...txn, vat: 0 });
           }
         });
       }
     });
 
-    // Process bank statements (Input VAT)
+    // Process bank statements (Input VAT) - spending
     filteredStatements.forEach(stmt => {
       if (stmt.spent > 0) {
-        const isStandard = isStdRate(stmt.vatRate);
         const rate = getVATRate(stmt.vatRate);
         const exclusive = rate > 0 ? stmt.spent / (1 + rate) : stmt.spent;
         const vat = rate > 0 ? stmt.spent - exclusive : 0;
-        
+
         const txn = {
           date: stmt.date,
           reference: stmt.reference,
-          account: stmt.payee || stmt.type,
+          account: stmt.payee || stmt.selection || stmt.type,
           description: stmt.description,
           exclusive,
           vat,
           inclusive: stmt.spent
         };
 
-        if (isStandard) {
+        const category = getVATCategory(stmt.vatRate);
+        if (category === 'standard') {
           vatData.standardInput.vat += vat;
           vatData.standardInput.transactions.push(txn);
-        } else {
+        } else if (category === 'exempt') {
+          vatData.exemptInput.transactions.push({ ...txn, vat: 0 });
+        } else if (category === 'capital') {
+          vatData.capitalInput.vat += vat;
+          vatData.capitalInput.transactions.push(txn);
+        } else if (category === 'zero') {
           vatData.zeroInput.transactions.push({ ...txn, vat: 0 });
+        }
+      }
+    });
+
+    // Process bank statements - received amounts as Output VAT (if not already covered by invoices)
+    filteredStatements.forEach(stmt => {
+      if (stmt.received > 0 && !stmt.linkedInvoice) {
+        const rate = getVATRate(stmt.vatRate);
+        const exclusive = rate > 0 ? stmt.received / (1 + rate) : stmt.received;
+        const vat = rate > 0 ? stmt.received - exclusive : 0;
+
+        const txn = {
+          date: stmt.date,
+          reference: stmt.reference,
+          account: stmt.payee || stmt.selection || stmt.type,
+          description: stmt.description,
+          exclusive,
+          vat,
+          inclusive: stmt.received
+        };
+
+        const category = getVATCategory(stmt.vatRate);
+        if (category === 'standard') {
+          vatData.standardOutput.vat += vat;
+          vatData.standardOutput.transactions.push(txn);
+        } else if (category === 'exempt') {
+          vatData.exemptOutput.transactions.push({ ...txn, vat: 0 });
+        } else if (category === 'capital') {
+          vatData.capitalOutput.vat += vat;
+          vatData.capitalOutput.transactions.push(txn);
+        } else if (category === 'zero') {
+          vatData.zeroOutput.transactions.push({ ...txn, vat: 0 });
         }
       }
     });
@@ -5783,49 +6190,53 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
       const vatData = generateVATReport();
       csv = 'VAT Report\n';
       csv += `Period: ${startDate} to ${endDate}\n\n`;
-      
+
       // VAT Summary
-      const standardOutputVAT = vatData.standardOutput.vat;
-      const standardOutputInclusive = vatData.standardOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
-      const zeroOutputInclusive = vatData.zeroOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
-      const standardInputVAT = vatData.standardInput.vat;
-      const standardInputInclusive = vatData.standardInput.transactions.reduce((s, t) => s + t.inclusive, 0);
-      const zeroInputInclusive = vatData.zeroInput.transactions.reduce((s, t) => s + t.inclusive, 0);
-      
+      const stdOutVAT = vatData.standardOutput.vat;
+      const stdOutIncl = vatData.standardOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const zeroOutIncl = vatData.zeroOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const exemptOutIncl = vatData.exemptOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const capOutVAT = vatData.capitalOutput.vat;
+      const capOutIncl = vatData.capitalOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const stdInVAT = vatData.standardInput.vat;
+      const stdInIncl = vatData.standardInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const zeroInIncl = vatData.zeroInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const exemptInIncl = vatData.exemptInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const capInVAT = vatData.capitalInput.vat;
+      const capInIncl = vatData.capitalInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const totalOutVAT = stdOutVAT + capOutVAT;
+      const totalInVAT = stdInVAT + capInVAT;
+      const totalOutIncl = stdOutIncl + zeroOutIncl + exemptOutIncl + capOutIncl;
+      const totalInIncl = stdInIncl + zeroInIncl + exemptInIncl + capInIncl;
+
       csv += 'VAT SUMMARY\n';
       csv += ',Output VAT (VAT),Output VAT (Inclusive),Input VAT (VAT),Input VAT (Inclusive),Net VAT,Net Inclusive\n';
-      csv += `Standard Rate,${formatAmount(standardOutputVAT)},${formatAmount(standardOutputInclusive)},${formatAmount(standardInputVAT)},${formatAmount(standardInputInclusive)},${formatAmount(standardOutputVAT - standardInputVAT)},${formatAmount(standardOutputInclusive - standardInputInclusive)}\n`;
-      csv += `Zero Rate,0.00,${formatAmount(zeroOutputInclusive)},0.00,${formatAmount(zeroInputInclusive)},0.00,${formatAmount(zeroOutputInclusive - zeroInputInclusive)}\n`;
-      csv += `Grand Total,${formatAmount(standardOutputVAT)},${formatAmount(standardOutputInclusive + zeroOutputInclusive)},${formatAmount(standardInputVAT)},${formatAmount(standardInputInclusive + zeroInputInclusive)},${formatAmount(standardOutputVAT - standardInputVAT)},${formatAmount((standardOutputInclusive + zeroOutputInclusive) - (standardInputInclusive + zeroInputInclusive))}\n`;
-      csv += `\nAmount Payable,${formatAmount(standardOutputVAT - standardInputVAT)}\n\n`;
-      
-      // Standard Output VAT
-      csv += 'STANDARD RATE - OUTPUT VAT\n';
-      csv += 'Date,Reference,Account,Description,Exclusive,VAT,Inclusive\n';
-      vatData.standardOutput.transactions.forEach(t => {
-        csv += `${t.date},"${t.reference || ''}","${t.account || ''}","${t.description || ''}",${formatAmount(t.exclusive)},${formatAmount(t.vat)},${formatAmount(t.inclusive)}\n`;
-      });
-      
-      // Zero Output VAT
-      csv += '\nZERO RATE - OUTPUT VAT\n';
-      csv += 'Date,Reference,Account,Description,Exclusive,VAT,Inclusive\n';
-      vatData.zeroOutput.transactions.forEach(t => {
-        csv += `${t.date},"${t.reference || ''}","${t.account || ''}","${t.description || ''}",${formatAmount(t.exclusive)},${formatAmount(t.vat)},${formatAmount(t.inclusive)}\n`;
-      });
-      
-      // Standard Input VAT
-      csv += '\nSTANDARD RATE - INPUT VAT\n';
-      csv += 'Date,Reference,Account,Description,Exclusive,VAT,Inclusive\n';
-      vatData.standardInput.transactions.forEach(t => {
-        csv += `${t.date},"${t.reference || ''}","${t.account || ''}","${t.description || ''}",${formatAmount(t.exclusive)},${formatAmount(t.vat)},${formatAmount(t.inclusive)}\n`;
-      });
-      
-      // Zero Input VAT
-      csv += '\nZERO RATE - INPUT VAT\n';
-      csv += 'Date,Reference,Account,Description,Exclusive,VAT,Inclusive\n';
-      vatData.zeroInput.transactions.forEach(t => {
-        csv += `${t.date},"${t.reference || ''}","${t.account || ''}","${t.description || ''}",${formatAmount(t.exclusive)},${formatAmount(t.vat)},${formatAmount(t.inclusive)}\n`;
-      });
+      csv += `Standard Rate (15%),${formatAmount(stdOutVAT)},${formatAmount(stdOutIncl)},${formatAmount(stdInVAT)},${formatAmount(stdInIncl)},${formatAmount(stdOutVAT - stdInVAT)},${formatAmount(stdOutIncl - stdInIncl)}\n`;
+      csv += `Zero Rate,0.00,${formatAmount(zeroOutIncl)},0.00,${formatAmount(zeroInIncl)},0.00,${formatAmount(zeroOutIncl - zeroInIncl)}\n`;
+      csv += `Exempt & Non-Supplies,0.00,${formatAmount(exemptOutIncl)},0.00,${formatAmount(exemptInIncl)},0.00,${formatAmount(exemptOutIncl - exemptInIncl)}\n`;
+      if (capOutIncl > 0 || capInIncl > 0) csv += `Capital & Imports,${formatAmount(capOutVAT)},${formatAmount(capOutIncl)},${formatAmount(capInVAT)},${formatAmount(capInIncl)},${formatAmount(capOutVAT - capInVAT)},${formatAmount(capOutIncl - capInIncl)}\n`;
+      csv += `Grand Total,${formatAmount(totalOutVAT)},${formatAmount(totalOutIncl)},${formatAmount(totalInVAT)},${formatAmount(totalInIncl)},${formatAmount(totalOutVAT - totalInVAT)},${formatAmount(totalOutIncl - totalInIncl)}\n`;
+      csv += `\nAmount Payable,${formatAmount(totalOutVAT - totalInVAT)}\n\n`;
+
+      const csvSection = (title, txns) => {
+        csv += `${title}\n`;
+        csv += 'Date,Reference,Account,Description,Exclusive,VAT,Inclusive\n';
+        txns.forEach(t => { csv += `${t.date},"${t.reference || ''}","${t.account || ''}","${t.description || ''}",${formatAmount(t.exclusive)},${formatAmount(t.vat)},${formatAmount(t.inclusive)}\n`; });
+      };
+
+      csvSection('STANDARD RATE (15%) - OUTPUT VAT', vatData.standardOutput.transactions);
+      csv += '\n';
+      csvSection('ZERO RATE - OUTPUT VAT', vatData.zeroOutput.transactions);
+      csv += '\n';
+      csvSection('EXEMPT & NON-SUPPLIES - OUTPUT', vatData.exemptOutput.transactions);
+      if (vatData.capitalOutput.transactions.length > 0) { csv += '\n'; csvSection('CAPITAL & IMPORTS - OUTPUT', vatData.capitalOutput.transactions); }
+      csv += '\n';
+      csvSection('STANDARD RATE (15%) - INPUT VAT', vatData.standardInput.transactions);
+      csv += '\n';
+      csvSection('ZERO RATE - INPUT VAT', vatData.zeroInput.transactions);
+      csv += '\n';
+      csvSection('EXEMPT & NON-SUPPLIES - INPUT', vatData.exemptInput.transactions);
+      if (vatData.capitalInput.transactions.length > 0) { csv += '\n'; csvSection('CAPITAL & IMPORTS - INPUT', vatData.capitalInput.transactions); }
     }
     
     const reportNames = { 'trial-balance': 'Trial_Balance', 'income-statement': 'Income_Statement', 'balance-sheet': 'Balance_Sheet', 'vat': 'VAT_Report' };
@@ -5929,14 +6340,7 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
     } else if (reportType === 'income-statement') {
       const incomeCategories = ['Sales', 'Cost of Sales', 'Other Income', 'Expenses', 'Income Tax'];
       const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
-      const filtered = filterByDateRange(bankStatements);
-      const accountBalances = {};
-      filtered.forEach(stmt => {
-        const cat = stmt.selection || 'Unallocated';
-        if (!accountBalances[cat]) accountBalances[cat] = { debit: 0, credit: 0 };
-        accountBalances[cat].debit += stmt.spent || 0;
-        accountBalances[cat].credit += stmt.received || 0;
-      });
+      const accountBalances = getAccountBalancesWithInvoices();
       let totalRevenue = 0, totalCOS = 0, totalOtherIncome = 0, totalExp = 0, totalTax = 0;
       const categoryData = incomeCategories.map(cat => {
         const catAccounts = accountsList.filter(a => a.category === cat && a.active);
@@ -5979,14 +6383,7 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
     } else if (reportType === 'balance-sheet') {
       const bsCategories = ['Non-Current Assets', 'Current Assets', 'Equity', 'Non-Current Liabilities', 'Current Liabilities'];
       const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
-      const filtered = filterByDateRange(bankStatements);
-      const accountBalances = {};
-      filtered.forEach(stmt => {
-        const cat = stmt.selection || 'Unallocated';
-        if (!accountBalances[cat]) accountBalances[cat] = { debit: 0, credit: 0 };
-        accountBalances[cat].debit += stmt.spent || 0;
-        accountBalances[cat].credit += stmt.received || 0;
-      });
+      const accountBalances = getAccountBalancesWithInvoices();
       const assetNatures = new Set(['Non-Current Assets', 'Current Assets']);
       const categoryData = bsCategories.map(cat => {
         const catAccounts = accountsList.filter(a => a.category === cat && a.active);
@@ -6036,123 +6433,65 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
       `;
     } else {
       const vatData = generateVATReport();
-      const standardOutputVAT = vatData.standardOutput.vat;
-      const standardOutputInclusive = vatData.standardOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
-      const zeroOutputInclusive = vatData.zeroOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
-      const standardInputVAT = vatData.standardInput.vat;
-      const standardInputInclusive = vatData.standardInput.transactions.reduce((s, t) => s + t.inclusive, 0);
-      const zeroInputInclusive = vatData.zeroInput.transactions.reduce((s, t) => s + t.inclusive, 0);
-      const netVATCalc = standardOutputVAT - standardInputVAT;
-      
+      const stdOutVAT = vatData.standardOutput.vat;
+      const stdOutIncl = vatData.standardOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const zeroOutIncl = vatData.zeroOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const exemptOutIncl = vatData.exemptOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const capOutVAT = vatData.capitalOutput.vat;
+      const capOutIncl = vatData.capitalOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const stdInVAT = vatData.standardInput.vat;
+      const stdInIncl = vatData.standardInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const zeroInIncl = vatData.zeroInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const exemptInIncl = vatData.exemptInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const capInVAT = vatData.capitalInput.vat;
+      const capInIncl = vatData.capitalInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+      const totalOutVAT = stdOutVAT + capOutVAT;
+      const totalInVAT = stdInVAT + capInVAT;
+      const totalOutIncl = stdOutIncl + zeroOutIncl + exemptOutIncl + capOutIncl;
+      const totalInIncl = stdInIncl + zeroInIncl + exemptInIncl + capInIncl;
+      const netVATCalc = totalOutVAT - totalInVAT;
+
+      const pdfTxnTable = (txns, vat) => `
+        <table><thead><tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr></thead>
+        <tbody>${txns.length > 0 ? txns.map(t => `<tr><td>${t.date}</td><td>${t.reference}</td><td>${t.account}</td><td>${t.description}</td><td class="text-right">${formatAmount(t.exclusive)}</td><td class="text-right">${formatAmount(t.vat)}</td><td class="text-right">${formatAmount(t.inclusive)}</td></tr>`).join('') : '<tr><td colspan="7" style="text-align:center;color:#6b7280;padding:15px;">No transactions</td></tr>'}
+        ${txns.length > 0 ? `<tr class="total-row"><td colspan="4"><strong>Subtotal</strong></td><td class="text-right"><strong>${formatAmount(txns.reduce((s,t) => s + t.exclusive, 0))}</strong></td><td class="text-right"><strong>${formatAmount(vat)}</strong></td><td class="text-right"><strong>${formatAmount(txns.reduce((s,t) => s + t.inclusive, 0))}</strong></td></tr>` : ''}</tbody></table>`;
+
       htmlContent += `
         <h1>VAT REPORT</h1>
         <p class="period">Period: ${startDate} to ${endDate}</p>
         <p class="period">Generated: ${new Date().toLocaleDateString()}</p>
-        
+
         <h2>VAT SUMMARY</h2>
         <table>
           <thead>
-            <tr>
-              <th></th>
-              <th colspan="2" style="text-align: center; background: #dbeafe; color: #1e40af;">Output VAT</th>
-              <th colspan="2" style="text-align: center; background: #dcfce7; color: #166534;">Input VAT</th>
-              <th colspan="2" style="text-align: center; background: #f3f4f6;">Net VAT</th>
-            </tr>
-            <tr>
-              <th></th>
-              <th class="text-right">VAT</th>
-              <th class="text-right">Inclusive</th>
-              <th class="text-right">VAT</th>
-              <th class="text-right">Inclusive</th>
-              <th class="text-right">VAT</th>
-              <th class="text-right">Inclusive</th>
-            </tr>
+            <tr><th></th><th colspan="2" style="text-align:center;background:#dbeafe;color:#1e40af;">Output VAT</th><th colspan="2" style="text-align:center;background:#dcfce7;color:#166534;">Input VAT</th><th colspan="2" style="text-align:center;background:#f3f4f6;">Net VAT</th></tr>
+            <tr><th></th><th class="text-right">VAT</th><th class="text-right">Inclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr>
           </thead>
           <tbody>
-            <tr>
-              <td><strong>Standard Rate</strong></td>
-              <td class="text-right">${formatAmount(standardOutputVAT)}</td>
-              <td class="text-right">${formatAmount(standardOutputInclusive)}</td>
-              <td class="text-right">${formatAmount(standardInputVAT)}</td>
-              <td class="text-right">${formatAmount(standardInputInclusive)}</td>
-              <td class="text-right ${(standardOutputVAT - standardInputVAT) >= 0 ? 'negative' : 'positive'}">${formatAmount(standardOutputVAT - standardInputVAT)}</td>
-              <td class="text-right">${formatAmount(standardOutputInclusive - standardInputInclusive)}</td>
-            </tr>
-            <tr>
-              <td><strong>Zero Rate</strong></td>
-              <td class="text-right">${formatAmount(0)}</td>
-              <td class="text-right">${formatAmount(zeroOutputInclusive)}</td>
-              <td class="text-right">${formatAmount(0)}</td>
-              <td class="text-right">${formatAmount(zeroInputInclusive)}</td>
-              <td class="text-right">${formatAmount(0)}</td>
-              <td class="text-right">${formatAmount(zeroOutputInclusive - zeroInputInclusive)}</td>
-            </tr>
-            <tr class="total-row">
-              <td><strong>GRAND TOTAL</strong></td>
-              <td class="text-right"><strong>${formatAmount(standardOutputVAT)}</strong></td>
-              <td class="text-right"><strong>${formatAmount(standardOutputInclusive + zeroOutputInclusive)}</strong></td>
-              <td class="text-right"><strong>${formatAmount(standardInputVAT)}</strong></td>
-              <td class="text-right"><strong>${formatAmount(standardInputInclusive + zeroInputInclusive)}</strong></td>
-              <td class="text-right ${netVATCalc >= 0 ? 'negative' : 'positive'}"><strong>${formatAmount(netVATCalc)}</strong></td>
-              <td class="text-right"><strong>${formatAmount((standardOutputInclusive + zeroOutputInclusive) - (standardInputInclusive + zeroInputInclusive))}</strong></td>
-            </tr>
+            <tr><td><strong>Standard Rate (15%)</strong></td><td class="text-right">${formatAmount(stdOutVAT)}</td><td class="text-right">${formatAmount(stdOutIncl)}</td><td class="text-right">${formatAmount(stdInVAT)}</td><td class="text-right">${formatAmount(stdInIncl)}</td><td class="text-right">${formatAmount(stdOutVAT - stdInVAT)}</td><td class="text-right">${formatAmount(stdOutIncl - stdInIncl)}</td></tr>
+            <tr><td><strong>Zero Rate</strong></td><td class="text-right">${formatAmount(0)}</td><td class="text-right">${formatAmount(zeroOutIncl)}</td><td class="text-right">${formatAmount(0)}</td><td class="text-right">${formatAmount(zeroInIncl)}</td><td class="text-right">${formatAmount(0)}</td><td class="text-right">${formatAmount(zeroOutIncl - zeroInIncl)}</td></tr>
+            <tr style="background:#fef3c7;"><td><strong>Exempt & Non-Supplies</strong></td><td class="text-right">${formatAmount(0)}</td><td class="text-right">${formatAmount(exemptOutIncl)}</td><td class="text-right">${formatAmount(0)}</td><td class="text-right">${formatAmount(exemptInIncl)}</td><td class="text-right">${formatAmount(0)}</td><td class="text-right">${formatAmount(exemptOutIncl - exemptInIncl)}</td></tr>
+            ${(capOutIncl > 0 || capInIncl > 0) ? `<tr style="background:#fae8ff;"><td><strong>Capital & Imports</strong></td><td class="text-right">${formatAmount(capOutVAT)}</td><td class="text-right">${formatAmount(capOutIncl)}</td><td class="text-right">${formatAmount(capInVAT)}</td><td class="text-right">${formatAmount(capInIncl)}</td><td class="text-right">${formatAmount(capOutVAT - capInVAT)}</td><td class="text-right">${formatAmount(capOutIncl - capInIncl)}</td></tr>` : ''}
+            <tr class="total-row"><td><strong>GRAND TOTAL</strong></td><td class="text-right"><strong>${formatAmount(totalOutVAT)}</strong></td><td class="text-right"><strong>${formatAmount(totalOutIncl)}</strong></td><td class="text-right"><strong>${formatAmount(totalInVAT)}</strong></td><td class="text-right"><strong>${formatAmount(totalInIncl)}</strong></td><td class="text-right ${netVATCalc >= 0 ? 'negative' : 'positive'}"><strong>${formatAmount(netVATCalc)}</strong></td><td class="text-right"><strong>${formatAmount(totalOutIncl - totalInIncl)}</strong></td></tr>
           </tbody>
         </table>
-        
-        <div class="summary-box">
-          <span class="payable-label">Amount Payable: </span>
-          <span class="payable-amount ${netVATCalc >= 0 ? 'negative' : 'positive'}">${formatAmount(netVATCalc)}</span>
-        </div>
-        
-        <div class="section-header">STANDARD RATE - OUTPUT VAT (15%)</div>
-        <table>
-          <thead>
-            <tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr>
-          </thead>
-          <tbody>
-            ${vatData.standardOutput.transactions.length > 0 ? vatData.standardOutput.transactions.map(t => `
-              <tr><td>${t.date}</td><td>${t.reference}</td><td>${t.account}</td><td>${t.description}</td><td class="text-right">${formatAmount(t.exclusive)}</td><td class="text-right">${formatAmount(t.vat)}</td><td class="text-right">${formatAmount(t.inclusive)}</td></tr>
-            `).join('') : '<tr><td colspan="7" style="text-align: center; color: #6b7280; padding: 15px;">No transactions</td></tr>'}
-            ${vatData.standardOutput.transactions.length > 0 ? `<tr class="total-row"><td colspan="4"><strong>Subtotal</strong></td><td class="text-right"><strong>${formatAmount(vatData.standardOutput.transactions.reduce((s,t) => s + t.exclusive, 0))}</strong></td><td class="text-right"><strong>${formatAmount(vatData.standardOutput.vat)}</strong></td><td class="text-right"><strong>${formatAmount(vatData.standardOutput.transactions.reduce((s,t) => s + t.inclusive, 0))}</strong></td></tr>` : ''}
-          </tbody>
-        </table>
-        
+        <div class="summary-box"><span class="payable-label">Amount Payable: </span><span class="payable-amount ${netVATCalc >= 0 ? 'negative' : 'positive'}">${formatAmount(netVATCalc)}</span></div>
+
+        <div class="section-header">STANDARD RATE (15%) - OUTPUT VAT</div>
+        ${pdfTxnTable(vatData.standardOutput.transactions, vatData.standardOutput.vat)}
         <div class="section-header">ZERO RATE - OUTPUT VAT</div>
-        <table>
-          <thead>
-            <tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr>
-          </thead>
-          <tbody>
-            ${vatData.zeroOutput.transactions.length > 0 ? vatData.zeroOutput.transactions.map(t => `
-              <tr><td>${t.date}</td><td>${t.reference}</td><td>${t.account}</td><td>${t.description}</td><td class="text-right">${formatAmount(t.exclusive)}</td><td class="text-right">${formatAmount(t.vat)}</td><td class="text-right">${formatAmount(t.inclusive)}</td></tr>
-            `).join('') : '<tr><td colspan="7" style="text-align: center; color: #6b7280; padding: 15px;">No transactions</td></tr>'}
-          </tbody>
-        </table>
-        
-        <div class="section-header-green">STANDARD RATE - INPUT VAT (15%)</div>
-        <table>
-          <thead>
-            <tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr>
-          </thead>
-          <tbody>
-            ${vatData.standardInput.transactions.length > 0 ? vatData.standardInput.transactions.map(t => `
-              <tr><td>${t.date}</td><td>${t.reference}</td><td>${t.account}</td><td>${t.description}</td><td class="text-right">${formatAmount(t.exclusive)}</td><td class="text-right">${formatAmount(t.vat)}</td><td class="text-right">${formatAmount(t.inclusive)}</td></tr>
-            `).join('') : '<tr><td colspan="7" style="text-align: center; color: #6b7280; padding: 15px;">No transactions</td></tr>'}
-            ${vatData.standardInput.transactions.length > 0 ? `<tr class="total-row"><td colspan="4"><strong>Subtotal</strong></td><td class="text-right"><strong>${formatAmount(vatData.standardInput.transactions.reduce((s,t) => s + t.exclusive, 0))}</strong></td><td class="text-right"><strong>${formatAmount(vatData.standardInput.vat)}</strong></td><td class="text-right"><strong>${formatAmount(vatData.standardInput.transactions.reduce((s,t) => s + t.inclusive, 0))}</strong></td></tr>` : ''}
-          </tbody>
-        </table>
-        
+        ${pdfTxnTable(vatData.zeroOutput.transactions, 0)}
+        <div class="section-header" style="background:#fef3c7;color:#92400e;">EXEMPT & NON-SUPPLIES - OUTPUT</div>
+        ${pdfTxnTable(vatData.exemptOutput.transactions, 0)}
+        ${vatData.capitalOutput.transactions.length > 0 ? `<div class="section-header" style="background:#fae8ff;color:#6b21a8;">CAPITAL & IMPORTS - OUTPUT</div>${pdfTxnTable(vatData.capitalOutput.transactions, vatData.capitalOutput.vat)}` : ''}
+
+        <div class="section-header-green">STANDARD RATE (15%) - INPUT VAT</div>
+        ${pdfTxnTable(vatData.standardInput.transactions, vatData.standardInput.vat)}
         <div class="section-header-green">ZERO RATE - INPUT VAT</div>
-        <table>
-          <thead>
-            <tr><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-right">Exclusive</th><th class="text-right">VAT</th><th class="text-right">Inclusive</th></tr>
-          </thead>
-          <tbody>
-            ${vatData.zeroInput.transactions.length > 0 ? vatData.zeroInput.transactions.map(t => `
-              <tr><td>${t.date}</td><td>${t.reference}</td><td>${t.account}</td><td>${t.description}</td><td class="text-right">${formatAmount(t.exclusive)}</td><td class="text-right">${formatAmount(t.vat)}</td><td class="text-right">${formatAmount(t.inclusive)}</td></tr>
-            `).join('') : '<tr><td colspan="7" style="text-align: center; color: #6b7280; padding: 15px;">No transactions</td></tr>'}
-          </tbody>
-        </table>
+        ${pdfTxnTable(vatData.zeroInput.transactions, 0)}
+        <div class="section-header-green" style="background:#fef3c7;color:#92400e;">EXEMPT & NON-SUPPLIES - INPUT</div>
+        ${pdfTxnTable(vatData.exemptInput.transactions, 0)}
+        ${vatData.capitalInput.transactions.length > 0 ? `<div class="section-header-green" style="background:#fae8ff;color:#6b21a8;">CAPITAL & IMPORTS - INPUT</div>${pdfTxnTable(vatData.capitalInput.transactions, vatData.capitalInput.vat)}` : ''}
       `;
     }
     
@@ -6172,8 +6511,8 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
 
   const trialBalance = generateTrialBalance();
   const vatReport = generateVATReport();
-  const totalOutputVAT = vatReport.standardOutput.vat + vatReport.zeroOutput.vat;
-  const totalInputVAT = vatReport.standardInput.vat + vatReport.zeroInput.vat;
+  const totalOutputVAT = vatReport.standardOutput.vat + vatReport.capitalOutput.vat;
+  const totalInputVAT = vatReport.standardInput.vat + vatReport.capitalInput.vat;
   const netVAT = totalOutputVAT - totalInputVAT;
 
   // Print View Component
@@ -6239,9 +6578,7 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
             {reportType === 'income-statement' && (() => {
               const incomeCategories = ['Sales', 'Cost of Sales', 'Other Income', 'Expenses', 'Income Tax'];
               const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
-              const filtered = filterByDateRange(bankStatements);
-              const ab = {};
-              filtered.forEach(stmt => { const c = stmt.selection || 'Unallocated'; if (!ab[c]) ab[c] = { debit: 0, credit: 0 }; ab[c].debit += stmt.spent || 0; ab[c].credit += stmt.received || 0; });
+              const ab = getAccountBalancesWithInvoices();
               let tRev = 0, tCOS = 0, tOI = 0, tEx = 0, tTax = 0;
               const catData = incomeCategories.map(cat => {
                 const rows = accountsList.filter(a => a.category === cat && a.active).map(acc => { const bal = ab[acc.name] || { debit: 0, credit: 0 }; return { name: acc.name, amount: (cat === 'Sales' || cat === 'Other Income') ? (bal.credit - bal.debit) : (bal.debit - bal.credit) }; }).filter(r => r.amount !== 0);
@@ -6271,9 +6608,7 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
             {reportType === 'balance-sheet' && (() => {
               const bsCats = ['Non-Current Assets', 'Current Assets', 'Equity', 'Non-Current Liabilities', 'Current Liabilities'];
               const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
-              const filtered = filterByDateRange(bankStatements);
-              const ab = {};
-              filtered.forEach(stmt => { const c = stmt.selection || 'Unallocated'; if (!ab[c]) ab[c] = { debit: 0, credit: 0 }; ab[c].debit += stmt.spent || 0; ab[c].credit += stmt.received || 0; });
+              const ab = getAccountBalancesWithInvoices();
               const assetSet = new Set(['Non-Current Assets', 'Current Assets']);
               const catData = bsCats.map(cat => {
                 const rows = accountsList.filter(a => a.category === cat && a.active).map(acc => { const bal = ab[acc.name] || { debit: 0, credit: 0 }; const op = acc.openingBalance || 0; return { name: acc.name, amount: assetSet.has(cat) ? (bal.debit - bal.credit + op) : (bal.credit - bal.debit + op) }; }).filter(r => r.amount !== 0);
@@ -6309,17 +6644,32 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
               <>
                 <h1 className="text-2xl font-bold text-emerald-700 mb-1">VAT REPORT</h1>
                 <p className="text-slate-600 mb-6">Period: {startDate} to {endDate}</p>
-                
+
                 {/* VAT Summary */}
                 {(() => {
-                  const standardOutputVAT = vatReport.standardOutput.vat;
-                  const standardOutputInclusive = vatReport.standardOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
-                  const zeroOutputInclusive = vatReport.zeroOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
-                  const standardInputVAT = vatReport.standardInput.vat;
-                  const standardInputInclusive = vatReport.standardInput.transactions.reduce((s, t) => s + t.inclusive, 0);
-                  const zeroInputInclusive = vatReport.zeroInput.transactions.reduce((s, t) => s + t.inclusive, 0);
-                  const netVATCalc = standardOutputVAT - standardInputVAT;
-                  
+                  const sOV = vatReport.standardOutput.vat, sOI = vatReport.standardOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+                  const zOI = vatReport.zeroOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+                  const eOI = vatReport.exemptOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+                  const cOV = vatReport.capitalOutput.vat, cOI = vatReport.capitalOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+                  const sIV = vatReport.standardInput.vat, sII = vatReport.standardInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+                  const zII = vatReport.zeroInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+                  const eII = vatReport.exemptInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+                  const cIV = vatReport.capitalInput.vat, cII = vatReport.capitalInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+                  const tOV = sOV + cOV, tIV = sIV + cIV, tOI = sOI + zOI + eOI + cOI, tII = sII + zII + eII + cII;
+                  const nv = tOV - tIV;
+
+                  const SummaryRow = ({ label, oVat, oIncl, iVat, iIncl, bg }) => (
+                    <tr className={bg || ''}>
+                      <td className="border px-3 py-2 font-medium">{label}</td>
+                      <td className="border px-3 py-2 text-right">{formatAmount(oVat)}</td>
+                      <td className="border px-3 py-2 text-right">{formatAmount(oIncl)}</td>
+                      <td className="border px-3 py-2 text-right">{formatAmount(iVat)}</td>
+                      <td className="border px-3 py-2 text-right">{formatAmount(iIncl)}</td>
+                      <td className="border px-3 py-2 text-right">{formatAmount(oVat - iVat)}</td>
+                      <td className="border px-3 py-2 text-right">{formatAmount(oIncl - iIncl)}</td>
+                    </tr>
+                  );
+
                   return (
                     <>
                       <h2 className="font-semibold text-lg mb-2">VAT Summary</h2>
@@ -6342,175 +6692,39 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
                           </tr>
                         </thead>
                         <tbody>
-                          <tr>
-                            <td className="border px-3 py-2 font-medium">Standard Rate</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(standardOutputVAT)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(standardOutputInclusive)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(standardInputVAT)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(standardInputInclusive)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(standardOutputVAT - standardInputVAT)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(standardOutputInclusive - standardInputInclusive)}</td>
-                          </tr>
-                          <tr>
-                            <td className="border px-3 py-2 font-medium">Zero Rate</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(0)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(zeroOutputInclusive)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(0)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(zeroInputInclusive)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(0)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(zeroOutputInclusive - zeroInputInclusive)}</td>
-                          </tr>
+                          <SummaryRow label="Standard Rate (15%)" oVat={sOV} oIncl={sOI} iVat={sIV} iIncl={sII} />
+                          <SummaryRow label="Zero Rate" oVat={0} oIncl={zOI} iVat={0} iIncl={zII} />
+                          <SummaryRow label="Exempt & Non-Supplies" oVat={0} oIncl={eOI} iVat={0} iIncl={eII} bg="bg-amber-50" />
+                          {(cOI > 0 || cII > 0) && <SummaryRow label="Capital & Imports" oVat={cOV} oIncl={cOI} iVat={cIV} iIncl={cII} bg="bg-purple-50" />}
                           <tr className="bg-slate-100 font-bold">
                             <td className="border px-3 py-2">Grand Total</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(standardOutputVAT)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(standardOutputInclusive + zeroOutputInclusive)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(standardInputVAT)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(standardInputInclusive + zeroInputInclusive)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount(netVATCalc)}</td>
-                            <td className="border px-3 py-2 text-right">{formatAmount((standardOutputInclusive + zeroOutputInclusive) - (standardInputInclusive + zeroInputInclusive))}</td>
+                            <td className="border px-3 py-2 text-right">{formatAmount(tOV)}</td>
+                            <td className="border px-3 py-2 text-right">{formatAmount(tOI)}</td>
+                            <td className="border px-3 py-2 text-right">{formatAmount(tIV)}</td>
+                            <td className="border px-3 py-2 text-right">{formatAmount(tII)}</td>
+                            <td className="border px-3 py-2 text-right">{formatAmount(nv)}</td>
+                            <td className="border px-3 py-2 text-right">{formatAmount(tOI - tII)}</td>
                           </tr>
                         </tbody>
                       </table>
-                      
                       <div className="bg-slate-100 p-4 rounded mb-6">
                         <span className="font-semibold">Amount Payable: </span>
-                        <span className={`text-xl font-bold ${netVATCalc >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                          {formatAmount(netVATCalc)}
-                        </span>
+                        <span className={`text-xl font-bold ${nv >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>{formatAmount(nv)}</span>
                       </div>
                     </>
                   );
                 })()}
-                
+
                 {/* Transaction Sections */}
                 <div className="space-y-6 text-sm">
-                  <div>
-                    <h3 className="bg-blue-100 text-blue-800 px-3 py-2 font-semibold">Standard Rate - Output VAT (15%)</h3>
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50">
-                          <th className="border px-2 py-1 text-left">Date</th>
-                          <th className="border px-2 py-1 text-left">Reference</th>
-                          <th className="border px-2 py-1 text-left">Account</th>
-                          <th className="border px-2 py-1 text-left">Description</th>
-                          <th className="border px-2 py-1 text-right">Exclusive</th>
-                          <th className="border px-2 py-1 text-right">VAT</th>
-                          <th className="border px-2 py-1 text-right">Inclusive</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {vatReport.standardOutput.transactions.length > 0 ? vatReport.standardOutput.transactions.map((t, i) => (
-                          <tr key={i}>
-                            <td className="border px-2 py-1">{t.date}</td>
-                            <td className="border px-2 py-1">{t.reference}</td>
-                            <td className="border px-2 py-1">{t.account}</td>
-                            <td className="border px-2 py-1">{t.description}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.exclusive)}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.vat)}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.inclusive)}</td>
-                          </tr>
-                        )) : (
-                          <tr><td colSpan={7} className="border px-2 py-4 text-center text-slate-500">No transactions</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                  
-                  <div>
-                    <h3 className="bg-blue-100 text-blue-800 px-3 py-2 font-semibold">Zero Rate - Output VAT</h3>
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50">
-                          <th className="border px-2 py-1 text-left">Date</th>
-                          <th className="border px-2 py-1 text-left">Reference</th>
-                          <th className="border px-2 py-1 text-left">Account</th>
-                          <th className="border px-2 py-1 text-left">Description</th>
-                          <th className="border px-2 py-1 text-right">Exclusive</th>
-                          <th className="border px-2 py-1 text-right">VAT</th>
-                          <th className="border px-2 py-1 text-right">Inclusive</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {vatReport.zeroOutput.transactions.length > 0 ? vatReport.zeroOutput.transactions.map((t, i) => (
-                          <tr key={i}>
-                            <td className="border px-2 py-1">{t.date}</td>
-                            <td className="border px-2 py-1">{t.reference}</td>
-                            <td className="border px-2 py-1">{t.account}</td>
-                            <td className="border px-2 py-1">{t.description}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.exclusive)}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.vat)}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.inclusive)}</td>
-                          </tr>
-                        )) : (
-                          <tr><td colSpan={7} className="border px-2 py-4 text-center text-slate-500">No transactions</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                  
-                  <div>
-                    <h3 className="bg-green-100 text-green-800 px-3 py-2 font-semibold">Standard Rate - Input VAT (15%)</h3>
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50">
-                          <th className="border px-2 py-1 text-left">Date</th>
-                          <th className="border px-2 py-1 text-left">Reference</th>
-                          <th className="border px-2 py-1 text-left">Account</th>
-                          <th className="border px-2 py-1 text-left">Description</th>
-                          <th className="border px-2 py-1 text-right">Exclusive</th>
-                          <th className="border px-2 py-1 text-right">VAT</th>
-                          <th className="border px-2 py-1 text-right">Inclusive</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {vatReport.standardInput.transactions.length > 0 ? vatReport.standardInput.transactions.map((t, i) => (
-                          <tr key={i}>
-                            <td className="border px-2 py-1">{t.date}</td>
-                            <td className="border px-2 py-1">{t.reference}</td>
-                            <td className="border px-2 py-1">{t.account}</td>
-                            <td className="border px-2 py-1">{t.description}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.exclusive)}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.vat)}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.inclusive)}</td>
-                          </tr>
-                        )) : (
-                          <tr><td colSpan={7} className="border px-2 py-4 text-center text-slate-500">No transactions</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                  
-                  <div>
-                    <h3 className="bg-green-100 text-green-800 px-3 py-2 font-semibold">Zero Rate - Input VAT</h3>
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50">
-                          <th className="border px-2 py-1 text-left">Date</th>
-                          <th className="border px-2 py-1 text-left">Reference</th>
-                          <th className="border px-2 py-1 text-left">Account</th>
-                          <th className="border px-2 py-1 text-left">Description</th>
-                          <th className="border px-2 py-1 text-right">Exclusive</th>
-                          <th className="border px-2 py-1 text-right">VAT</th>
-                          <th className="border px-2 py-1 text-right">Inclusive</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {vatReport.zeroInput.transactions.length > 0 ? vatReport.zeroInput.transactions.map((t, i) => (
-                          <tr key={i}>
-                            <td className="border px-2 py-1">{t.date}</td>
-                            <td className="border px-2 py-1">{t.reference}</td>
-                            <td className="border px-2 py-1">{t.account}</td>
-                            <td className="border px-2 py-1">{t.description}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.exclusive)}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.vat)}</td>
-                            <td className="border px-2 py-1 text-right">{formatAmount(t.inclusive)}</td>
-                          </tr>
-                        )) : (
-                          <tr><td colSpan={7} className="border px-2 py-4 text-center text-slate-500">No transactions</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                  <VATSection title="Standard Rate (15%) - Output VAT" color="blue" transactions={vatReport.standardOutput.transactions} subtotal={vatReport.standardOutput.vat} />
+                  <VATSection title="Zero Rate - Output VAT" color="blue" transactions={vatReport.zeroOutput.transactions} subtotal={0} />
+                  <VATSection title="Exempt & Non-Supplies - Output" color="amber" transactions={vatReport.exemptOutput.transactions} subtotal={0} />
+                  {vatReport.capitalOutput.transactions.length > 0 && <VATSection title="Capital & Imports - Output" color="purple" transactions={vatReport.capitalOutput.transactions} subtotal={vatReport.capitalOutput.vat} />}
+                  <VATSection title="Standard Rate (15%) - Input VAT" color="green" transactions={vatReport.standardInput.transactions} subtotal={vatReport.standardInput.vat} />
+                  <VATSection title="Zero Rate - Input VAT" color="green" transactions={vatReport.zeroInput.transactions} subtotal={0} />
+                  <VATSection title="Exempt & Non-Supplies - Input" color="amber" transactions={vatReport.exemptInput.transactions} subtotal={0} />
+                  {vatReport.capitalInput.transactions.length > 0 && <VATSection title="Capital & Imports - Input" color="purple" transactions={vatReport.capitalInput.transactions} subtotal={vatReport.capitalInput.vat} />}
                 </div>
               </>
             )}
@@ -6520,9 +6734,11 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
     );
   };
 
-  const VATSection = ({ title, color, transactions, subtotal }) => (
+  const VATSection = ({ title, color, transactions, subtotal }) => {
+    const colorMap = { blue: 'bg-blue-100 text-blue-800', green: 'bg-green-100 text-green-800', amber: 'bg-amber-100 text-amber-800', purple: 'bg-purple-100 text-purple-800' };
+    return (
     <div className="mb-6">
-      <h4 className={`font-semibold px-3 py-2 ${color === 'blue' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'} rounded-t`}>
+      <h4 className={`font-semibold px-3 py-2 ${colorMap[color] || colorMap.blue} rounded-t`}>
         {title}
       </h4>
       <table className="w-full text-sm">
@@ -6563,6 +6779,7 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
       </table>
     </div>
   );
+  };
 
   return (
     <div className="space-y-6">
@@ -6940,33 +7157,34 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
         <div className="space-y-6">
           {/* VAT Summary Table */}
           {(() => {
-            // Calculate totals for summary
-            const standardOutputVAT = vatReport.standardOutput.vat;
-            const standardOutputInclusive = vatReport.standardOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
-            const zeroOutputVAT = 0;
-            const zeroOutputInclusive = vatReport.zeroOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
-            
-            const standardInputVAT = vatReport.standardInput.vat;
-            const standardInputInclusive = vatReport.standardInput.transactions.reduce((s, t) => s + t.inclusive, 0);
-            const zeroInputVAT = 0;
-            const zeroInputInclusive = vatReport.zeroInput.transactions.reduce((s, t) => s + t.inclusive, 0);
-            
-            const standardNetVAT = standardOutputVAT - standardInputVAT;
-            const standardNetInclusive = standardOutputInclusive - standardInputInclusive;
-            const zeroNetVAT = 0;
-            const zeroNetInclusive = zeroOutputInclusive - zeroInputInclusive;
-            
-            const grandTotalOutputVAT = standardOutputVAT + zeroOutputVAT;
-            const grandTotalOutputInclusive = standardOutputInclusive + zeroOutputInclusive;
-            const grandTotalInputVAT = standardInputVAT + zeroInputVAT;
-            const grandTotalInputInclusive = standardInputInclusive + zeroInputInclusive;
-            const grandTotalNetVAT = grandTotalOutputVAT - grandTotalInputVAT;
-            const grandTotalNetInclusive = grandTotalOutputInclusive - grandTotalInputInclusive;
+            const sOV = vatReport.standardOutput.vat, sOI = vatReport.standardOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+            const zOI = vatReport.zeroOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+            const eOI = vatReport.exemptOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+            const cOV = vatReport.capitalOutput.vat, cOI = vatReport.capitalOutput.transactions.reduce((s, t) => s + t.inclusive, 0);
+            const sIV = vatReport.standardInput.vat, sII = vatReport.standardInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+            const zII = vatReport.zeroInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+            const eII = vatReport.exemptInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+            const cIV = vatReport.capitalInput.vat, cII = vatReport.capitalInput.transactions.reduce((s, t) => s + t.inclusive, 0);
+            const tOV = sOV + cOV, tIV = sIV + cIV;
+            const tOI = sOI + zOI + eOI + cOI, tII = sII + zII + eII + cII;
+            const nv = tOV - tIV, ni = tOI - tII;
 
             const formatAmount = (amount) => {
               const formatted = Math.abs(amount).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
               return amount < 0 ? `R -${formatted}` : `R ${formatted}`;
             };
+
+            const SummaryRow = ({ label, oV, oI, iV, iI, bg }) => (
+              <tr className={`border-b hover:bg-slate-50 ${bg || ''}`}>
+                <td className="px-4 py-3 font-medium text-slate-700 border-r">{label}</td>
+                <td className="px-4 py-3 text-right text-blue-700 bg-blue-50/30">{formatAmount(oV)}</td>
+                <td className="px-4 py-3 text-right text-blue-700 border-r bg-blue-50/30">{formatAmount(oI)}</td>
+                <td className="px-4 py-3 text-right text-green-700 bg-green-50/30">{formatAmount(iV)}</td>
+                <td className="px-4 py-3 text-right text-green-700 border-r bg-green-50/30">{formatAmount(iI)}</td>
+                <td className={`px-4 py-3 text-right font-medium ${(oV - iV) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{formatAmount(oV - iV)}</td>
+                <td className={`px-4 py-3 text-right font-medium ${(oI - iI) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{formatAmount(oI - iI)}</td>
+              </tr>
+            );
 
             return (
               <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
@@ -6978,15 +7196,9 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
                     <thead>
                       <tr className="bg-slate-100">
                         <th className="text-left px-4 py-3 font-medium text-slate-600 border-r"></th>
-                        <th colSpan={2} className="text-center px-4 py-2 font-semibold text-blue-700 border-r bg-blue-50">
-                          ----- Output VAT -----
-                        </th>
-                        <th colSpan={2} className="text-center px-4 py-2 font-semibold text-green-700 border-r bg-green-50">
-                          ----- Input VAT -----
-                        </th>
-                        <th colSpan={2} className="text-center px-4 py-2 font-semibold text-slate-700 bg-slate-50">
-                          ----- Net VAT -----
-                        </th>
+                        <th colSpan={2} className="text-center px-4 py-2 font-semibold text-blue-700 border-r bg-blue-50">Output VAT</th>
+                        <th colSpan={2} className="text-center px-4 py-2 font-semibold text-green-700 border-r bg-green-50">Input VAT</th>
+                        <th colSpan={2} className="text-center px-4 py-2 font-semibold text-slate-700 bg-slate-50">Net VAT</th>
                       </tr>
                       <tr className="bg-slate-50 border-b">
                         <th className="text-left px-4 py-2 font-medium text-slate-600 border-r"></th>
@@ -6999,56 +7211,26 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
                       </tr>
                     </thead>
                     <tbody>
-                      <tr className="border-b hover:bg-slate-50">
-                        <td className="px-4 py-3 font-medium text-slate-700 border-r">Standard Rate</td>
-                        <td className="px-4 py-3 text-right text-blue-700 bg-blue-50/30">{formatAmount(standardOutputVAT)}</td>
-                        <td className="px-4 py-3 text-right text-blue-700 border-r bg-blue-50/30">{formatAmount(standardOutputInclusive)}</td>
-                        <td className="px-4 py-3 text-right text-green-700 bg-green-50/30">{formatAmount(standardInputVAT)}</td>
-                        <td className="px-4 py-3 text-right text-green-700 border-r bg-green-50/30">{formatAmount(standardInputInclusive)}</td>
-                        <td className={`px-4 py-3 text-right font-medium ${standardNetVAT < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                          {formatAmount(standardNetVAT)}
-                        </td>
-                        <td className={`px-4 py-3 text-right font-medium ${standardNetInclusive < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                          {formatAmount(standardNetInclusive)}
-                        </td>
-                      </tr>
-                      <tr className="border-b hover:bg-slate-50">
-                        <td className="px-4 py-3 font-medium text-slate-700 border-r">Zero Rate</td>
-                        <td className="px-4 py-3 text-right text-blue-700 bg-blue-50/30">{formatAmount(zeroOutputVAT)}</td>
-                        <td className="px-4 py-3 text-right text-blue-700 border-r bg-blue-50/30">{formatAmount(zeroOutputInclusive)}</td>
-                        <td className="px-4 py-3 text-right text-green-700 bg-green-50/30">{formatAmount(zeroInputVAT)}</td>
-                        <td className="px-4 py-3 text-right text-green-700 border-r bg-green-50/30">{formatAmount(zeroInputInclusive)}</td>
-                        <td className={`px-4 py-3 text-right font-medium ${zeroNetVAT < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                          {formatAmount(zeroNetVAT)}
-                        </td>
-                        <td className={`px-4 py-3 text-right font-medium ${zeroNetInclusive < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                          {formatAmount(zeroNetInclusive)}
-                        </td>
-                      </tr>
+                      <SummaryRow label="Standard Rate (15%)" oV={sOV} oI={sOI} iV={sIV} iI={sII} />
+                      <SummaryRow label="Zero Rate" oV={0} oI={zOI} iV={0} iI={zII} />
+                      <SummaryRow label="Exempt & Non-Supplies" oV={0} oI={eOI} iV={0} iI={eII} bg="bg-amber-50/50" />
+                      {(cOI > 0 || cII > 0) && <SummaryRow label="Capital & Imports" oV={cOV} oI={cOI} iV={cIV} iI={cII} bg="bg-purple-50/50" />}
                       <tr className="bg-slate-100 font-bold">
                         <td className="px-4 py-3 text-slate-800 border-r">Grand Total</td>
-                        <td className="px-4 py-3 text-right text-blue-800 bg-blue-100/50">{formatAmount(grandTotalOutputVAT)}</td>
-                        <td className="px-4 py-3 text-right text-blue-800 border-r bg-blue-100/50">{formatAmount(grandTotalOutputInclusive)}</td>
-                        <td className="px-4 py-3 text-right text-green-800 bg-green-100/50">{formatAmount(grandTotalInputVAT)}</td>
-                        <td className="px-4 py-3 text-right text-green-800 border-r bg-green-100/50">{formatAmount(grandTotalInputInclusive)}</td>
-                        <td className={`px-4 py-3 text-right ${grandTotalNetVAT < 0 ? 'text-red-700' : 'text-emerald-700'}`}>
-                          {formatAmount(grandTotalNetVAT)}
-                        </td>
-                        <td className={`px-4 py-3 text-right ${grandTotalNetInclusive < 0 ? 'text-red-700' : 'text-emerald-700'}`}>
-                          {formatAmount(grandTotalNetInclusive)}
-                        </td>
+                        <td className="px-4 py-3 text-right text-blue-800 bg-blue-100/50">{formatAmount(tOV)}</td>
+                        <td className="px-4 py-3 text-right text-blue-800 border-r bg-blue-100/50">{formatAmount(tOI)}</td>
+                        <td className="px-4 py-3 text-right text-green-800 bg-green-100/50">{formatAmount(tIV)}</td>
+                        <td className="px-4 py-3 text-right text-green-800 border-r bg-green-100/50">{formatAmount(tII)}</td>
+                        <td className={`px-4 py-3 text-right ${nv < 0 ? 'text-red-700' : 'text-emerald-700'}`}>{formatAmount(nv)}</td>
+                        <td className={`px-4 py-3 text-right ${ni < 0 ? 'text-red-700' : 'text-emerald-700'}`}>{formatAmount(ni)}</td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
-                
-                {/* Amount Payable Section */}
                 <div className="p-4 bg-slate-50 border-t flex justify-between items-center">
                   <div className="flex items-center gap-4">
                     <span className="font-semibold text-slate-700">Amount Payable</span>
-                    <span className={`text-2xl font-bold ${grandTotalNetVAT < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                      {formatAmount(grandTotalNetVAT)}
-                    </span>
+                    <span className={`text-2xl font-bold ${nv >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>{formatAmount(nv)}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-slate-600">Period:</span>
@@ -7061,30 +7243,14 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
 
           {/* VAT Sections */}
           <div className="bg-white rounded-lg border shadow-sm p-4">
-            <VATSection 
-              title="Standard Rate - Output VAT (15%)" 
-              color="blue"
-              transactions={vatReport.standardOutput.transactions}
-              subtotal={vatReport.standardOutput.vat}
-            />
-            <VATSection 
-              title="Zero Rate - Output VAT" 
-              color="blue"
-              transactions={vatReport.zeroOutput.transactions}
-              subtotal={0}
-            />
-            <VATSection 
-              title="Standard Rate - Input VAT (15%)" 
-              color="green"
-              transactions={vatReport.standardInput.transactions}
-              subtotal={vatReport.standardInput.vat}
-            />
-            <VATSection 
-              title="Zero Rate - Input VAT" 
-              color="green"
-              transactions={vatReport.zeroInput.transactions}
-              subtotal={0}
-            />
+            <VATSection title="Standard Rate (15%) - Output VAT" color="blue" transactions={vatReport.standardOutput.transactions} subtotal={vatReport.standardOutput.vat} />
+            <VATSection title="Zero Rate - Output VAT" color="blue" transactions={vatReport.zeroOutput.transactions} subtotal={0} />
+            <VATSection title="Exempt & Non-Supplies - Output" color="amber" transactions={vatReport.exemptOutput.transactions} subtotal={0} />
+            {vatReport.capitalOutput.transactions.length > 0 && <VATSection title="Capital & Imports - Output" color="purple" transactions={vatReport.capitalOutput.transactions} subtotal={vatReport.capitalOutput.vat} />}
+            <VATSection title="Standard Rate (15%) - Input VAT" color="green" transactions={vatReport.standardInput.transactions} subtotal={vatReport.standardInput.vat} />
+            <VATSection title="Zero Rate - Input VAT" color="green" transactions={vatReport.zeroInput.transactions} subtotal={0} />
+            <VATSection title="Exempt & Non-Supplies - Input" color="amber" transactions={vatReport.exemptInput.transactions} subtotal={0} />
+            {vatReport.capitalInput.transactions.length > 0 && <VATSection title="Capital & Imports - Input" color="purple" transactions={vatReport.capitalInput.transactions} subtotal={vatReport.capitalInput.vat} />}
           </div>
         </div>
       )}
