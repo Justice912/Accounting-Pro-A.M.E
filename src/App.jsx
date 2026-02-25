@@ -219,12 +219,14 @@ const AccountingDashboard = () => {
     localStorage.setItem('accounting-accounts', JSON.stringify(data));
   };
 
-  // Calculate totals
-  const totalIncome = bankStatements.reduce((sum, s) => sum + (s.received || 0), 0);
-  const totalExpenses = bankStatements.reduce((sum, s) => sum + (s.spent || 0), 0);
+  // Calculate totals - filtered by active company
+  const activeCompanyStatements = activeCompanyId ? bankStatements.filter(s => s.companyId === activeCompanyId) : bankStatements;
+  const activeCompanyInvoices = activeCompanyId ? invoices.filter(inv => inv.companyId === activeCompanyId) : invoices;
+  const totalIncome = activeCompanyStatements.reduce((sum, s) => sum + (s.received || 0), 0);
+  const totalExpenses = activeCompanyStatements.reduce((sum, s) => sum + (s.spent || 0), 0);
   const totalProfit = totalIncome - totalExpenses;
-  const pendingInvoices = invoices.filter(inv => inv.status === 'Pending').length;
-  const unallocatedCount = bankStatements.filter(s => s.selection === 'Unallocated Expen').length;
+  const pendingInvoices = activeCompanyInvoices.filter(inv => inv.status === 'Pending').length;
+  const unallocatedCount = activeCompanyStatements.filter(s => s.selection === 'Unallocated Expen').length;
 
 
   useEffect(() => {
@@ -428,7 +430,7 @@ const AccountingDashboard = () => {
           />
         )}
         {activeTab === 'banking' && (
-          <BankingView 
+          <BankingView
             bankStatements={bankStatements}
             saveBankStatements={saveBankStatements}
             invoices={invoices}
@@ -436,6 +438,7 @@ const AccountingDashboard = () => {
             clients={clients}
             suppliers={suppliers}
             accounts={accounts}
+            company={activeCompany}
           />
         )}
         {activeTab === 'vatrecon' && (
@@ -2154,8 +2157,8 @@ const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clien
   // Use accounts prop or default accounts
   const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
   
-  // Filter supplier invoices
-  const supplierInvoices = invoices.filter(inv => inv.invoiceType === 'supplier');
+  // Filter supplier invoices by type and company
+  const supplierInvoices = invoices.filter(inv => inv.invoiceType === 'supplier' && (!company?.id || inv.companyId === company.id));
 
   // Purchase orders for linking (mock data - you can expand this)
   const purchaseOrders = [
@@ -2396,7 +2399,8 @@ Rules:
       amount: parseFloat(inv.amountIncVat) || 0,
       status: 'Pending',
       account: inv.account,
-      linkedPO: inv.purchaseOrder
+      linkedPO: inv.purchaseOrder,
+      companyId: company?.id
     }));
     
     saveInvoices([...invoices, ...newInvoices]);
@@ -3636,7 +3640,7 @@ const AccountsView = ({ accounts, saveAccounts, showAccountForm, setShowAccountF
 };
 
 // ==================== BANKING VIEW ====================
-const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoices, clients, suppliers, accounts = [] }) => {
+const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoices, clients, suppliers, accounts = [], company }) => {
   const fileInputRef = React.useRef(null);
   const pdfInputRef = React.useRef(null);
   const imageInputRef = React.useRef(null);
@@ -3657,9 +3661,10 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
     ...accounts.filter(a => a.active !== false).map(a => a.name)
   ];
 
-  const attachedTransactions = bankStatements;
-  const newTransactions = bankStatements.filter(stmt => !stmt.reviewed);
-  const reviewedTransactions = bankStatements.filter(stmt => stmt.reviewed);
+  const companyStatements = company?.id ? bankStatements.filter(s => s.companyId === company.id) : bankStatements;
+  const attachedTransactions = companyStatements;
+  const newTransactions = companyStatements.filter(stmt => !stmt.reviewed);
+  const reviewedTransactions = companyStatements.filter(stmt => stmt.reviewed);
   const displayedTransactions = activeBankSubTab === 'attached'
     ? attachedTransactions
     : activeBankSubTab === 'reviewed'
@@ -3921,9 +3926,10 @@ Rules:
       received: row.type === 'received' ? parseFloat(row.amount) || 0 : 0,
       reconciled: false,
       linkedInvoice: null,
-      linkedType: null
+      linkedType: null,
+      companyId: company?.id
     }));
-    
+
     saveBankStatements([...bankStatements, ...newStatements]);
     setShowPdfExtractor(false);
     setExtractedPdfData([]);
@@ -3962,7 +3968,8 @@ Rules:
           reviewed: false,
           reconciled: false,
           linkedInvoice: null,
-          linkedType: null
+          linkedType: null,
+          companyId: company?.id
         };
       });
       
@@ -3987,7 +3994,8 @@ Rules:
       reviewed: false,
       reconciled: false,
       linkedInvoice: null,
-      linkedType: null
+      linkedType: null,
+      companyId: company?.id
     }]);
   };
 
@@ -4748,15 +4756,16 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     return rate && (rate.includes('15.00%') || rate === 'Standard 15%' || rate.includes('15%'));
   };
 
-  // Filter transactions by type and rate
-  const standardOutputTxns = vatTransactions.filter(t => t.vatType === 'output' && isStandardRate(t.vatRate));
-  const zeroOutputTxns = vatTransactions.filter(t => t.vatType === 'output' && !isStandardRate(t.vatRate));
-  const standardInputTxns = vatTransactions.filter(t => t.vatType === 'input' && isStandardRate(t.vatRate));
-  const zeroInputTxns = vatTransactions.filter(t => t.vatType === 'input' && !isStandardRate(t.vatRate));
+  // Filter transactions by company first, then by type and rate
+  const companyVatTransactions = company?.id ? vatTransactions.filter(t => t.companyId === company.id) : vatTransactions;
+  const standardOutputTxns = companyVatTransactions.filter(t => t.vatType === 'output' && isStandardRate(t.vatRate));
+  const zeroOutputTxns = companyVatTransactions.filter(t => t.vatType === 'output' && !isStandardRate(t.vatRate));
+  const standardInputTxns = companyVatTransactions.filter(t => t.vatType === 'input' && isStandardRate(t.vatRate));
+  const zeroInputTxns = companyVatTransactions.filter(t => t.vatType === 'input' && !isStandardRate(t.vatRate));
 
   // All output and input transactions
-  const outputTransactions = vatTransactions.filter(t => t.vatType === 'output');
-  const inputTransactions = vatTransactions.filter(t => t.vatType === 'input');
+  const outputTransactions = companyVatTransactions.filter(t => t.vatType === 'output');
+  const inputTransactions = companyVatTransactions.filter(t => t.vatType === 'input');
 
   // Calculate totals
   const calcTotals = (txns) => ({
@@ -4826,10 +4835,11 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
           vat,
           inclusive: inclusive || (exclusive + vat),
           vatType,
-          vatRate
+          vatRate,
+          companyId: company?.id
         };
       }).filter(t => t.description || t.reference || t.exclusive > 0 || t.vat > 0);
-      
+
       saveVatTransactions([...vatTransactions, ...newTransactions]);
       setSaveMessage(`${newTransactions.length} transactions imported!`);
       setTimeout(() => setSaveMessage(''), 3000);
@@ -4850,7 +4860,8 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
       vat: 0,
       inclusive: 0,
       vatType,
-      vatRate
+      vatRate,
+      companyId: company?.id
     };
     saveVatTransactions([...vatTransactions, newTransaction]);
   };
@@ -5122,10 +5133,11 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
     setGenerating(false);
   };
 
-  // Clear all
+  // Clear all transactions for the current company
   const clearAll = () => {
-    if (vatTransactions.length > 0) {
-      saveVatTransactions([]);
+    if (companyVatTransactions.length > 0) {
+      const remaining = company?.id ? vatTransactions.filter(t => t.companyId !== company.id) : [];
+      saveVatTransactions(remaining);
       setSaveMessage('All transactions cleared');
       setTimeout(() => setSaveMessage(''), 3000);
     }
@@ -5580,7 +5592,8 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
   ];
 
   const generateTrialBalance = () => {
-    const filtered = filterByDateRange(bankStatements);
+    const companyStatements = company?.id ? bankStatements.filter(s => s.companyId === company.id) : bankStatements;
+    const filtered = filterByDateRange(companyStatements);
     const accountBalances = {};
 
     // Build balances from bank statements mapped to account selections
@@ -5674,8 +5687,10 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
   };
 
   const generateVATReport = () => {
-    const filteredStatements = filterByDateRange(bankStatements);
-    const filteredInvoices = filterByDateRange(invoices);
+    const companyStatements = company?.id ? bankStatements.filter(s => s.companyId === company.id) : bankStatements;
+    const companyInvoices = company?.id ? invoices.filter(inv => inv.companyId === company.id) : invoices;
+    const filteredStatements = filterByDateRange(companyStatements);
+    const filteredInvoices = filterByDateRange(companyInvoices);
 
     const vatData = {
       standardOutput: { vat: 0, transactions: [] },
