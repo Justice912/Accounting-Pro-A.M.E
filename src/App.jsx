@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield, Filter, SortAsc, TrendingUp, DollarSign, Clock } from 'lucide-react';
+import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield, Filter, SortAsc, TrendingUp, DollarSign, Clock, Settings } from 'lucide-react';
 import AuditModule from './AuditModule';
 
 // VAT Rate Options (South African VAT rates)
@@ -118,6 +118,8 @@ const AccountingDashboard = () => {
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [activeCompanyId, setActiveCompanyId] = useState(null);
   const [showClientSelector, setShowClientSelector] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
 
   // Load data on mount
   useEffect(() => {
@@ -158,6 +160,10 @@ const AccountingDashboard = () => {
       if (suppRes?.value) setSuppliers(JSON.parse(suppRes.value));
       if (bankRes?.value) setBankStatements(JSON.parse(bankRes.value));
       if (vatRes?.value) setVatTransactions(JSON.parse(vatRes.value));
+
+      // Load API key
+      const savedApiKey = localStorage.getItem('anthropic-api-key');
+      if (savedApiKey) setApiKey(savedApiKey);
       
       // Load accounts or use defaults - always ensure we have accounts
       let loadedAccounts = [];
@@ -335,6 +341,50 @@ const AccountingDashboard = () => {
             </div>
             <button onClick={() => setActiveTab('companies')} className="px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-sm hover:bg-white/20">Manage</button>
             <button onClick={() => { setShowClientForm(true); setActiveTab('companies'); }} className="px-3 py-2 rounded-lg bg-white text-emerald-700 text-sm font-semibold hover:bg-emerald-50">Add</button>
+            <div className="relative">
+              <button
+                onClick={() => setShowApiKeyInput(prev => !prev)}
+                className={`px-3 py-2 rounded-lg border text-sm flex items-center gap-1.5 ${apiKey ? 'bg-emerald-500/20 border-emerald-300/40 text-emerald-100' : 'bg-red-500/20 border-red-300/40 text-red-100'}`}
+                title={apiKey ? 'API Key configured' : 'API Key not set - AI features will not work'}
+              >
+                <Settings className="w-4 h-4" />
+                AI {apiKey ? 'On' : 'Off'}
+              </button>
+              {showApiKeyInput && (
+                <div className="absolute right-0 mt-2 w-96 bg-white text-slate-800 rounded-lg shadow-xl border z-50 p-4">
+                  <h3 className="font-semibold text-sm mb-1">Claude API Key</h3>
+                  <p className="text-xs text-slate-500 mb-3">Required for AI-powered features (bank statement extraction, transaction allocation). Get your key from <a href="https://console.anthropic.com/" target="_blank" rel="noreferrer" className="text-emerald-600 underline">console.anthropic.com</a></p>
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk-ant-api03-..."
+                    className="w-full border rounded px-3 py-2 text-sm mb-2 font-mono"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => {
+                        setApiKey('');
+                        localStorage.removeItem('anthropic-api-key');
+                        setShowApiKeyInput(false);
+                      }}
+                      className="px-3 py-1.5 text-xs border rounded hover:bg-slate-50 text-red-600"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={() => {
+                        localStorage.setItem('anthropic-api-key', apiKey);
+                        setShowApiKeyInput(false);
+                      }}
+                      className="px-3 py-1.5 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 font-medium"
+                    >
+                      Save Key
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -396,7 +446,7 @@ const AccountingDashboard = () => {
           />
         )}
         {activeTab === 'suppliers' && (
-          <SuppliersView 
+          <SuppliersView
             suppliers={suppliers}
             saveSuppliers={saveSuppliers}
             invoices={invoices}
@@ -410,6 +460,7 @@ const AccountingDashboard = () => {
             setSelectedInvoice={setSelectedInvoice}
             accounts={accounts}
             company={activeCompany}
+            apiKey={apiKey}
           />
         )}
         {activeTab === 'companies' && (
@@ -439,6 +490,7 @@ const AccountingDashboard = () => {
             suppliers={suppliers}
             accounts={accounts}
             company={activeCompany}
+            apiKey={apiKey}
           />
         )}
         {activeTab === 'vatrecon' && (
@@ -2145,7 +2197,7 @@ const PrintPreview = ({ invoice, onClose, company }) => {
 };
 
 // ==================== SUPPLIERS VIEW (with Supplier Invoices) ====================
-const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clients, showSupplierForm, setShowSupplierForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, accounts = [], company }) => {
+const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clients, showSupplierForm, setShowSupplierForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, accounts = [], company, apiKey }) => {
   const [formData, setFormData] = useState({ name: '', company: '', email: '', phone: '' });
   const [activeTab, setActiveTab] = useState('invoices');
   const pdfInvoiceInputRef = React.useRef(null);
@@ -2183,6 +2235,9 @@ const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clien
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
@@ -3640,7 +3695,7 @@ const AccountsView = ({ accounts, saveAccounts, showAccountForm, setShowAccountF
 };
 
 // ==================== BANKING VIEW ====================
-const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoices, clients, suppliers, accounts = [], company }) => {
+const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoices, clients, suppliers, accounts = [], company, apiKey }) => {
   const fileInputRef = React.useRef(null);
   const pdfInputRef = React.useRef(null);
   const imageInputRef = React.useRef(null);
@@ -3694,6 +3749,9 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
@@ -4211,7 +4269,12 @@ Rules:
 
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 4000,
