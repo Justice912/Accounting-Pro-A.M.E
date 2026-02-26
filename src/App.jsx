@@ -4511,7 +4511,19 @@ Rules:
     }
   };
 
+  // Reinforce allocation rules when user confirms (reviews) AI-allocated transactions
+  const reinforceConfirmedAllocations = (stmts) => {
+    stmts.forEach(stmt => {
+      if (stmt.aiAllocated && stmt.selection && stmt.selection !== 'Unallocated Expen' && stmt.selection !== 'Unallocated Income') {
+        updateRuleFromAllocation(stmt, stmt.selection, stmt.vatRate);
+      }
+    });
+  };
+
   const handleSaveChanges = () => {
+    // Reinforce rules for reconciled transactions being confirmed as reviewed
+    const reconciledStmts = bankStatements.filter(s => s.reconciled && !s.reviewed);
+    reinforceConfirmedAllocations(reconciledStmts);
     const updated = bankStatements.map(stmt => stmt.reconciled ? { ...stmt, reviewed: true } : stmt);
     saveBankStatements(updated);
     setSaveMessage('Changes saved successfully. Reconciled transactions moved to Reviewed Transactions.');
@@ -4524,7 +4536,10 @@ Rules:
       setTimeout(() => setSaveMessage(''), 3000);
       return;
     }
-    const updated = bankStatements.map(s => 
+    // Reinforce rules for selected AI-allocated transactions being confirmed
+    const selectedStmts = bankStatements.filter(s => selectedIds.includes(s.id) && !s.reviewed);
+    reinforceConfirmedAllocations(selectedStmts);
+    const updated = bankStatements.map(s =>
       selectedIds.includes(s.id) ? { ...s, reconciled: true, reviewed: true } : s
     );
     saveBankStatements(updated);
@@ -4535,6 +4550,9 @@ Rules:
 
   const handleMarkAllAsReviewed = () => {
     const visibleIds = new Set(displayedTransactions.map(s => s.id));
+    // Reinforce rules for all visible AI-allocated transactions being confirmed
+    const visibleStmts = bankStatements.filter(s => visibleIds.has(s.id) && !s.reviewed);
+    reinforceConfirmedAllocations(visibleStmts);
     const updated = bankStatements.map(s => visibleIds.has(s.id) ? { ...s, reconciled: true, reviewed: true } : s);
     saveBankStatements(updated);
     setSelectedIds([]);
@@ -4760,52 +4778,6 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
 
     setAiAllocating(false);
     setAiAllocatingIds([]);
-    setTimeout(() => setSaveMessage(''), 5000);
-  };
-
-  // Local rules-based allocation (no API needed)
-  const localAllocateTransactions = (stmtIds) => {
-    const updatedStatements = bankStatements.map(s => {
-      if (!stmtIds.includes(s.id)) return s;
-      const desc = (s.description || '').toLowerCase();
-      const payee = (s.payee || '').toLowerCase();
-      const combined = `${desc} ${payee}`;
-
-      let account = s.selection;
-      let vatRate = s.vatRate;
-
-      // Rules-based matching
-      if (combined.match(/salary|wages|payroll|paye|uif|sdl/i)) { account = 'Salaries & Wages'; vatRate = 'No VAT'; }
-      else if (combined.match(/entertainment|dining|restaurant|bar|drinks|catering/i)) { account = 'Entertainment'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/insurance|sanlam|old mutual|discovery.*life|hollard/i)) { account = 'Insurance'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/bank.*charge|service.*fee|monthly.*fee|transaction.*fee|overdraft/i)) { account = 'Bank Charges'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/interest.*paid|loan.*interest|finance.*charge/i)) { account = 'Interest Paid'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/interest.*received/i)) { account = 'Interest Received'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/donation|charity|ngo|npo/i)) { account = 'General Expenses'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/rent|lease.*premises|office.*space/i)) { account = 'Rent Paid'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/telkom|vodacom|mtn|cell\s*c|fibre|internet|wifi|airtime/i)) { account = 'Telephone & Internet'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/fuel|petrol|diesel|shell|sasol|engen|caltex|bp\s/i)) { account = 'Motor Vehicle Expenses'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/repair|maintenance|plumber|electrician|fix/i)) { account = 'Repairs & Maintenance'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/stationery|paper|ink|toner|cartridge|office.*suppl/i)) { account = 'Printing & Stationery'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/computer|software|laptop|microsoft|google|cloud|hosting/i)) { account = 'Computer Expenses'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/advert|marketing|facebook|google.*ads|promo/i)) { account = 'Advertising'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/electric|water|municipal|eskom|city.*power/i)) { account = 'Electricity & Water'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/accounting|audit|tax.*consult|bookkeep/i)) { account = 'Accounting Fees'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/security|guard|alarm|adt|chubb/i)) { account = 'Security'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/travel|flight|hotel|accommodation|uber|taxi/i)) { account = 'Travel & Accommodation'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/depreciation/i)) { account = 'Depreciation'; vatRate = 'No VAT'; }
-      else if (s.received > 0) { account = 'Sales'; vatRate = 'Standard Rate (15.00%)'; }
-
-      // Only update if account exists in our options
-      const validAccount = selectionOptions.includes(account) ? account : s.selection;
-      const validVat = VAT_RATES.find(v => v.value === vatRate) ? vatRate : s.vatRate;
-
-      return { ...s, selection: validAccount, vatRate: validVat, aiAllocated: true };
-    });
-
-    saveBankStatements(updatedStatements);
-    const count = stmtIds.length;
-    setSaveMessage(`${count} transaction(s) allocated using rules-based matching!`);
     setTimeout(() => setSaveMessage(''), 5000);
   };
 
