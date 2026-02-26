@@ -3712,6 +3712,9 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
   const [expandedIds, setExpandedIds] = useState([]);
   const [aiAllocating, setAiAllocating] = useState(false);
   const [aiAllocatingIds, setAiAllocatingIds] = useState([]);
+  const [allocationRules, setAllocationRules] = useState([]);
+  const [showRulesModal, setShowRulesModal] = useState(false);
+  const [trainingInProgress, setTrainingInProgress] = useState(false);
 
   // Build selection options from accounts
   const selectionOptions = [
@@ -3733,6 +3736,408 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
     const visibleIds = new Set(displayedTransactions.map(stmt => stmt.id));
     setSelectedIds(prev => prev.filter(id => visibleIds.has(id)));
   }, [activeBankSubTab, bankStatements]);
+
+  // Load allocation rules from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('allocation-rules');
+      if (saved) setAllocationRules(JSON.parse(saved));
+    } catch (e) { console.error('Error loading allocation rules:', e); }
+  }, []);
+
+  const saveAllocationRules = (rules) => {
+    setAllocationRules(rules);
+    localStorage.setItem('allocation-rules', JSON.stringify(rules));
+  };
+
+  // Extract patterns from all previously allocated bank transactions to build rule memory
+  const extractPatternsFromHistory = () => {
+    setTrainingInProgress(true);
+    const companyId = company?.id;
+    const allocated = companyStatements.filter(s =>
+      s.selection && s.selection !== 'Unallocated Expen' && s.selection !== 'Unallocated Income'
+    );
+
+    if (allocated.length === 0) {
+      setTrainingInProgress(false);
+      setSaveMessage('No allocated transactions found to learn from. Allocate some transactions first.');
+      setTimeout(() => setSaveMessage(''), 5000);
+      return;
+    }
+
+    const patternMap = {};
+
+    allocated.forEach(stmt => {
+      const desc = (stmt.description || '').toLowerCase().trim();
+      const payee = (stmt.payee || '').toLowerCase().trim();
+      if (!desc && !payee) return;
+
+      const patterns = [];
+      if (desc) patterns.push({ text: desc, type: 'description' });
+      if (payee && payee !== desc) patterns.push({ text: payee, type: 'payee' });
+
+      patterns.forEach(p => {
+        const key = `${p.text}|||${stmt.selection}|||${stmt.vatRate || 'No VAT'}`;
+        if (!patternMap[key]) {
+          patternMap[key] = {
+            pattern: p.text,
+            patternType: p.type,
+            accountName: stmt.selection,
+            vatRate: stmt.vatRate || 'No VAT',
+            count: 0,
+            lastDate: stmt.date || ''
+          };
+        }
+        patternMap[key].count++;
+        if ((stmt.date || '') > patternMap[key].lastDate) {
+          patternMap[key].lastDate = stmt.date;
+        }
+      });
+    });
+
+    const newRules = Object.values(patternMap).map(p => ({
+      id: `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      pattern: p.pattern,
+      patternType: p.patternType,
+      accountName: p.accountName,
+      vatRate: p.vatRate,
+      confidenceScore: p.count,
+      timesMatched: p.count,
+      lastUsed: p.lastDate,
+      companyId: companyId,
+      source: 'historical'
+    }));
+
+    // Keep manually created rules, replace all historical ones
+    const manualRules = allocationRules.filter(r => r.source === 'manual' && r.companyId === companyId);
+    const otherCompanyRules = allocationRules.filter(r => r.companyId !== companyId);
+    const merged = [...otherCompanyRules, ...manualRules, ...newRules];
+
+    saveAllocationRules(merged);
+    setTrainingInProgress(false);
+    setSaveMessage(`Training complete! Learned ${newRules.length} patterns from ${allocated.length} allocated transactions.`);
+    setTimeout(() => setSaveMessage(''), 6000);
+  };
+
+  // Build historical examples string for the AI prompt
+  const getHistoricalExamples = (rules) => {
+    const companyRules = rules
+      .filter(r => r.companyId === company?.id)
+      .sort((a, b) => b.confidenceScore - a.confidenceScore)
+      .slice(0, 25);
+
+    if (companyRules.length === 0) return 'No historical patterns available yet.';
+
+    return companyRules.map((r, i) =>
+      `${i + 1}. "${r.pattern}" -> Account: "${r.accountName}", VAT: "${r.vatRate}" (matched ${r.timesMatched} times)`
+    ).join('\n');
+  };
+
+  // Local regex-based allocation helper (reusable version of localAllocateTransactions logic)
+  const getLocalAllocation = (stmt) => {
+    const desc = (stmt.description || '').toLowerCase();
+    const payee = (stmt.payee || '').toLowerCase();
+    const combined = `${desc} ${payee}`;
+
+    if (combined.match(/salary|wages|payroll|paye|uif|sdl/i)) return { account: 'Salaries & Wages', vatRate: 'No VAT' };
+    if (combined.match(/entertainment|dining|restaurant|bar|drinks|catering/i)) return { account: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)' };
+    if (combined.match(/insurance|sanlam|old mutual|discovery.*life|hollard/i)) return { account: 'Insurance', vatRate: 'Exempt and Non-Supplies (0.00%)' };
+    if (combined.match(/bank.*charge|service.*fee|monthly.*fee|transaction.*fee|overdraft/i)) return { account: 'Bank Charges', vatRate: 'Exempt and Non-Supplies (0.00%)' };
+    if (combined.match(/interest.*paid|loan.*interest|finance.*charge/i)) return { account: 'Interest Paid', vatRate: 'Exempt and Non-Supplies (0.00%)' };
+    if (combined.match(/interest.*received/i)) return { account: 'Interest Received', vatRate: 'Exempt and Non-Supplies (0.00%)' };
+    if (combined.match(/donation|charity|ngo|npo/i)) return { account: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)' };
+    if (combined.match(/rent|lease.*premises|office.*space/i)) return { account: 'Rent Paid', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/telkom|vodacom|mtn|cell\s*c|fibre|internet|wifi|airtime/i)) return { account: 'Telephone & Internet', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/fuel|petrol|diesel|shell|sasol|engen|caltex|bp\s/i)) return { account: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/repair|maintenance|plumber|electrician|fix/i)) return { account: 'Repairs & Maintenance', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/stationery|paper|ink|toner|cartridge|office.*suppl/i)) return { account: 'Printing & Stationery', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/computer|software|laptop|microsoft|google|cloud|hosting/i)) return { account: 'Computer Expenses', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/advert|marketing|facebook|google.*ads|promo/i)) return { account: 'Advertising', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/electric|water|municipal|eskom|city.*power/i)) return { account: 'Electricity & Water', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/accounting|audit|tax.*consult|bookkeep/i)) return { account: 'Accounting Fees', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/security|guard|alarm|adt|chubb/i)) return { account: 'Security', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/travel|flight|hotel|accommodation|uber|taxi/i)) return { account: 'Travel & Accommodation', vatRate: 'Standard Rate (15.00%)' };
+    if (combined.match(/depreciation/i)) return { account: 'Depreciation', vatRate: 'No VAT' };
+    if (stmt.received > 0) return { account: 'Sales', vatRate: 'Standard Rate (15.00%)' };
+    return null;
+  };
+
+  // Three-tier smart allocation: Exact Match -> AI with Context -> Manual Review
+  const smartAllocateTransactions = async (stmtIds) => {
+    const stmtsToAllocate = bankStatements.filter(s => stmtIds.includes(s.id));
+    if (stmtsToAllocate.length === 0) return;
+
+    setAiAllocating(true);
+    setAiAllocatingIds(stmtIds);
+
+    const rules = allocationRules.filter(r => r.companyId === company?.id);
+    const results = [];
+    const aiNeeded = [];
+
+    // === TIER 1: Exact/close pattern match from learned rules (confidence >= 3) ===
+    stmtsToAllocate.forEach(stmt => {
+      const desc = (stmt.description || '').toLowerCase().trim();
+      const payee = (stmt.payee || '').toLowerCase().trim();
+
+      let bestMatch = null;
+      let bestScore = 0;
+
+      rules.forEach(rule => {
+        const rp = rule.pattern.toLowerCase();
+        let score = 0;
+
+        // Exact match on description or payee
+        if (desc && desc === rp) score = 100;
+        else if (payee && payee === rp) score = 95;
+        // Description contains the rule pattern (or vice versa)
+        else if (desc && desc.includes(rp) && rp.length >= 4) score = 85;
+        else if (desc && rp.includes(desc) && desc.length >= 5) score = 75;
+        // Payee contains the rule pattern (or vice versa)
+        else if (payee && payee.includes(rp) && rp.length >= 4) score = 70;
+        else if (payee && rp.includes(payee) && payee.length >= 4) score = 65;
+
+        // Boost score based on how many times this pattern was confirmed
+        const boost = Math.min(rule.confidenceScore * 2, 20);
+        score += boost;
+
+        if (score > bestScore && score >= 65) {
+          bestScore = score;
+          bestMatch = rule;
+        }
+      });
+
+      if (bestMatch && bestMatch.confidenceScore >= 3 && bestScore >= 75) {
+        // High confidence auto-allocation
+        const validAccount = selectionOptions.includes(bestMatch.accountName) ? bestMatch.accountName : null;
+        const validVat = VAT_RATES.find(v => v.value === bestMatch.vatRate)?.value;
+        if (validAccount) {
+          results.push({
+            id: stmt.id,
+            selection: validAccount,
+            vatRate: validVat || bestMatch.vatRate,
+            allocationTier: 'auto',
+            allocationConfidence: Math.min(bestScore, 99),
+            matchedRule: bestMatch.pattern
+          });
+          // Update the rule's usage stats
+          const ruleIdx = allocationRules.findIndex(r => r.id === bestMatch.id);
+          if (ruleIdx >= 0) {
+            allocationRules[ruleIdx].timesMatched = (allocationRules[ruleIdx].timesMatched || 0) + 1;
+            allocationRules[ruleIdx].lastUsed = new Date().toISOString().split('T')[0];
+          }
+          return;
+        }
+      }
+      // Not auto-matched, send to AI
+      aiNeeded.push({ stmt, suggestedRule: bestMatch });
+    });
+
+    // === TIER 2 & 3: AI allocation with historical context ===
+    if (aiNeeded.length > 0 && apiKey) {
+      try {
+        const historicalExamples = getHistoricalExamples(rules);
+        const accountNames = selectionOptions.join(', ');
+        const vatRateNames = VAT_RATES.map(v => v.value).join(', ');
+        const txnDescriptions = aiNeeded.map((item, i) => {
+          const s = item.stmt;
+          let line = `${i + 1}. Date: ${s.date} | Description: "${s.description || 'N/A'}" | Payee: "${s.payee || 'N/A'}" | Spent: ${s.spent || 0} | Received: ${s.received || 0}`;
+          if (item.suggestedRule) {
+            line += ` | Hint - similar to previous pattern: "${item.suggestedRule.pattern}" which was allocated to ${item.suggestedRule.accountName}`;
+          }
+          return line;
+        }).join('\n');
+
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+            "anthropic-dangerous-direct-browser-access": "true",
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 4000,
+            messages: [{
+              role: "user",
+              content: `You are a South African accounting assistant. Allocate bank transactions to the correct account and VAT rate.
+
+CRITICAL: I have specific ways of allocating transactions in my practice. You MUST learn from my historical patterns below and follow them as closely as possible. Only fall back to general accounting rules when no historical pattern is similar.
+
+My historical allocation patterns (FOLLOW THESE AS PRIORITY):
+${historicalExamples}
+
+Available accounts: ${accountNames}
+
+Available VAT rates: ${vatRateNames}
+
+SA VAT Rules (use only when no historical pattern matches):
+- Entertainment, staff welfare, donations, insurance premiums, bank charges, interest = Exempt and Non-Supplies (0.00%)
+- Salaries, wages, PAYE, UIF = No VAT
+- Most business purchases (stationery, repairs, phone, rent, advertising, fuel, professional fees) = Standard Rate (15.00%)
+- Capital goods (equipment, vehicles, furniture) = Standard Rate (Capital Goods) (15.00%)
+- Exported goods/services = Zero Rate Exports (0.00%)
+- Basic food items, petrol levy portion = Zero Rate (0.00%)
+
+Transactions to allocate:
+${txnDescriptions}
+
+Return ONLY a JSON array (no markdown, no code blocks):
+[{"index":1,"account":"account name","vatRate":"vat rate value","payee":"suggested payee name","confidence":85}]
+
+Rules:
+- Use EXACT account and vatRate names from the lists above
+- Match based on my historical patterns FIRST before using general rules
+- confidence: 0-100 (90+ if closely matching my historical patterns, 70-89 if reasonably similar, below 70 if guessing)
+- If a transaction has a "Hint" about a similar previous pattern, strongly prefer that allocation`
+            }]
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const text = data.content?.[0]?.text || '';
+          let jsonStr = text.trim().replace(/```json\s*/gi, '').replace(/```\s*/gi, '');
+          const jsonMatch = jsonStr.match(/\[[\s\S]*\]/);
+
+          if (jsonMatch) {
+            const allocations = JSON.parse(jsonMatch[0]);
+            aiNeeded.forEach((item, idx) => {
+              const alloc = allocations.find(a => a.index === idx + 1);
+              if (alloc) {
+                const matchedAccount = selectionOptions.find(opt => opt === alloc.account);
+                const matchedVat = VAT_RATES.find(v => v.value === alloc.vatRate)?.value;
+
+                if (matchedAccount) {
+                  const conf = alloc.confidence || 50;
+                  results.push({
+                    id: item.stmt.id,
+                    selection: matchedAccount,
+                    vatRate: matchedVat || item.stmt.vatRate,
+                    payee: alloc.payee || item.stmt.payee,
+                    allocationTier: conf >= 70 ? 'ai-suggested' : 'needs-review',
+                    allocationConfidence: conf
+                  });
+                }
+              }
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Smart allocation AI error:', error);
+        setSaveMessage(`AI step failed: ${error.message}. Using local rules for remaining transactions.`);
+      }
+    }
+
+    // Fallback: local regex rules for anything still unmatched
+    const matchedIds = new Set(results.map(r => r.id));
+    stmtsToAllocate.filter(s => !matchedIds.has(s.id)).forEach(stmt => {
+      const local = getLocalAllocation(stmt);
+      if (local) {
+        const validAccount = selectionOptions.includes(local.account) ? local.account : null;
+        const validVat = VAT_RATES.find(v => v.value === local.vatRate)?.value;
+        if (validAccount) {
+          results.push({
+            id: stmt.id,
+            selection: validAccount,
+            vatRate: validVat || local.vatRate,
+            allocationTier: 'needs-review',
+            allocationConfidence: 30
+          });
+        }
+      }
+    });
+
+    // Apply all results to bank statements
+    if (results.length > 0) {
+      const updatedStatements = bankStatements.map(s => {
+        const result = results.find(r => r.id === s.id);
+        if (!result) return s;
+        return {
+          ...s,
+          selection: result.selection,
+          vatRate: result.vatRate,
+          payee: result.payee || s.payee,
+          aiAllocated: true,
+          allocationTier: result.allocationTier,
+          allocationConfidence: result.allocationConfidence,
+          matchedRule: result.matchedRule || null
+        };
+      });
+      saveBankStatements(updatedStatements);
+      // Save updated rule usage stats
+      saveAllocationRules([...allocationRules]);
+    }
+
+    const autoCount = results.filter(r => r.allocationTier === 'auto').length;
+    const aiCount = results.filter(r => r.allocationTier === 'ai-suggested').length;
+    const reviewCount = results.filter(r => r.allocationTier === 'needs-review').length;
+    const totalCount = stmtsToAllocate.length;
+    const unmatched = totalCount - results.length;
+
+    let msg = `Smart allocation: ${autoCount} auto-matched, ${aiCount} AI-suggested, ${reviewCount} need review`;
+    if (unmatched > 0) msg += `, ${unmatched} unmatched`;
+    setSaveMessage(msg);
+
+    setAiAllocating(false);
+    setAiAllocatingIds([]);
+    setTimeout(() => setSaveMessage(''), 7000);
+  };
+
+  // Learning feedback: update allocation rules when user manually changes a transaction's category
+  const updateRuleFromAllocation = (stmt, newAccount, newVatRate) => {
+    if (!newAccount || newAccount === 'Unallocated Expen' || newAccount === 'Unallocated Income') return;
+
+    const desc = (stmt.description || '').toLowerCase().trim();
+    const payee = (stmt.payee || '').toLowerCase().trim();
+    const pattern = desc || payee;
+    if (!pattern) return;
+
+    const companyId = company?.id;
+    let rules = [...allocationRules];
+
+    // If user overrides an auto-allocation, reduce confidence of the wrong rule
+    if (stmt.allocationTier === 'auto' && stmt.matchedRule) {
+      rules = rules.map(r => {
+        if (r.pattern === stmt.matchedRule && r.companyId === companyId && r.accountName !== newAccount) {
+          return { ...r, confidenceScore: Math.max(0, r.confidenceScore - 1) };
+        }
+        return r;
+      });
+    }
+
+    // Find existing rule for this exact pattern + account combo
+    const existingIdx = rules.findIndex(r =>
+      r.pattern === pattern && r.accountName === newAccount && r.companyId === companyId
+    );
+
+    if (existingIdx >= 0) {
+      // Strengthen existing rule
+      rules[existingIdx] = {
+        ...rules[existingIdx],
+        confidenceScore: rules[existingIdx].confidenceScore + 1,
+        timesMatched: rules[existingIdx].timesMatched + 1,
+        vatRate: newVatRate || rules[existingIdx].vatRate,
+        lastUsed: new Date().toISOString().split('T')[0]
+      };
+    } else {
+      // Create new rule from this manual allocation
+      rules.push({
+        id: `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        pattern,
+        patternType: desc ? 'description' : 'payee',
+        accountName: newAccount,
+        vatRate: newVatRate || 'No VAT',
+        confidenceScore: 1,
+        timesMatched: 1,
+        lastUsed: new Date().toISOString().split('T')[0],
+        companyId,
+        source: stmt.aiAllocated ? 'ai-confirmed' : 'manual'
+      });
+    }
+
+    saveAllocationRules(rules);
+  };
 
   // AI-powered extraction for bank statements using Claude API
   const extractBankStatementWithAI = async (imageData, fileName) => {
@@ -4061,6 +4466,15 @@ Rules:
   };
 
   const updateStatement = (id, field, value) => {
+    const stmt = bankStatements.find(s => s.id === id);
+    // Learning feedback: when user manually changes the account allocation, update rules
+    if (stmt && field === 'selection' && value !== stmt.selection) {
+      updateRuleFromAllocation(stmt, value, stmt.vatRate);
+    }
+    // Learning feedback: when user changes VAT rate on an already-allocated transaction
+    if (stmt && field === 'vatRate' && value !== stmt.vatRate && stmt.selection && stmt.selection !== 'Unallocated Expen') {
+      updateRuleFromAllocation(stmt, stmt.selection, value);
+    }
     saveBankStatements(bankStatements.map(s => s.id === id ? { ...s, [field]: value } : s));
   };
 
@@ -4097,7 +4511,19 @@ Rules:
     }
   };
 
+  // Reinforce allocation rules when user confirms (reviews) AI-allocated transactions
+  const reinforceConfirmedAllocations = (stmts) => {
+    stmts.forEach(stmt => {
+      if (stmt.aiAllocated && stmt.selection && stmt.selection !== 'Unallocated Expen' && stmt.selection !== 'Unallocated Income') {
+        updateRuleFromAllocation(stmt, stmt.selection, stmt.vatRate);
+      }
+    });
+  };
+
   const handleSaveChanges = () => {
+    // Reinforce rules for reconciled transactions being confirmed as reviewed
+    const reconciledStmts = bankStatements.filter(s => s.reconciled && !s.reviewed);
+    reinforceConfirmedAllocations(reconciledStmts);
     const updated = bankStatements.map(stmt => stmt.reconciled ? { ...stmt, reviewed: true } : stmt);
     saveBankStatements(updated);
     setSaveMessage('Changes saved successfully. Reconciled transactions moved to Reviewed Transactions.');
@@ -4110,7 +4536,10 @@ Rules:
       setTimeout(() => setSaveMessage(''), 3000);
       return;
     }
-    const updated = bankStatements.map(s => 
+    // Reinforce rules for selected AI-allocated transactions being confirmed
+    const selectedStmts = bankStatements.filter(s => selectedIds.includes(s.id) && !s.reviewed);
+    reinforceConfirmedAllocations(selectedStmts);
+    const updated = bankStatements.map(s =>
       selectedIds.includes(s.id) ? { ...s, reconciled: true, reviewed: true } : s
     );
     saveBankStatements(updated);
@@ -4121,6 +4550,9 @@ Rules:
 
   const handleMarkAllAsReviewed = () => {
     const visibleIds = new Set(displayedTransactions.map(s => s.id));
+    // Reinforce rules for all visible AI-allocated transactions being confirmed
+    const visibleStmts = bankStatements.filter(s => visibleIds.has(s.id) && !s.reviewed);
+    reinforceConfirmedAllocations(visibleStmts);
     const updated = bankStatements.map(s => visibleIds.has(s.id) ? { ...s, reconciled: true, reviewed: true } : s);
     saveBankStatements(updated);
     setSelectedIds([]);
@@ -4346,52 +4778,6 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
 
     setAiAllocating(false);
     setAiAllocatingIds([]);
-    setTimeout(() => setSaveMessage(''), 5000);
-  };
-
-  // Local rules-based allocation (no API needed)
-  const localAllocateTransactions = (stmtIds) => {
-    const updatedStatements = bankStatements.map(s => {
-      if (!stmtIds.includes(s.id)) return s;
-      const desc = (s.description || '').toLowerCase();
-      const payee = (s.payee || '').toLowerCase();
-      const combined = `${desc} ${payee}`;
-
-      let account = s.selection;
-      let vatRate = s.vatRate;
-
-      // Rules-based matching
-      if (combined.match(/salary|wages|payroll|paye|uif|sdl/i)) { account = 'Salaries & Wages'; vatRate = 'No VAT'; }
-      else if (combined.match(/entertainment|dining|restaurant|bar|drinks|catering/i)) { account = 'Entertainment'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/insurance|sanlam|old mutual|discovery.*life|hollard/i)) { account = 'Insurance'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/bank.*charge|service.*fee|monthly.*fee|transaction.*fee|overdraft/i)) { account = 'Bank Charges'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/interest.*paid|loan.*interest|finance.*charge/i)) { account = 'Interest Paid'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/interest.*received/i)) { account = 'Interest Received'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/donation|charity|ngo|npo/i)) { account = 'General Expenses'; vatRate = 'Exempt and Non-Supplies (0.00%)'; }
-      else if (combined.match(/rent|lease.*premises|office.*space/i)) { account = 'Rent Paid'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/telkom|vodacom|mtn|cell\s*c|fibre|internet|wifi|airtime/i)) { account = 'Telephone & Internet'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/fuel|petrol|diesel|shell|sasol|engen|caltex|bp\s/i)) { account = 'Motor Vehicle Expenses'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/repair|maintenance|plumber|electrician|fix/i)) { account = 'Repairs & Maintenance'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/stationery|paper|ink|toner|cartridge|office.*suppl/i)) { account = 'Printing & Stationery'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/computer|software|laptop|microsoft|google|cloud|hosting/i)) { account = 'Computer Expenses'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/advert|marketing|facebook|google.*ads|promo/i)) { account = 'Advertising'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/electric|water|municipal|eskom|city.*power/i)) { account = 'Electricity & Water'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/accounting|audit|tax.*consult|bookkeep/i)) { account = 'Accounting Fees'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/security|guard|alarm|adt|chubb/i)) { account = 'Security'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/travel|flight|hotel|accommodation|uber|taxi/i)) { account = 'Travel & Accommodation'; vatRate = 'Standard Rate (15.00%)'; }
-      else if (combined.match(/depreciation/i)) { account = 'Depreciation'; vatRate = 'No VAT'; }
-      else if (s.received > 0) { account = 'Sales'; vatRate = 'Standard Rate (15.00%)'; }
-
-      // Only update if account exists in our options
-      const validAccount = selectionOptions.includes(account) ? account : s.selection;
-      const validVat = VAT_RATES.find(v => v.value === vatRate) ? vatRate : s.vatRate;
-
-      return { ...s, selection: validAccount, vatRate: validVat, aiAllocated: true };
-    });
-
-    saveBankStatements(updatedStatements);
-    const count = stmtIds.length;
-    setSaveMessage(`${count} transaction(s) allocated using rules-based matching!`);
     setTimeout(() => setSaveMessage(''), 5000);
   };
 
@@ -4624,7 +5010,7 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
             <tbody>
               {displayedTransactions.length > 0 ? displayedTransactions.map(stmt => (
                 <React.Fragment key={stmt.id}>
-                <tr className={`border-t hover:bg-slate-50 ${stmt.reconciled ? 'bg-green-50' : ''} ${selectedIds.includes(stmt.id) ? 'bg-blue-50' : ''} ${stmt.aiAllocated ? 'ring-1 ring-inset ring-emerald-200' : ''}`}>
+                <tr className={`border-t hover:bg-slate-50 ${stmt.reconciled ? 'bg-green-50' : ''} ${selectedIds.includes(stmt.id) ? 'bg-blue-50' : ''} ${stmt.allocationTier === 'auto' ? 'ring-1 ring-inset ring-emerald-300' : stmt.allocationTier === 'ai-suggested' ? 'ring-1 ring-inset ring-blue-200' : stmt.allocationTier === 'needs-review' ? 'ring-1 ring-inset ring-amber-200' : stmt.aiAllocated ? 'ring-1 ring-inset ring-emerald-200' : ''}`}>
                   <td className="px-2 py-2 text-center">
                     <input
                       type="checkbox"
@@ -4782,10 +5168,10 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
                         </button>
                       )}
                       <button
-                        onClick={() => aiAllocateTransactions([stmt.id])}
+                        onClick={() => smartAllocateTransactions([stmt.id])}
                         disabled={aiAllocatingIds.includes(stmt.id)}
                         className="p-1 text-purple-500 hover:bg-purple-50 rounded disabled:opacity-50"
-                        title="AI Allocate this transaction"
+                        title="Smart Allocate (learns from your history)"
                       >
                         {aiAllocatingIds.includes(stmt.id) ? (
                           <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
@@ -4838,7 +5224,10 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
                             {stmt.reconciled && <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px]">Reconciled</span>}
                             {stmt.reviewed && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px]">Reviewed</span>}
                             {stmt.linkedInvoice && <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px]">Linked: {stmt.linkedInvoiceNo}</span>}
-                            {stmt.aiAllocated && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">AI Allocated</span>}
+                            {stmt.allocationTier === 'auto' && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">Auto-matched ({stmt.allocationConfidence}%)</span>}
+                            {stmt.allocationTier === 'ai-suggested' && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px]">AI-suggested ({stmt.allocationConfidence}%)</span>}
+                            {stmt.allocationTier === 'needs-review' && <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px]">Needs review</span>}
+                            {stmt.aiAllocated && !stmt.allocationTier && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">AI Allocated</span>}
                             {!stmt.reconciled && !stmt.reviewed && !stmt.linkedInvoice && <span className="text-slate-400">Unprocessed</span>}
                           </div>
                         </div>
@@ -4894,29 +5283,37 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
                 </button>
               </>
             )}
-            {/* AI Allocation Buttons */}
+            {/* Smart AI Allocation Buttons */}
             <button
               onClick={() => {
                 const ids = selectedIds.length > 0 ? selectedIds : displayedTransactions.map(s => s.id);
-                aiAllocateTransactions(ids);
+                smartAllocateTransactions(ids);
               }}
               disabled={aiAllocating}
               className="px-6 py-2 bg-purple-600 text-white rounded font-medium text-sm hover:bg-purple-700 disabled:bg-purple-400 flex items-center gap-2"
             >
               {aiAllocating ? (
-                <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> AI Allocating...</>
+                <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Smart Allocating...</>
               ) : (
-                <><Calculator className="w-4 h-4" /> AI Allocate {selectedIds.length > 0 ? `Selected (${selectedIds.length})` : 'All'}</>
+                <><Calculator className="w-4 h-4" /> Smart Allocate {selectedIds.length > 0 ? `Selected (${selectedIds.length})` : 'All'}</>
               )}
             </button>
             <button
-              onClick={() => {
-                const ids = selectedIds.length > 0 ? selectedIds : displayedTransactions.map(s => s.id);
-                localAllocateTransactions(ids);
-              }}
-              className="px-6 py-2 bg-white text-purple-600 border border-purple-600 rounded font-medium text-sm hover:bg-purple-50 flex items-center gap-2"
+              onClick={() => extractPatternsFromHistory()}
+              disabled={trainingInProgress}
+              className="px-6 py-2 bg-white text-purple-600 border border-purple-600 rounded font-medium text-sm hover:bg-purple-50 flex items-center gap-2 disabled:opacity-50"
             >
-              <Filter className="w-4 h-4" /> Rules Allocate {selectedIds.length > 0 ? `Selected (${selectedIds.length})` : 'All'}
+              {trainingInProgress ? (
+                <><div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" /> Training...</>
+              ) : (
+                <><TrendingUp className="w-4 h-4" /> Train from History</>
+              )}
+            </button>
+            <button
+              onClick={() => setShowRulesModal(true)}
+              className="px-6 py-2 bg-white text-slate-600 border border-slate-300 rounded font-medium text-sm hover:bg-slate-50 flex items-center gap-2"
+            >
+              <Settings className="w-4 h-4" /> Manage Rules ({allocationRules.filter(r => r.companyId === company?.id).length})
             </button>
           </div>
         </div>
@@ -5062,6 +5459,231 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
               >
                 Cancel
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Allocation Rules Management Modal */}
+      {showRulesModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-hidden">
+            <div className="p-4 bg-purple-50 border-b flex justify-between items-center">
+              <div>
+                <h3 className="font-bold text-purple-800">Allocation Rules Management</h3>
+                <p className="text-sm text-purple-600 mt-1">
+                  {allocationRules.filter(r => r.companyId === company?.id).length} learned patterns for {company?.name || 'this company'}
+                </p>
+              </div>
+              <div className="flex gap-2 items-center">
+                <button
+                  onClick={extractPatternsFromHistory}
+                  disabled={trainingInProgress}
+                  className="px-4 py-2 bg-purple-600 text-white rounded text-sm hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {trainingInProgress ? (
+                    <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Training...</>
+                  ) : (
+                    <><TrendingUp className="w-4 h-4" /> Train from History</>
+                  )}
+                </button>
+                <button onClick={() => setShowRulesModal(false)} className="p-2 hover:bg-purple-100 rounded">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 overflow-auto max-h-[75vh]">
+              {/* Statistics cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <div className="bg-emerald-50 rounded-lg p-3 text-center">
+                  <p className="text-2xl font-bold text-emerald-700">
+                    {allocationRules.filter(r => r.companyId === company?.id && r.confidenceScore >= 3).length}
+                  </p>
+                  <p className="text-xs text-emerald-600">High Confidence (Auto-allocate)</p>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-3 text-center">
+                  <p className="text-2xl font-bold text-blue-700">
+                    {allocationRules.filter(r => r.companyId === company?.id && r.confidenceScore >= 1 && r.confidenceScore < 3).length}
+                  </p>
+                  <p className="text-xs text-blue-600">Learning (AI-assisted)</p>
+                </div>
+                <div className="bg-purple-50 rounded-lg p-3 text-center">
+                  <p className="text-2xl font-bold text-purple-700">
+                    {allocationRules.filter(r => r.companyId === company?.id).reduce((s, r) => s + r.timesMatched, 0)}
+                  </p>
+                  <p className="text-xs text-purple-600">Total Times Applied</p>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3 text-center">
+                  <p className="text-2xl font-bold text-slate-700">
+                    {allocationRules.filter(r => r.companyId === company?.id && r.source === 'manual').length}
+                  </p>
+                  <p className="text-xs text-slate-600">Manual Rules</p>
+                </div>
+              </div>
+
+              {/* How it works explanation */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-xs text-blue-800">
+                <p className="font-medium mb-1">How Smart Allocation Works:</p>
+                <ul className="list-disc ml-4 space-y-0.5">
+                  <li><span className="font-medium text-emerald-700">Auto-match</span> — Rules with confidence 3+ automatically allocate matching transactions</li>
+                  <li><span className="font-medium text-blue-700">AI-suggested</span> — Lower-confidence rules guide the AI to suggest allocations based on your patterns</li>
+                  <li><span className="font-medium text-amber-700">Needs review</span> — No pattern found; AI guesses or falls back to general accounting rules</li>
+                  <li>Every time you manually allocate a transaction, the system learns and strengthens the matching rule</li>
+                </ul>
+              </div>
+
+              {/* Rules table */}
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-100">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium text-slate-600">Pattern</th>
+                      <th className="text-left px-3 py-2 font-medium text-slate-600">Account</th>
+                      <th className="text-left px-3 py-2 font-medium text-slate-600">VAT Rate</th>
+                      <th className="text-center px-3 py-2 font-medium text-slate-600 w-20">Confidence</th>
+                      <th className="text-center px-3 py-2 font-medium text-slate-600 w-16">Used</th>
+                      <th className="text-left px-3 py-2 font-medium text-slate-600 w-24">Last Used</th>
+                      <th className="text-left px-3 py-2 font-medium text-slate-600 w-20">Source</th>
+                      <th className="w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allocationRules
+                      .filter(r => r.companyId === company?.id)
+                      .sort((a, b) => b.confidenceScore - a.confidenceScore)
+                      .map(rule => (
+                        <tr key={rule.id} className="border-t hover:bg-slate-50">
+                          <td className="px-3 py-2 font-mono text-xs max-w-[200px] truncate" title={rule.pattern}>
+                            {rule.pattern}
+                          </td>
+                          <td className="px-3 py-2 text-xs">{rule.accountName}</td>
+                          <td className="px-3 py-2 text-xs max-w-[140px] truncate" title={rule.vatRate}>
+                            {rule.vatRate}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                              rule.confidenceScore >= 3 ? 'bg-emerald-100 text-emerald-700' :
+                              rule.confidenceScore >= 1 ? 'bg-blue-100 text-blue-700' :
+                              'bg-slate-100 text-slate-600'
+                            }`}>
+                              {rule.confidenceScore}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-center text-xs">{rule.timesMatched}</td>
+                          <td className="px-3 py-2 text-xs text-slate-500">{rule.lastUsed || '—'}</td>
+                          <td className="px-3 py-2 text-xs">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                              rule.source === 'manual' ? 'bg-amber-100 text-amber-700' :
+                              rule.source === 'ai-confirmed' ? 'bg-blue-100 text-blue-700' :
+                              'bg-slate-100 text-slate-600'
+                            }`}>
+                              {rule.source || 'historical'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <button
+                              onClick={() => saveAllocationRules(allocationRules.filter(r => r.id !== rule.id))}
+                              className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                              title="Delete rule"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    {allocationRules.filter(r => r.companyId === company?.id).length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-3 py-8 text-center text-slate-400">
+                          No allocation rules yet. Click &quot;Train from History&quot; to learn from your past transactions, or allocate transactions manually to start building rules automatically.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Add manual rule form */}
+              <div className="mt-4 p-3 border rounded-lg bg-slate-50">
+                <h4 className="font-medium text-sm text-slate-700 mb-2">Add Manual Rule</h4>
+                <div className="flex gap-2 items-end flex-wrap">
+                  <div className="flex-1 min-w-[150px]">
+                    <label className="text-xs text-slate-500 block">Pattern (text to match in description/payee)</label>
+                    <input
+                      type="text"
+                      id="newRulePattern"
+                      placeholder="e.g. vodacom, monthly fee, pick n pay"
+                      className="border rounded px-2 py-1.5 text-sm w-full mt-1"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-[150px]">
+                    <label className="text-xs text-slate-500 block">Account</label>
+                    <select id="newRuleAccount" className="border rounded px-2 py-1.5 text-sm w-full mt-1">
+                      {selectionOptions.filter(o => o !== 'Unallocated Expen').map(opt => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[150px]">
+                    <label className="text-xs text-slate-500 block">VAT Rate</label>
+                    <select id="newRuleVat" className="border rounded px-2 py-1.5 text-sm w-full mt-1">
+                      {VAT_RATES.map(v => (
+                        <option key={v.value} value={v.value}>{v.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const patternEl = document.getElementById('newRulePattern');
+                      const accountEl = document.getElementById('newRuleAccount');
+                      const vatEl = document.getElementById('newRuleVat');
+                      const pattern = patternEl?.value?.toLowerCase().trim();
+                      const accountName = accountEl?.value;
+                      const vatRate = vatEl?.value;
+                      if (!pattern) { alert('Please enter a pattern to match'); return; }
+                      const newRule = {
+                        id: `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                        pattern,
+                        patternType: 'manual',
+                        accountName,
+                        vatRate: vatRate || 'No VAT',
+                        confidenceScore: 5,
+                        timesMatched: 0,
+                        lastUsed: new Date().toISOString().split('T')[0],
+                        companyId: company?.id,
+                        source: 'manual'
+                      };
+                      saveAllocationRules([...allocationRules, newRule]);
+                      if (patternEl) patternEl.value = '';
+                      setSaveMessage('Manual rule added successfully!');
+                      setTimeout(() => setSaveMessage(''), 3000);
+                    }}
+                    className="px-4 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 whitespace-nowrap flex items-center gap-1"
+                  >
+                    <Plus className="w-4 h-4" /> Add Rule
+                  </button>
+                </div>
+              </div>
+
+              {/* Footer actions */}
+              <div className="mt-3 flex justify-between items-center">
+                <p className="text-xs text-slate-400">
+                  Confidence 3+ = auto-allocate. Lower confidence = guides AI suggestions. Manual rules start at confidence 5.
+                </p>
+                <button
+                  onClick={() => {
+                    if (window.confirm('Delete ALL learned rules for this company? This cannot be undone.')) {
+                      const otherRules = allocationRules.filter(r => r.companyId !== company?.id);
+                      saveAllocationRules(otherRules);
+                      setSaveMessage('All rules cleared for this company.');
+                      setTimeout(() => setSaveMessage(''), 3000);
+                    }
+                  }}
+                  className="text-xs text-red-500 hover:text-red-700 hover:underline"
+                >
+                  Clear All Rules
+                </button>
+              </div>
             </div>
           </div>
         </div>
