@@ -91,6 +91,156 @@ const DEFAULT_ACCOUNTS = [
 ];
 
 
+// Default Banking Allocation Rules - seeded for every company
+const DEFAULT_BANKING_RULES = [
+  // === MOTOR VEHICLE EXPENSES ===
+  { pattern: 'engen', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'sasol', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'shell', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'bp ', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'bp airport', accountName: 'Motor Vehicle Expenses', vatRate: 'Zero Rate (0.00%)', patternType: 'description' },
+  { pattern: 'total knysna', accountName: 'Motor Vehicle Expenses', vatRate: 'Zero Rate (0.00%)', patternType: 'description' },
+  { pattern: 'total fort beaufort', accountName: 'Motor Vehicle Expenses', vatRate: 'Zero Rate (0.00%)', patternType: 'description' },
+  { pattern: 'astron energy', accountName: 'Motor Vehicle Expenses', vatRate: 'Zero Rate (0.00%)', patternType: 'description' },
+  { pattern: 'fuel purchase', accountName: 'Motor Vehicle Expenses', vatRate: 'Zero Rate (0.00%)', patternType: 'description' },
+  { pattern: 'tyre spot', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'cartrack', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'eastern cape motors', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'acsa', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'str parking', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'avis rent a car', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'gason', accountName: 'Motor Vehicle Expenses', vatRate: 'Zero Rate (0.00%)', patternType: 'description' },
+  { pattern: 'off-us fuel', accountName: 'Motor Vehicle Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+
+  // === TRAVEL & ACCOMMODATION ===
+  { pattern: 'dl bolt', accountName: 'Travel & Accommodation', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'bolt', accountName: 'Travel & Accommodation', vatRate: 'Standard Rate (15.00%)', patternType: 'payee' },
+  { pattern: 'wesley guesthouse', accountName: 'Travel & Accommodation', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'lagoon beach', accountName: 'Travel & Accommodation', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'bkg*hotel', accountName: 'Travel & Accommodation', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'flysafair', accountName: 'Travel & Accommodation', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'accomodation', accountName: 'Travel & Accommodation', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+
+  // === TELEPHONE & INTERNET ===
+  { pattern: 'prepaid airtime', accountName: 'Telephone & Internet', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'cell cash withdrawal', accountName: 'Telephone & Internet', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+
+  // === ENTERTAINMENT ===
+  { pattern: 'steers', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'kfc', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'nandos', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'debonairs', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'mcd ', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'spur', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'liquorshop', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'colcacchio', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'grand west casino', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'table mountain', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'webtickets', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'hungry lion', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'social eatery', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'entry ninja', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'two oceans', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'cape point', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'cape ice skating', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'sportsmans warehous', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'jules on jarvis', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'uncle pauls', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'the windmill', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: '2 brothers pizz', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'karibu restaurant', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'tops ', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'karri main', accountName: 'Entertainment', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+
+  // === COMPUTER EXPENSES ===
+  { pattern: 'incredible connecti', accountName: 'Computer Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'adobe', accountName: 'Computer Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'hosting', accountName: 'Computer Expenses', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+
+  // === PRINTING & STATIONERY ===
+  { pattern: 'copyworld', accountName: 'Printing & Stationery', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'pollock', accountName: 'Printing & Stationery', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'fusion', accountName: 'Printing & Stationery', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'african book', accountName: 'Printing & Stationery', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+
+  // === BANK CHARGES ===
+  { pattern: 'bank charge', accountName: 'Bank Charges', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'monthly account fee', accountName: 'Bank Charges', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'service fees', accountName: 'Bank Charges', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+
+  // === ELECTRICITY & WATER ===
+  { pattern: 'electricity prepaid', accountName: 'Electricity & Water', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'prepaid electricity', accountName: 'Electricity & Water', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+
+  // === GENERAL EXPENSES (Grocery/Retail) ===
+  { pattern: 'checkers', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'woolworths', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'clicks', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'superspar', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'spar ', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'shoprite', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'pnp ', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'pick n pay', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'dischem', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'pharmacy', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'pep ', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'ackermans', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'econofoods', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+  { pattern: 'gullsway supermarke', accountName: 'General Expenses', vatRate: 'Exempt and Non-Supplies (0.00%)', patternType: 'description' },
+
+  // === SECURITY ===
+  { pattern: 'hartwig', accountName: 'Security', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+
+  // === BANK LOANS ===
+  { pattern: 'sasfin', accountName: 'Bank Loans', vatRate: 'No VAT', patternType: 'description' },
+
+  // === RENT PAID ===
+  { pattern: 'rent ', accountName: 'Rent Paid', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+
+  // === ACCOUNTING FEES ===
+  { pattern: 'ame accounting', accountName: 'Accounting Fees', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'vat admin service', accountName: 'Accounting Fees', vatRate: 'No VAT', patternType: 'description' },
+
+  // === REPAIRS & MAINTENANCE ===
+  { pattern: 'laptop fixing', accountName: 'Repairs & Maintenance', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+
+  // === SALARIES & WAGES ===
+  { pattern: 'salary', accountName: 'Salaries & Wages', vatRate: 'No VAT', patternType: 'description' },
+  { pattern: 'wages', accountName: 'Salaries & Wages', vatRate: 'No VAT', patternType: 'description' },
+  { pattern: 'helper wages', accountName: 'Salaries & Wages', vatRate: 'No VAT', patternType: 'description' },
+  { pattern: 'rm nedabf', accountName: 'Salaries & Wages', vatRate: 'No VAT', patternType: 'description' },
+
+  // === PURCHASES ===
+  { pattern: 'electrical material', accountName: 'Purchases', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'makro', accountName: 'Purchases', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'build it', accountName: 'Purchases', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'vincent hardware', accountName: 'Purchases', vatRate: 'No VAT', patternType: 'description' },
+
+  // === VAT PAYABLE ===
+  { pattern: 'vat -', accountName: 'VAT Payable', vatRate: 'No VAT', patternType: 'description' },
+
+  // === REVENUE (Income patterns) ===
+  { pattern: 'magtape credit', accountName: 'Revenue', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'adt cash deposit', accountName: 'Revenue', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+  { pattern: 'investment deposit', accountName: 'Sales', vatRate: 'Standard Rate (15.00%)', patternType: 'description' },
+];
+
+// Helper to generate default banking rules for a specific company
+const generateDefaultRulesForCompany = (companyId) => {
+  return DEFAULT_BANKING_RULES.map((rule, index) => ({
+    id: `default_${companyId}_${index}_${Math.random().toString(36).substr(2, 9)}`,
+    pattern: rule.pattern,
+    patternType: rule.patternType,
+    accountName: rule.accountName,
+    vatRate: rule.vatRate,
+    confidenceScore: 5,
+    timesMatched: 0,
+    lastUsed: '',
+    companyId: companyId,
+    source: 'default'
+  }));
+};
+
 const getCompanyInitials = (name = '') => {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (!words.length) return 'CO';
@@ -3737,13 +3887,26 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
     setSelectedIds(prev => prev.filter(id => visibleIds.has(id)));
   }, [activeBankSubTab, bankStatements]);
 
-  // Load allocation rules from localStorage
+  // Load allocation rules from localStorage and seed defaults for current company if needed
   useEffect(() => {
+    let currentRules = [];
     try {
       const saved = localStorage.getItem('allocation-rules');
-      if (saved) setAllocationRules(JSON.parse(saved));
+      if (saved) currentRules = JSON.parse(saved);
     } catch (e) { console.error('Error loading allocation rules:', e); }
-  }, []);
+
+    // Seed default rules for current company if it has no rules yet
+    if (company?.id) {
+      const companyRules = currentRules.filter(r => r.companyId === company.id);
+      if (companyRules.length === 0) {
+        const defaultRules = generateDefaultRulesForCompany(company.id);
+        currentRules = [...currentRules, ...defaultRules];
+        localStorage.setItem('allocation-rules', JSON.stringify(currentRules));
+      }
+    }
+
+    setAllocationRules(currentRules);
+  }, [company?.id]);
 
   const saveAllocationRules = (rules) => {
     setAllocationRules(rules);
@@ -3808,10 +3971,11 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
       source: 'historical'
     }));
 
-    // Keep manually created rules, replace all historical ones
+    // Keep manually created and default rules, replace all historical ones
     const manualRules = allocationRules.filter(r => r.source === 'manual' && r.companyId === companyId);
+    const defaultRules = allocationRules.filter(r => r.source === 'default' && r.companyId === companyId);
     const otherCompanyRules = allocationRules.filter(r => r.companyId !== companyId);
-    const merged = [...otherCompanyRules, ...manualRules, ...newRules];
+    const merged = [...otherCompanyRules, ...defaultRules, ...manualRules, ...newRules];
 
     saveAllocationRules(merged);
     setTrainingInProgress(false);
@@ -5514,11 +5678,11 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
                   </p>
                   <p className="text-xs text-purple-600">Total Times Applied</p>
                 </div>
-                <div className="bg-slate-50 rounded-lg p-3 text-center">
-                  <p className="text-2xl font-bold text-slate-700">
-                    {allocationRules.filter(r => r.companyId === company?.id && r.source === 'manual').length}
+                <div className="bg-emerald-50 rounded-lg p-3 text-center">
+                  <p className="text-2xl font-bold text-emerald-600">
+                    {allocationRules.filter(r => r.companyId === company?.id && r.source === 'default').length}
                   </p>
-                  <p className="text-xs text-slate-600">Manual Rules</p>
+                  <p className="text-xs text-emerald-500">Default Rules</p>
                 </div>
               </div>
 
@@ -5575,6 +5739,7 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
                           <td className="px-3 py-2 text-xs">
                             <span className={`px-1.5 py-0.5 rounded text-[10px] ${
                               rule.source === 'manual' ? 'bg-amber-100 text-amber-700' :
+                              rule.source === 'default' ? 'bg-emerald-100 text-emerald-700' :
                               rule.source === 'ai-confirmed' ? 'bg-blue-100 text-blue-700' :
                               'bg-slate-100 text-slate-600'
                             }`}>
