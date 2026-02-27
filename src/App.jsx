@@ -3887,27 +3887,26 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
     setSelectedIds(prev => prev.filter(id => visibleIds.has(id)));
   }, [activeBankSubTab, bankStatements]);
 
-  // Load allocation rules from localStorage
+  // Load allocation rules from localStorage and seed defaults for current company if needed
   useEffect(() => {
+    let currentRules = [];
     try {
       const saved = localStorage.getItem('allocation-rules');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setAllocationRules(parsed);
-      }
+      if (saved) currentRules = JSON.parse(saved);
     } catch (e) { console.error('Error loading allocation rules:', e); }
-  }, []);
 
-  // Seed default rules for current company if it has no rules yet
-  useEffect(() => {
-    if (!company?.id) return;
-    const companyRules = allocationRules.filter(r => r.companyId === company.id);
-    if (companyRules.length === 0) {
-      const defaultRules = generateDefaultRulesForCompany(company.id);
-      const merged = [...allocationRules, ...defaultRules];
-      saveAllocationRules(merged);
+    // Seed default rules for current company if it has no rules yet
+    if (company?.id) {
+      const companyRules = currentRules.filter(r => r.companyId === company.id);
+      if (companyRules.length === 0) {
+        const defaultRules = generateDefaultRulesForCompany(company.id);
+        currentRules = [...currentRules, ...defaultRules];
+        localStorage.setItem('allocation-rules', JSON.stringify(currentRules));
+      }
     }
-  }, [company?.id, allocationRules.length]);
+
+    setAllocationRules(currentRules);
+  }, [company?.id]);
 
   const saveAllocationRules = (rules) => {
     setAllocationRules(rules);
