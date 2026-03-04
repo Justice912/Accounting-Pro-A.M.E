@@ -2248,7 +2248,7 @@ const PrintPreview = ({ invoice, onClose, company }) => {
                 <img
                   src={company.logo}
                   alt="Company Logo"
-                  style={{ maxWidth: '220px', maxHeight: '110px', width: 'auto', height: 'auto', objectFit: 'contain' }}
+                  style={{ maxWidth: '260px', maxHeight: '160px', width: 'auto', height: 'auto', objectFit: 'contain', boxShadow: 'none', border: 'none', filter: 'none' }}
                 />
               )}
               <div>
