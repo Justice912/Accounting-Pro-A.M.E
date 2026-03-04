@@ -2239,52 +2239,140 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           </div>
         </div>
         
-        <div className="p-8" id="invoice-print">
-          <div className="bg-emerald-700 text-white rounded-lg px-6 py-3 flex items-center justify-between mb-6">
-            <h1 className="text-2xl font-bold">Tax Invoice</h1>
-            <p className="text-sm text-emerald-100">{company?.name || 'Your Company'} • Professional Accounting Services</p>
-          </div>
-
-          <div className="flex justify-between mb-6">
-            <div className="flex items-start gap-4">
+        <div className="p-8" id="invoice-print" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
+          {/* Header: Logo left, Invoice details right */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+            {/* Left: Logo & Tagline */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
               {company?.logo && (
                 <img
                   src={company.logo}
                   alt="Company Logo"
-                  className="max-w-[220px] max-h-[110px] w-auto h-auto object-contain"
+                  style={{ maxWidth: '220px', maxHeight: '110px', width: 'auto', height: 'auto', objectFit: 'contain' }}
                 />
               )}
               <div>
-                <p className="font-semibold text-lg">{company?.name || 'Your Company Name'}</p>
-                {company?.address && <p className="text-sm text-slate-600">{company.address}</p>}
-                {company?.email && <p className="text-sm text-slate-600">{company.email}</p>}
+                <p style={{ fontSize: '20px', fontWeight: 'bold', margin: '0 0 2px 0', color: '#1e293b' }}>{company?.name || 'AME Business'}</p>
+                <p style={{ fontSize: '13px', color: '#64748b', margin: 0, fontStyle: 'italic' }}>Accountants and Tax Practitioners</p>
               </div>
             </div>
-            <div className="bg-slate-50 rounded-lg border p-4 min-w-64">
-              <h4 className="font-semibold text-slate-700 mb-2">Invoice Details</h4>
-              <p className="text-sm"><span className="text-slate-500">Number:</span> {invoice.documentNo}</p>
-              <p className="text-sm"><span className="text-slate-500">Date:</span> {invoice.date}</p>
-              <p className="text-sm"><span className="text-slate-500">Due Date:</span> {invoice.dueDate}</p>
-              {invoice.customerRef && <p className="text-sm"><span className="text-slate-500">Ref:</span> {invoice.customerRef}</p>}
+
+            {/* Right: Invoice details box */}
+            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px 20px', minWidth: '280px' }}>
+              <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#1e293b', textAlign: 'right', margin: '0 0 10px 0', letterSpacing: '1px' }}>INVOICE</p>
+              <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
+                <tbody>
+                  <tr>
+                    <td style={{ padding: '2px 12px 2px 0', color: '#64748b', fontWeight: '600' }}>NUMBER</td>
+                    <td style={{ padding: '2px 0', textAlign: 'right', color: '#334155' }}>{invoice.documentNo}</td>
+                  </tr>
+                  {invoice.customerRef && (
+                    <tr>
+                      <td style={{ padding: '2px 12px 2px 0', color: '#64748b', fontWeight: '600' }}>REFERENCE</td>
+                      <td style={{ padding: '2px 0', textAlign: 'right', color: '#334155' }}>{invoice.customerRef}</td>
+                    </tr>
+                  )}
+                  <tr>
+                    <td style={{ padding: '2px 12px 2px 0', color: '#64748b', fontWeight: '600' }}>DATE</td>
+                    <td style={{ padding: '2px 0', textAlign: 'right', color: '#334155' }}>{(() => { const d = invoice.date; if (!d) return ''; const parts = d.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d; })()}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: '2px 12px 2px 0', color: '#64748b', fontWeight: '600' }}>DUE DATE</td>
+                    <td style={{ padding: '2px 0', textAlign: 'right', color: '#334155' }}>{(() => { const d = invoice.dueDate; if (!d) return ''; const parts = d.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d; })()}</td>
+                  </tr>
+                  {invoice.salesRep && (
+                    <tr>
+                      <td style={{ padding: '2px 12px 2px 0', color: '#64748b', fontWeight: '600' }}>SALES REP</td>
+                      <td style={{ padding: '2px 0', textAlign: 'right', color: '#334155' }}>{invoice.salesRep}</td>
+                    </tr>
+                  )}
+                  {(invoice.discountValue || 0) > 0 && invoice.discountType === 'percent' && (
+                    <tr>
+                      <td style={{ padding: '2px 12px 2px 0', color: '#64748b', fontWeight: '600' }}>OVERALL DISCOUNT %</td>
+                      <td style={{ padding: '2px 0', textAlign: 'right', color: '#334155' }}>{invoice.discountValue}%</td>
+                    </tr>
+                  )}
+                  <tr>
+                    <td style={{ padding: '2px 12px 2px 0', color: '#64748b', fontWeight: '600' }}>PAGE</td>
+                    <td style={{ padding: '2px 0', textAlign: 'right', color: '#334155' }}>1 of 1</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
 
-          <div className="mb-5">
-            <h4 className="font-semibold text-slate-600 text-sm mb-1">BILL TO</h4>
-            <p className="font-medium">{invoice.supplier || invoice.customer || 'Customer'}</p>
-            {invoice.customerDetails?.companyName && <p className="text-sm text-slate-600">{invoice.customerDetails.companyName}</p>}
-            {invoice.customerDetails?.contactPerson && <p className="text-sm text-slate-600">Att: {invoice.customerDetails.contactPerson}</p>}
-            {invoice.customerDetails?.vatNo && <p className="text-sm text-slate-600">VAT: {invoice.customerDetails.vatNo}</p>}
-            {(invoice.customerDetails?.address || invoice.customerDetails?.city || invoice.customerDetails?.postalCode) && (
-              <p className="text-sm text-slate-600">
-                {[invoice.customerDetails?.address, invoice.customerDetails?.city, invoice.customerDetails?.postalCode].filter(Boolean).join(', ')}
-              </p>
-            )}
-            {(invoice.customerDetails?.email || invoice.customerDetails?.phone) && (
-              <p className="text-sm text-slate-600">
-                {[invoice.customerDetails?.email, invoice.customerDetails?.phone].filter(Boolean).join(' • ')}
-              </p>
-            )}
+          {/* Divider line */}
+          <div style={{ borderBottom: '2px solid #059669', marginBottom: '20px' }}></div>
+
+          {/* FROM / TO Section */}
+          <div style={{ display: 'flex', gap: '24px', marginBottom: '24px' }}>
+            {/* FROM Column */}
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', letterSpacing: '1px', marginBottom: '6px', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px' }}>FROM</p>
+              <p style={{ fontSize: '14px', fontWeight: 'bold', color: '#1e293b', margin: '0 0 4px 0' }}>{company?.name || 'A.M.E BUSINESS ACCOUNTANTS'}</p>
+              {company?.vatNo && (
+                <p style={{ fontSize: '12px', color: '#475569', margin: '0 0 8px 0' }}>VAT NO: {company.vatNo}</p>
+              )}
+              <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8', marginBottom: '2px' }}>POSTAL ADDRESS</p>
+                  {company?.postalCode && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{company.postalCode}</p>}
+                  {company?.city && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{company.city}</p>}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8', marginBottom: '2px' }}>PHYSICAL ADDRESS</p>
+                  {company?.address && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{company.address}</p>}
+                  {company?.city && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{company.city}</p>}
+                  {company?.postalCode && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{company.postalCode}</p>}
+                </div>
+              </div>
+              {(company?.email || company?.phone) && (
+                <p style={{ fontSize: '12px', color: '#475569', marginTop: '4px' }}>
+                  {[company?.email, company?.phone ? `Tel: ${company.phone}` : null].filter(Boolean).join(' | ')}
+                </p>
+              )}
+            </div>
+
+            {/* TO Column */}
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', letterSpacing: '1px', marginBottom: '6px', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px' }}>TO</p>
+              <p style={{ fontSize: '14px', fontWeight: 'bold', color: '#1e293b', margin: '0 0 4px 0' }}>{invoice.supplier || invoice.customer || 'Customer'}</p>
+              {invoice.customerDetails?.companyName && (
+                <p style={{ fontSize: '13px', color: '#334155', margin: '0 0 2px 0' }}>{invoice.customerDetails.companyName}</p>
+              )}
+              {invoice.customerDetails?.contactPerson && (
+                <p style={{ fontSize: '12px', color: '#475569', margin: '0 0 2px 0' }}>Att: {invoice.customerDetails.contactPerson}</p>
+              )}
+              {invoice.customerDetails?.vatNo && (
+                <p style={{ fontSize: '12px', color: '#475569', margin: '0 0 8px 0' }}>CUSTOMER VAT NO: {invoice.customerDetails.vatNo}</p>
+              )}
+              <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8', marginBottom: '2px' }}>POSTAL ADDRESS</p>
+                  {invoice.postalAddress && invoice.postalAddress.filter(Boolean).length > 0 ? (
+                    invoice.postalAddress.filter(Boolean).map((line, i) => (
+                      <p key={i} style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{line}</p>
+                    ))
+                  ) : (
+                    <>
+                      {invoice.customerDetails?.postalCode && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{invoice.customerDetails.postalCode}</p>}
+                      {invoice.customerDetails?.city && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{invoice.customerDetails.city}</p>}
+                    </>
+                  )}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8', marginBottom: '2px' }}>PHYSICAL ADDRESS</p>
+                  {invoice.customerDetails?.address && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{invoice.customerDetails.address}</p>}
+                  {invoice.customerDetails?.city && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{invoice.customerDetails.city}</p>}
+                  {invoice.customerDetails?.postalCode && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{invoice.customerDetails.postalCode}</p>}
+                </div>
+              </div>
+              {(invoice.customerDetails?.email || invoice.customerDetails?.phone) && (
+                <p style={{ fontSize: '12px', color: '#475569', marginTop: '4px' }}>
+                  {[invoice.customerDetails?.email, invoice.customerDetails?.phone ? `Tel: ${invoice.customerDetails.phone}` : null].filter(Boolean).join(' | ')}
+                </p>
+              )}
+            </div>
           </div>
           
           <div className="border rounded-xl overflow-hidden mb-6">
@@ -2338,7 +2426,7 @@ const PrintPreview = ({ invoice, onClose, company }) => {
 
           <div className="mt-8 pt-4 border-t text-center text-sm text-slate-600">
             <p>Thank you for your business.</p>
-            <p className="mt-1">Payment due by {invoice.dueDate}.</p>
+            <p className="mt-1">Payment due by {(() => { const d = invoice.dueDate; if (!d) return ''; const parts = d.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d; })()}.</p>
           </div>
         </div>
       </div>
