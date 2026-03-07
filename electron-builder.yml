@@ -1,0 +1,23 @@
+appId: com.ame.pro-workstation
+productName: AME Pro AI Workstation
+directories:
+  output: dist-electron
+files:
+  - out/**/*
+extraResources:
+  - from: prompts
+    to: prompts
+win:
+  target: nsis
+  icon: resources/icon.ico
+mac:
+  target: dmg
+  icon: resources/icon.icns
+linux:
+  target: AppImage
+  icon: resources/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+publish:
+  provider: github
