@@ -55,6 +55,32 @@ function getHeadingLevel(line) {
 }
 
 /**
+ * Sanitize text for WinAnsi encoding (pdf-lib standard fonts only support WinAnsi).
+ * Replaces unsupported Unicode characters with safe ASCII equivalents.
+ */
+function sanitizeForPdf(text) {
+  if (!text) return '';
+  return text
+    .replace(/\u2022/g, '-')       // bullet → dash
+    .replace(/\u2013/g, '-')       // en dash → dash
+    .replace(/\u2014/g, '--')      // em dash → double dash
+    .replace(/\u2018/g, "'")       // left single quote
+    .replace(/\u2019/g, "'")       // right single quote
+    .replace(/\u201C/g, '"')       // left double quote
+    .replace(/\u201D/g, '"')       // right double quote
+    .replace(/\u2026/g, '...')     // ellipsis
+    .replace(/\u00A0/g, ' ')       // non-breaking space
+    .replace(/\u2032/g, "'")       // prime
+    .replace(/\u2033/g, '"')       // double prime
+    .replace(/\u2192/g, '->')      // right arrow
+    .replace(/\u2190/g, '<-')      // left arrow
+    .replace(/\u2713/g, 'v')       // check mark
+    .replace(/\u2717/g, 'x')       // cross mark
+    .replace(/\u00B7/g, '-')       // middle dot
+    .replace(/[^\x00-\xFF]/g, ''); // strip anything else outside Latin-1
+}
+
+/**
  * Get the documents output directory
  */
 function getDocumentsDir() {
@@ -399,7 +425,7 @@ async function generatePDF(data, templateName) {
     let y = height - 50;
 
     // Company name
-    page.drawText(data.companyName || 'Company Name', {
+    page.drawText(sanitizeForPdf(data.companyName || 'Company Name'), {
       x: 50,
       y,
       size: 18,
@@ -418,7 +444,7 @@ async function generatePDF(data, templateName) {
     y -= 25;
 
     // Period
-    page.drawText(`Pay Period: ${data.period || 'Month Year'}`, {
+    page.drawText(sanitizeForPdf(`Pay Period: ${data.period || 'Month Year'}`), {
       x: 50,
       y,
       size: 10,
@@ -427,21 +453,21 @@ async function generatePDF(data, templateName) {
     y -= 20;
 
     // Employee details
-    page.drawText(`Employee: ${data.employeeName || 'Employee Name'}`, {
+    page.drawText(sanitizeForPdf(`Employee: ${data.employeeName || 'Employee Name'}`), {
       x: 50,
       y,
       size: 10,
       font: helvetica,
     });
     y -= 15;
-    page.drawText(`ID Number: ${data.idNumber || 'N/A'}`, {
+    page.drawText(sanitizeForPdf(`ID Number: ${data.idNumber || 'N/A'}`), {
       x: 50,
       y,
       size: 10,
       font: helvetica,
     });
     y -= 15;
-    page.drawText(`Tax Number: ${data.taxNumber || 'N/A'}`, {
+    page.drawText(sanitizeForPdf(`Tax Number: ${data.taxNumber || 'N/A'}`), {
       x: 50,
       y,
       size: 10,
@@ -472,7 +498,7 @@ async function generatePDF(data, templateName) {
     ];
     let totalEarnings = 0;
     for (const item of earnings) {
-      page.drawText(item.description, { x: 60, y, size: 10, font: helvetica });
+      page.drawText(sanitizeForPdf(item.description), { x: 60, y, size: 10, font: helvetica });
       page.drawText(`R ${Number(item.amount).toFixed(2)}`, {
         x: 420,
         y,
@@ -510,7 +536,7 @@ async function generatePDF(data, templateName) {
     const deductions = data.deductions || [{ description: 'PAYE', amount: 0 }];
     let totalDeductions = 0;
     for (const item of deductions) {
-      page.drawText(item.description, { x: 60, y, size: 10, font: helvetica });
+      page.drawText(sanitizeForPdf(item.description), { x: 60, y, size: 10, font: helvetica });
       page.drawText(`R ${Number(item.amount).toFixed(2)}`, {
         x: 420,
         y,
@@ -566,7 +592,7 @@ async function generatePDF(data, templateName) {
     let y = currentPage.getSize().height - 50;
 
     // Draw title
-    currentPage.drawText(data.title || 'Document', {
+    currentPage.drawText(sanitizeForPdf(data.title || 'Document'), {
       x: margin,
       y,
       size: 18,
@@ -635,7 +661,7 @@ async function generatePDF(data, templateName) {
           const spacing = headingLevel === 1 ? 20 : 12;
           y -= spacing;
           ensureSpace(fontSize + 10);
-          currentPage.drawText(headingText, {
+          currentPage.drawText(sanitizeForPdf(headingText), {
             x: margin,
             y,
             size: fontSize,
@@ -658,8 +684,8 @@ async function generatePDF(data, templateName) {
 
         for (let i = 0; i < wrapped.length; i++) {
           ensureSpace(14);
-          const prefix = (isListItem && i === 0) ? '\u2022  ' : '';
-          currentPage.drawText(prefix + wrapped[i], {
+          const prefix = (isListItem && i === 0) ? '-  ' : '';
+          currentPage.drawText(sanitizeForPdf(prefix + wrapped[i]), {
             x: margin + indent,
             y,
             size: 10,
