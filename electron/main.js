@@ -11,6 +11,9 @@ import documentEngine from './services/document-engine.js';
 import fileService from './services/file-service.js';
 import backupService from './services/backup-service.js';
 import workflowEngine from './services/workflow-engine.js';
+import memoryService from './services/memory-service.js';
+import webSearchService from './services/web-search-service.js';
+import skillService from './services/skill-service.js';
 
 // IPC handlers
 import registerAIHandlers from './ipc/ai-handlers.js';
@@ -19,6 +22,10 @@ import registerDocHandlers from './ipc/doc-handlers.js';
 import registerSettingsHandlers from './ipc/settings-handlers.js';
 import registerFileHandlers from './ipc/file-handlers.js';
 import registerTerminalHandlers from './ipc/terminal-handlers.js';
+import registerMemoryHandlers from './ipc/memory-handlers.js';
+import registerSearchHandlers from './ipc/search-handlers.js';
+import registerSkillHandlers from './ipc/skill-handlers.js';
+import registerClientHandlers from './ipc/client-handlers.js';
 
 // Menu
 import createMenu from './menu.js';
@@ -101,6 +108,9 @@ function registerAllHandlers() {
     fileService,
     backupService,
     workflowEngine,
+    memoryService,
+    webSearchService,
+    skillService,
   };
 
   registerWindowControls();
@@ -110,6 +120,10 @@ function registerAllHandlers() {
   registerSettingsHandlers(ipcMain, services);
   registerFileHandlers(ipcMain, services);
   registerTerminalHandlers(ipcMain, services);
+  registerMemoryHandlers(ipcMain, services);
+  registerSearchHandlers(ipcMain, services);
+  registerSkillHandlers(ipcMain, services);
+  registerClientHandlers(ipcMain, services);
 
   // App info handlers
   ipcMain.handle('app:version', () => {
@@ -127,6 +141,10 @@ function registerAllHandlers() {
 app.whenReady().then(async () => {
   // Initialize database
   await database.initialize();
+
+  // Initialize services that need the database
+  memoryService.init(database);
+  skillService.init(database);
 
   // Run startup backup check
   backupService.runOnStartup();

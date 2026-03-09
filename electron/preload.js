@@ -3,7 +3,10 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('api', {
   // AI
   sendToAI: (payload) =>
-    ipcRenderer.invoke('ai:send', payload.domain, payload.subdomain, payload.messages, payload.conversationId, payload.model),
+    ipcRenderer.invoke('ai:send', payload.domain, payload.subdomain, payload.messages, payload.conversationId, payload.model, {
+      clientId: payload.clientId || null,
+      webSearch: payload.webSearch || false,
+    }),
   getProviderHealth: () => ipcRenderer.invoke('ai:health'),
   testProvider: (provider) => ipcRenderer.invoke('ai:test', provider),
 
@@ -39,6 +42,33 @@ contextBridge.exposeInMainWorld('api', {
   pdfToExcel: (pdfFilePath, options) =>
     ipcRenderer.invoke('doc:pdf-to-excel', pdfFilePath, options),
   listDocuments: (projectId) => ipcRenderer.invoke('doc:list', projectId),
+
+  // Memory / Learning
+  saveMemory: (data) => ipcRenderer.invoke('memory:save', data),
+  listMemories: (domain) => ipcRenderer.invoke('memory:list', domain),
+  deleteMemory: (id) => ipcRenderer.invoke('memory:delete', id),
+  clearMemories: (domain) => ipcRenderer.invoke('memory:clear', domain),
+
+  // Web Search
+  webSearch: (query, maxResults) => ipcRenderer.invoke('web:search', query, maxResults),
+  fetchPage: (url) => ipcRenderer.invoke('web:fetch-page', url),
+
+  // Skills / Plugins
+  createSkill: (data) => ipcRenderer.invoke('skill:create', data),
+  importSkill: (filePath) => ipcRenderer.invoke('skill:import', filePath),
+  listSkills: () => ipcRenderer.invoke('skill:list'),
+  getSkill: (id) => ipcRenderer.invoke('skill:get', id),
+  toggleSkill: (id, active) => ipcRenderer.invoke('skill:toggle', id, active),
+  updateSkill: (id, updates) => ipcRenderer.invoke('skill:update', id, updates),
+  deleteSkill: (id) => ipcRenderer.invoke('skill:delete', id),
+
+  // Clients
+  createClient: (data) => ipcRenderer.invoke('client:create', data),
+  updateClient: (id, data) => ipcRenderer.invoke('client:update', id, data),
+  deleteClient: (id) => ipcRenderer.invoke('client:delete', id),
+  getClient: (id) => ipcRenderer.invoke('client:get', id),
+  listClients: () => ipcRenderer.invoke('client:list'),
+  searchClients: (query) => ipcRenderer.invoke('client:search', query),
 
   // Terminal / Code Execution
   executeCommand: (command, cwd, timeout) =>

@@ -114,16 +114,54 @@ export default function registerDocHandlers(ipcMain, services) {
           safeName
         );
       } else if (type === 'excel') {
-        // Parse content into rows: split by newlines, cells by tab or |
-        const lines = content.split('\n').filter((l) => l.trim());
-        const rows = lines.map((line) =>
-          line
-            .split(/\t|\|/)
-            .map((c) => c.trim())
-            .filter((c) => c)
+        // Parse markdown content into structured Excel data
+        const allLines = content.split('\n');
+
+        // Try to detect markdown tables (lines with | delimiters)
+        const tableLines = allLines.filter(
+          (l) => l.trim().startsWith('|') && l.trim().endsWith('|')
         );
-        const headers = rows.length > 0 ? rows[0] : ['Data'];
-        const dataRows = rows.slice(1);
+        // Filter out separator rows (|---|---|)
+        const dataTableLines = tableLines.filter(
+          (l) => !/^\|[\s-:|]+\|$/.test(l.trim())
+        );
+
+        let headers;
+        let dataRows;
+
+        if (dataTableLines.length >= 2) {
+          // Markdown table detected — parse pipe-delimited cells
+          const parseRow = (line) =>
+            line
+              .split('|')
+              .map((c) => c.trim())
+              .filter((c) => c);
+          headers = parseRow(dataTableLines[0]);
+          dataRows = dataTableLines.slice(1).map(parseRow);
+        } else {
+          // No markdown table — create a structured single-column document
+          // Strip markdown, group by sections
+          headers = ['Content'];
+          dataRows = [];
+          for (const line of allLines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            if (/^```/.test(trimmed)) continue;
+            if (/^[-*_]{3,}$/.test(trimmed)) continue;
+
+            // Clean markdown syntax
+            const clean = trimmed
+              .replace(/^#{1,6}\s+/, '')
+              .replace(/\*\*(.*?)\*\*/g, '$1')
+              .replace(/\*(.*?)\*/g, '$1')
+              .replace(/`([^`]+)`/g, '$1')
+              .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+              .replace(/^>\s?/, '')
+              .trim();
+
+            if (clean) dataRows.push([clean]);
+          }
+        }
 
         filePath = await documentEngine.generateExcel(
           { headers, rows: dataRows, title },

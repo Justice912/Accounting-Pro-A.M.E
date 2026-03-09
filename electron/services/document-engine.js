@@ -4,6 +4,57 @@ import crypto from 'crypto';
 import { app } from 'electron';
 
 /**
+ * Strip markdown syntax from text, returning clean readable text.
+ */
+function stripMarkdown(text) {
+  if (!text) return '';
+  return text
+    .replace(/^#{1,6}\s+/gm, '')         // headings
+    .replace(/\*\*\*(.*?)\*\*\*/g, '$1')  // bold+italic
+    .replace(/\*\*(.*?)\*\*/g, '$1')      // bold
+    .replace(/\*(.*?)\*/g, '$1')          // italic
+    .replace(/~~(.*?)~~/g, '$1')          // strikethrough
+    .replace(/`{3}[\s\S]*?`{3}/g, '')     // code blocks (remove entirely)
+    .replace(/`([^`]+)`/g, '$1')          // inline code
+    .replace(/^\s*[-*+]\s+/gm, '  - ')   // normalize list markers
+    .replace(/^\s*\d+\.\s+/gm, '')        // numbered list markers
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links → text only
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1') // images → alt text
+    .replace(/^>\s?/gm, '')               // blockquotes
+    .replace(/^---+$/gm, '')              // horizontal rules
+    .replace(/\n{3,}/g, '\n\n')           // collapse excessive blank lines
+    .trim();
+}
+
+/**
+ * Word-wrap a line to maxWidth characters, splitting at word boundaries.
+ */
+function wrapLine(text, maxWidth = 80) {
+  if (!text || text.length <= maxWidth) return [text || ''];
+  const words = text.split(/\s+/);
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    if (current && (current.length + 1 + word.length) > maxWidth) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = current ? current + ' ' + word : word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [''];
+}
+
+/**
+ * Detect if a line is a markdown heading and return its level (1-6) or 0.
+ */
+function getHeadingLevel(line) {
+  const match = line.match(/^(#{1,6})\s+/);
+  return match ? match[1].length : 0;
+}
+
+/**
  * Get the documents output directory
  */
 function getDocumentsDir() {
@@ -182,14 +233,138 @@ async function generateWord(data, templateName) {
     }
   }
 
-  // Body text
+  // Body text — parse markdown into structured paragraphs
   if (data.body) {
-    children.push(
-      new Paragraph({
-        text: data.body,
-        spacing: { after: 100 },
-      })
-    );
+    const bodyLines = data.body.split('\n');
+    let inCodeBlock = false;
+    let codeBuffer = [];
+
+    for (const rawLine of bodyLines) {
+      const trimmed = rawLine.trim();
+
+      // Handle code block fences
+      if (/^```/.test(trimmed)) {
+        if (inCodeBlock) {
+          // End code block — output collected code
+          children.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: codeBuffer.join('\n'),
+                  font: 'Courier New',
+                  size: 18,
+                  color: '334155',
+                }),
+              ],
+              spacing: { before: 50, after: 100 },
+              indent: { left: 360 },
+            })
+          );
+          codeBuffer = [];
+          inCodeBlock = false;
+        } else {
+          inCodeBlock = true;
+        }
+        continue;
+      }
+
+      if (inCodeBlock) {
+        codeBuffer.push(rawLine);
+        continue;
+      }
+
+      // Skip horizontal rules
+      if (/^[-*_]{3,}$/.test(trimmed)) {
+        children.push(
+          new Paragraph({
+            children: [new TextRun({ text: '' })],
+            spacing: { after: 100 },
+            border: { bottom: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' } },
+          })
+        );
+        continue;
+      }
+
+      // Empty lines → spacing paragraph
+      if (!trimmed) {
+        children.push(new Paragraph({ text: '', spacing: { after: 50 } }));
+        continue;
+      }
+
+      // Headings
+      const headingLevel = getHeadingLevel(trimmed);
+      if (headingLevel > 0) {
+        const headingMap = {
+          1: HeadingLevel.HEADING_1,
+          2: HeadingLevel.HEADING_2,
+          3: HeadingLevel.HEADING_3,
+          4: HeadingLevel.HEADING_4,
+          5: HeadingLevel.HEADING_5,
+          6: HeadingLevel.HEADING_6,
+        };
+        children.push(
+          new Paragraph({
+            text: stripMarkdown(trimmed),
+            heading: headingMap[headingLevel] || HeadingLevel.HEADING_3,
+            spacing: { before: 200, after: 100 },
+          })
+        );
+        continue;
+      }
+
+      // List items (bullet or numbered)
+      const bulletMatch = trimmed.match(/^[-*+]\s+(.*)/);
+      const numberedMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
+      if (bulletMatch) {
+        children.push(
+          new Paragraph({
+            children: [new TextRun({ text: stripMarkdown(bulletMatch[1]) })],
+            bullet: { level: 0 },
+            spacing: { after: 40 },
+          })
+        );
+        continue;
+      }
+      if (numberedMatch) {
+        children.push(
+          new Paragraph({
+            children: [new TextRun({ text: stripMarkdown(numberedMatch[2]) })],
+            numbering: { reference: 'default-numbering', level: 0 },
+            spacing: { after: 40 },
+          })
+        );
+        continue;
+      }
+
+      // Blockquote
+      if (trimmed.startsWith('>')) {
+        children.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: stripMarkdown(trimmed.replace(/^>\s?/, '')),
+                italics: true,
+                color: '64748B',
+              }),
+            ],
+            indent: { left: 360 },
+            spacing: { after: 60 },
+          })
+        );
+        continue;
+      }
+
+      // Regular paragraph — handle inline bold/italic
+      const runs = [];
+      const parts = stripMarkdown(trimmed);
+      runs.push(new TextRun({ text: parts, size: 22 }));
+      children.push(
+        new Paragraph({
+          children: runs,
+          spacing: { after: 80 },
+        })
+      );
+    }
   }
 
   const doc = new Document({
@@ -383,33 +558,116 @@ async function generatePDF(data, templateName) {
       color: rgb(0.06, 0.09, 0.16),
     });
   } else {
-    // Generic PDF
-    const page = pdfDoc.addPage([595, 842]);
-    const { height } = page.getSize();
-    let y = height - 50;
+    // Generic PDF with proper markdown handling
+    let currentPage = pdfDoc.addPage([595, 842]);
+    const pageWidth = 595;
+    const margin = 50;
+    const textWidth = pageWidth - margin * 2;
+    let y = currentPage.getSize().height - 50;
 
-    page.drawText(data.title || 'Document', {
-      x: 50,
+    // Draw title
+    currentPage.drawText(data.title || 'Document', {
+      x: margin,
       y,
       size: 18,
       font: helveticaBold,
+      color: rgb(0.06, 0.09, 0.16),
     });
-    y -= 30;
+    y -= 10;
+
+    // Thin line under title
+    currentPage.drawLine({
+      start: { x: margin, y },
+      end: { x: pageWidth - margin, y },
+      thickness: 0.5,
+      color: rgb(0.7, 0.7, 0.7),
+    });
+    y -= 20;
+
+    // Date
+    currentPage.drawText(
+      `Generated: ${new Date().toLocaleDateString('en-ZA')}`,
+      { x: margin, y, size: 8, font: helvetica, color: rgb(0.5, 0.5, 0.5) }
+    );
+    y -= 25;
 
     if (data.content) {
-      const lines = data.content.split('\n');
-      for (const line of lines) {
-        if (y < 50) {
-          const newPage = pdfDoc.addPage([595, 842]);
-          y = newPage.getSize().height - 50;
+      const rawLines = data.content.split('\n');
+
+      // Helper to ensure y position has room; adds new page if needed
+      const ensureSpace = (needed = 15) => {
+        if (y < margin + needed) {
+          currentPage = pdfDoc.addPage([595, 842]);
+          y = currentPage.getSize().height - margin;
         }
-        page.drawText(line.substring(0, 90), {
-          x: 50,
-          y,
-          size: 10,
-          font: helvetica,
-        });
-        y -= 15;
+      };
+
+      for (const rawLine of rawLines) {
+        const trimmed = rawLine.trim();
+
+        // Skip horizontal rules
+        if (/^[-*_]{3,}$/.test(trimmed)) {
+          ensureSpace(10);
+          currentPage.drawLine({
+            start: { x: margin, y },
+            end: { x: pageWidth - margin, y },
+            thickness: 0.5,
+            color: rgb(0.8, 0.8, 0.8),
+          });
+          y -= 15;
+          continue;
+        }
+
+        // Skip code block fences
+        if (/^```/.test(trimmed)) continue;
+
+        // Empty line → spacing
+        if (!trimmed) {
+          y -= 8;
+          continue;
+        }
+
+        // Detect headings
+        const headingLevel = getHeadingLevel(trimmed);
+        if (headingLevel > 0) {
+          const headingText = stripMarkdown(trimmed);
+          const fontSize = headingLevel === 1 ? 15 : headingLevel === 2 ? 13 : 11;
+          const spacing = headingLevel === 1 ? 20 : 12;
+          y -= spacing;
+          ensureSpace(fontSize + 10);
+          currentPage.drawText(headingText, {
+            x: margin,
+            y,
+            size: fontSize,
+            font: helveticaBold,
+            color: rgb(0.06, 0.09, 0.16),
+          });
+          y -= fontSize + 6;
+          continue;
+        }
+
+        // Regular text — strip markdown, word-wrap
+        const cleanText = stripMarkdown(trimmed);
+        if (!cleanText) continue;
+
+        // Detect list items (indented with "  - ")
+        const isListItem = /^\s*[-*+]\s/.test(rawLine) || /^\s*\d+\.\s/.test(rawLine);
+        const indent = isListItem ? 15 : 0;
+        const charsPerLine = Math.floor((textWidth - indent) / 5.5);
+        const wrapped = wrapLine(cleanText, charsPerLine);
+
+        for (let i = 0; i < wrapped.length; i++) {
+          ensureSpace(14);
+          const prefix = (isListItem && i === 0) ? '\u2022  ' : '';
+          currentPage.drawText(prefix + wrapped[i], {
+            x: margin + indent,
+            y,
+            size: 10,
+            font: helvetica,
+            color: rgb(0.1, 0.1, 0.1),
+          });
+          y -= 14;
+        }
       }
     }
   }

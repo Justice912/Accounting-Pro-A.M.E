@@ -113,6 +113,27 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS ai_memory (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL DEFAULT 'fact',
+  domain TEXT,
+  content TEXT NOT NULL,
+  source_conversation_id TEXT,
+  relevance_score REAL DEFAULT 1.0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS skills (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  instructions TEXT NOT NULL,
+  category TEXT DEFAULT 'general',
+  is_active INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 `;
 
 function getDbPath() {
@@ -138,6 +159,25 @@ async function initialize() {
   if (!hasWorkflowType) {
     db.exec('ALTER TABLE conversations ADD COLUMN workflow_type TEXT');
     console.log('[Database] Migration: added workflow_type column to conversations');
+  }
+
+  // Migration: add extra columns to clients table
+  const clientCols = db.prepare("PRAGMA table_info('clients')").all();
+  const clientColNames = clientCols.map(c => c.name);
+  const clientMigrations = [
+    ['address', 'TEXT'],
+    ['email', 'TEXT'],
+    ['phone', 'TEXT'],
+    ['contact_person', 'TEXT'],
+    ['trading_name', 'TEXT'],
+    ['industry', 'TEXT'],
+    ['financial_year_end', 'TEXT'],
+  ];
+  for (const [col, colType] of clientMigrations) {
+    if (!clientColNames.includes(col)) {
+      db.exec(`ALTER TABLE clients ADD COLUMN ${col} ${colType}`);
+      console.log(`[Database] Migration: added ${col} column to clients`);
+    }
   }
 
   console.log('[Database] Initialized at:', dbPath);

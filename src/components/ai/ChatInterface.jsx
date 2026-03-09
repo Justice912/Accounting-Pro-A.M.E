@@ -5,6 +5,10 @@ import QuickStartPrompts from './QuickStartPrompts';
 import WorkflowIndicator from './WorkflowIndicator';
 import { FileUploadButton, AttachedFilesList } from './FileUploadButton';
 import DocumentToolbar from './DocumentToolbar';
+import ChatToolbar from './ChatToolbar';
+import ClientManager from '../clients/ClientManager';
+import SkillManager from './SkillManager';
+import MemoryPanel from './MemoryPanel';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useAIProvider } from '../../contexts/AIProviderContext';
 
@@ -13,6 +17,11 @@ export default function ChatInterface({ domain, conversationId, onConversationCr
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeWorkflow, setActiveWorkflow] = useState(null);
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [showClientManager, setShowClientManager] = useState(false);
+  const [showSkillManager, setShowSkillManager] = useState(false);
+  const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const cancelledRef = useRef(false);
@@ -101,6 +110,8 @@ export default function ChatInterface({ domain, conversationId, onConversationCr
           })),
           conversationId: activeConvId,
           model: selectedModel || null,
+          clientId: selectedClient || null,
+          webSearch: webSearchEnabled,
         });
 
         // If user cancelled while waiting, discard result
@@ -267,6 +278,17 @@ export default function ChatInterface({ domain, conversationId, onConversationCr
       {/* Document tools (PDF→Excel, etc.) */}
       <DocumentToolbar />
 
+      {/* Chat toolbar — client selector, web search, skills, memory */}
+      <ChatToolbar
+        selectedClient={selectedClient}
+        onSelectClient={setSelectedClient}
+        webSearchEnabled={webSearchEnabled}
+        onToggleWebSearch={() => setWebSearchEnabled(prev => !prev)}
+        onOpenSkills={() => setShowSkillManager(true)}
+        onOpenClients={() => setShowClientManager(true)}
+        onOpenMemory={() => setShowMemoryPanel(true)}
+      />
+
       {/* Input area */}
       <div className="border-t bg-white p-4">
         <div className="max-w-3xl mx-auto">
@@ -310,6 +332,11 @@ export default function ChatInterface({ domain, conversationId, onConversationCr
           </div>
         </div>
       </div>
+
+      {/* Modal overlays */}
+      {showClientManager && <ClientManager onClose={() => setShowClientManager(false)} />}
+      {showSkillManager && <SkillManager onClose={() => setShowSkillManager(false)} />}
+      {showMemoryPanel && <MemoryPanel onClose={() => setShowMemoryPanel(false)} />}
     </div>
   );
 }
