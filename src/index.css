@@ -1,3 +1,55 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@media print {
+  /* Hide everything except the invoice content */
+  body * {
+    visibility: hidden;
+  }
+
+  #invoice-print,
+  #invoice-print * {
+    visibility: visible;
+  }
+
+  #invoice-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 20px;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+
+  /* Hide the modal overlay and controls during print */
+  .fixed.inset-0 {
+    position: absolute;
+    background: none !important;
+    padding: 0 !important;
+  }
+
+  /* Hide print/close buttons */
+  .sticky.top-0 {
+    display: none !important;
+  }
+
+  /* Remove max-height scroll on print */
+  .max-h-\[90vh\] {
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+
+  /* Ensure flex layouts work in print */
+  #invoice-print div[style*="display: flex"] {
+    display: flex !important;
+  }
+
+  /* Page setup for clean printing */
+  @page {
+    margin: 15mm;
+    size: A4;
+  }
+}
