@@ -4594,20 +4594,56 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
         
         const row = {};
         headers.forEach((h, i) => row[h] = values[i] || '');
-        
-        const date = row.date || row.transactiondate || row.invoicedate || new Date().toISOString().split('T')[0];
-        const reference = row.reference || row.ref || row.invoiceno || row.documentno || '';
-        const description = row.description || row.desc || row.details || row.name || '';
-        const account = row.account || row.accountname || row.category || '';
-        const exclusive = parseFloat(row.exclusive || row.excl || row.nett || row.amount || 0);
-        const vat = parseFloat(row.vat || row.vatamount || row.tax || 0);
-        const inclusive = parseFloat(row.inclusive || row.incl || row.total || 0) || (exclusive + vat);
-        const vatRate = row.vatrate || row.rate || (vat > 0 ? 'Standard 15%' : 'Zero Rated');
+
+        // Helper to find a row value by checking if any header contains one of the given keywords
+        const findField = (...keywords) => {
+          for (const keyword of keywords) {
+            // First try exact match
+            if (row[keyword] !== undefined && row[keyword] !== '') return row[keyword];
+            // Then try partial match on header names
+            const matchKey = headers.find(h => h.includes(keyword));
+            if (matchKey && row[matchKey] !== undefined && row[matchKey] !== '') return row[matchKey];
+          }
+          return '';
+        };
+
+        // Helper to parse numbers that may have comma thousands separators (e.g. "4,908.72")
+        const parseNum = (val) => {
+          if (!val) return 0;
+          return parseFloat(String(val).replace(/,/g, '')) || 0;
+        };
+
+        // Parse date - handle DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD formats
+        const rawDate = findField('date', 'transactiondate', 'invoicedate');
+        let date;
+        if (rawDate) {
+          const slashParts = rawDate.split('/');
+          const dashParts = rawDate.split('-');
+          if (slashParts.length === 3) {
+            // DD/MM/YYYY format (South African standard)
+            const [d, m, y] = slashParts.map(p => p.trim());
+            date = `${y.length === 2 ? '20' + y : y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+          } else if (dashParts.length === 3 && dashParts[0].length === 4) {
+            date = rawDate; // Already YYYY-MM-DD
+          } else {
+            date = rawDate;
+          }
+        } else {
+          date = new Date().toISOString().split('T')[0];
+        }
+
+        const reference = findField('reference', 'ref', 'invoiceno', 'documentno');
+        const description = findField('description', 'desc', 'details', 'name');
+        const account = findField('account', 'accountname', 'category');
+        const exclusive = parseNum(findField('excl', 'exclusive', 'nett', 'amount'));
+        const vat = parseNum(findField('vatamount', 'vat', 'tax'));
+        const inclusive = parseNum(findField('incl', 'inclusive', 'total')) || (exclusive + vat);
+        const vatRate = findField('vatrate', 'rate') || (vat > 0 ? 'Standard 15%' : 'Zero Rated');
         
         // Determine VAT type (input/output) based on multiple fields
         // Check explicit vattype/type column first
         let vatType = 'output'; // Default to output (sales)
-        const explicitType = (row.vattype || row.type || '').toLowerCase();
+        const explicitType = (findField('vattype', 'type') || '').toLowerCase();
         if (explicitType.includes('input') || explicitType.includes('purchase')) {
           vatType = 'input';
         } else if (explicitType.includes('output') || explicitType.includes('sale')) {
