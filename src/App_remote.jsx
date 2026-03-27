@@ -2239,63 +2239,57 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           </div>
         </div>
         
-        <div id="invoice-print" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
+        <div id="invoice-print" style={{ fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '12px' }}>
           {/* Dark Navy Header Banner */}
-          <div style={{ display: 'flex', alignItems: 'stretch', marginBottom: '24px', backgroundColor: '#1d3557' }}>
-            {/* Left: Logo box - medium blue */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', textAlign: 'center', backgroundColor: '#2e6da4', minWidth: '160px' }}>
+          <div style={{ display: 'flex', alignItems: 'stretch', backgroundColor: '#1d3557' }}>
+            {/* Left: Logo box - bright medium blue */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '14px 16px', textAlign: 'center', backgroundColor: '#2e82c4', minWidth: '150px', maxWidth: '180px' }}>
               {company?.logo ? (
                 <div>
-                  <img src={company.logo} alt="Company Logo" style={{ maxWidth: '112px', maxHeight: '60px', objectFit: 'contain', border: 'none', boxShadow: 'none', filter: 'none', marginBottom: '6px' }} />
-                  <p style={{ fontSize: '14px', fontWeight: 'bold', color: '#fff', margin: 0 }}>{company?.name || 'AME Business'}</p>
+                  <img src={company.logo} alt="Company Logo" style={{ maxWidth: '100px', maxHeight: '55px', objectFit: 'contain', border: 'none', boxShadow: 'none', filter: 'none', marginBottom: '4px' }} />
+                  <p style={{ fontSize: '12px', fontWeight: 'bold', color: '#fff', margin: 0 }}>{company?.name || 'AME Business'}</p>
                 </div>
               ) : (
                 <div>
-                  <p style={{ fontSize: '16px', fontWeight: 'bold', color: '#fff', margin: '0 0 4px 0' }}>{company?.name || 'AME Business'}</p>
-                  <p style={{ fontSize: '11px', color: '#bfdbfe', margin: 0, fontStyle: 'italic' }}>{company?.tradingName || 'Accountants and Tax Practitioners'}</p>
+                  <p style={{ fontSize: '14px', fontWeight: 'bold', color: '#fff', margin: '0 0 3px 0' }}>{company?.name || 'AME Business'}</p>
+                  <p style={{ fontSize: '10px', color: '#bfdbfe', margin: 0, fontStyle: 'italic' }}>{company?.tradingName || 'Accountants and Tax Practitioners'}</p>
                 </div>
               )}
             </div>
             {/* Center: Company info */}
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '20px 32px' }}>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '14px 24px' }}>
               <div>
-                <p style={{ fontSize: '16px', fontWeight: 'bold', color: '#fff', margin: '0 0 4px 0' }}>{company?.name || 'AME Business'}</p>
-                <p style={{ fontSize: '12px', color: '#bfdbfe', margin: 0, fontStyle: 'italic' }}>{company?.tradingName || 'Accountants and Tax Practitioners'}</p>
+                <p style={{ fontSize: '14px', fontWeight: 'bold', color: '#fff', margin: '0 0 2px 0' }}>{company?.name || 'AME Business'}</p>
+                <p style={{ fontSize: '11px', color: '#bfdbfe', margin: 0, fontStyle: 'italic' }}>{company?.tradingName || 'Accountants and Tax Practitioners'}</p>
               </div>
             </div>
             {/* Right: INVOICE title + details box */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center', padding: '20px' }}>
-              <p style={{ fontSize: '32px', fontWeight: 'bold', color: '#fff', margin: '0 0 12px 0', letterSpacing: '2px' }}>INVOICE</p>
-              <div style={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '12px 16px', minWidth: '240px' }}>
-                <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center', padding: '14px 16px' }}>
+              <p style={{ fontSize: '28px', fontWeight: 'bold', color: '#fff', margin: '0 0 8px 0', letterSpacing: '2px' }}>INVOICE</p>
+              <div style={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '8px 12px', minWidth: '220px' }}>
+                <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
                   <tbody>
-                    <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '3px 12px 3px 0', color: '#64748b', fontWeight: '600' }}>NUMBER</td>
-                      <td style={{ padding: '3px 0', textAlign: 'right', color: '#1e293b', fontWeight: 'bold' }}>{invoice.documentNo}</td>
+                    <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '2px 10px 2px 0', color: '#64748b', fontWeight: '600' }}>NUMBER</td>
+                      <td style={{ padding: '2px 0', textAlign: 'right', color: '#1e293b', fontWeight: 'bold' }}>{invoice.documentNo}</td>
                     </tr>
                     {invoice.customerRef && (
-                      <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
-                        <td style={{ padding: '3px 12px 3px 0', color: '#64748b', fontWeight: '600' }}>REFERENCE</td>
-                        <td style={{ padding: '3px 0', textAlign: 'right', color: '#1e293b', fontWeight: 'bold' }}>{invoice.customerRef}</td>
+                      <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '2px 10px 2px 0', color: '#64748b', fontWeight: '600' }}>REFERENCE</td>
+                        <td style={{ padding: '2px 0', textAlign: 'right', color: '#1e293b', fontWeight: 'bold' }}>{invoice.customerRef}</td>
                       </tr>
                     )}
-                    <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '3px 12px 3px 0', color: '#64748b', fontWeight: '600' }}>DATE</td>
-                      <td style={{ padding: '3px 0', textAlign: 'right', color: '#1e293b', fontWeight: 'bold' }}>{(() => { const d = invoice.date; if (!d) return ''; const parts = d.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d; })()}</td>
+                    <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '2px 10px 2px 0', color: '#64748b', fontWeight: '600' }}>DATE</td>
+                      <td style={{ padding: '2px 0', textAlign: 'right', color: '#1e293b', fontWeight: 'bold' }}>{(() => { const d = invoice.date; if (!d) return ''; const parts = d.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d; })()}</td>
                     </tr>
-                    <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '3px 12px 3px 0', color: '#64748b', fontWeight: '600' }}>DUE DATE</td>
-                      <td style={{ padding: '3px 0', textAlign: 'right', color: '#1e293b', fontWeight: 'bold' }}>{(() => { const d = invoice.dueDate; if (!d) return ''; const parts = d.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d; })()}</td>
+                    <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '2px 10px 2px 0', color: '#64748b', fontWeight: '600' }}>DUE DATE</td>
+                      <td style={{ padding: '2px 0', textAlign: 'right', color: '#1e293b', fontWeight: 'bold' }}>{(() => { const d = invoice.dueDate; if (!d) return ''; const parts = d.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d; })()}</td>
                     </tr>
-                    {invoice.salesRep && (
-                      <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
-                        <td style={{ padding: '3px 12px 3px 0', color: '#64748b', fontWeight: '600' }}>SALES REP</td>
-                        <td style={{ padding: '3px 0', textAlign: 'right', color: '#1e293b', fontWeight: 'bold' }}>{invoice.salesRep}</td>
-                      </tr>
-                    )}
                     <tr>
-                      <td style={{ padding: '3px 12px 3px 0', color: '#64748b', fontWeight: '600' }}>PAGE</td>
-                      <td style={{ padding: '3px 0', textAlign: 'right', color: '#1e293b' }}>1 of 1</td>
+                      <td style={{ padding: '2px 10px 2px 0', color: '#64748b', fontWeight: '600' }}>PAGE</td>
+                      <td style={{ padding: '2px 0', textAlign: 'right', color: '#1e293b' }}>1 of 1</td>
                     </tr>
                   </tbody>
                 </table>
@@ -2303,96 +2297,63 @@ const PrintPreview = ({ invoice, onClose, company }) => {
             </div>
           </div>
 
-          <div style={{ padding: '0 32px 32px 32px' }}>
+          <div style={{ padding: '12px 24px 20px 24px' }}>
 
           {/* FROM / TO Section */}
-          <div style={{ display: 'flex', gap: '24px', marginBottom: '24px' }}>
-            {/* FROM Column */}
+          <div style={{ display: 'flex', gap: '20px', marginBottom: '12px' }}>
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', letterSpacing: '1px', marginBottom: '6px', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px' }}>FROM</p>
-              <p style={{ fontSize: '14px', fontWeight: 'bold', color: '#1e293b', margin: '0 0 4px 0' }}>{company?.name || 'A.M.E BUSINESS ACCOUNTANTS'}</p>
-              {company?.vatNo && (
-                <p style={{ fontSize: '12px', color: '#475569', margin: '0 0 8px 0' }}>VAT NO: {company.vatNo}</p>
-              )}
-              <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
+              <p style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', letterSpacing: '1px', marginBottom: '4px', borderBottom: '1px solid #e2e8f0', paddingBottom: '3px' }}>FROM</p>
+              <p style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b', margin: '0 0 2px 0' }}>{company?.name || 'A.M.E BUSINESS ACCOUNTANTS'}</p>
+              {company?.vatNo && <p style={{ fontSize: '11px', color: '#475569', margin: '0 0 4px 0' }}>VAT NO: {company.vatNo}</p>}
+              <div style={{ display: 'flex', gap: '12px' }}>
                 <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8', marginBottom: '2px' }}>POSTAL ADDRESS</p>
-                  {company?.postalCode && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{company.postalCode}</p>}
-                  {company?.city && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{company.city}</p>}
+                  <p style={{ fontSize: '9px', fontWeight: '600', color: '#94a3b8', marginBottom: '1px' }}>POSTAL ADDRESS</p>
+                  {company?.postalCode && <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{company.postalCode}</p>}
+                  {company?.city && <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{company.city}</p>}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8', marginBottom: '2px' }}>PHYSICAL ADDRESS</p>
-                  {company?.address && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{company.address}</p>}
-                  {company?.city && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{company.city}</p>}
-                  {company?.postalCode && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{company.postalCode}</p>}
+                  <p style={{ fontSize: '9px', fontWeight: '600', color: '#94a3b8', marginBottom: '1px' }}>PHYSICAL ADDRESS</p>
+                  {company?.address && <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{company.address}</p>}
+                  {company?.city && <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{company.city}</p>}
                 </div>
               </div>
-              {(company?.email || company?.phone) && (
-                <p style={{ fontSize: '12px', color: '#475569', marginTop: '4px' }}>
-                  {[company?.email, company?.phone ? `Tel: ${company.phone}` : null].filter(Boolean).join(' | ')}
-                </p>
-              )}
             </div>
-
-            {/* TO Column */}
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', letterSpacing: '1px', marginBottom: '6px', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px' }}>TO</p>
-              <p style={{ fontSize: '14px', fontWeight: 'bold', color: '#1e293b', margin: '0 0 4px 0' }}>{invoice.supplier || invoice.customer || 'Customer'}</p>
-              {invoice.customerDetails?.companyName && (
-                <p style={{ fontSize: '13px', color: '#334155', margin: '0 0 2px 0' }}>{invoice.customerDetails.companyName}</p>
-              )}
-              {invoice.customerDetails?.contactPerson && (
-                <p style={{ fontSize: '12px', color: '#475569', margin: '0 0 2px 0' }}>Att: {invoice.customerDetails.contactPerson}</p>
-              )}
-              {invoice.customerDetails?.vatNo && (
-                <p style={{ fontSize: '12px', color: '#475569', margin: '0 0 8px 0' }}>CUSTOMER VAT NO: {invoice.customerDetails.vatNo}</p>
-              )}
-              <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
+              <p style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', letterSpacing: '1px', marginBottom: '4px', borderBottom: '1px solid #e2e8f0', paddingBottom: '3px' }}>TO</p>
+              <p style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b', margin: '0 0 2px 0' }}>{invoice.supplier || invoice.customer || 'Customer'}</p>
+              {invoice.customerDetails?.vatNo && <p style={{ fontSize: '11px', color: '#475569', margin: '0 0 4px 0' }}>CUSTOMER VAT NO: {invoice.customerDetails.vatNo}</p>}
+              <div style={{ display: 'flex', gap: '12px' }}>
                 <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8', marginBottom: '2px' }}>POSTAL ADDRESS</p>
-                  {invoice.postalAddress && invoice.postalAddress.filter(Boolean).length > 0 ? (
-                    invoice.postalAddress.filter(Boolean).map((line, i) => (
-                      <p key={i} style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{line}</p>
-                    ))
-                  ) : (
-                    <>
-                      {invoice.customerDetails?.postalCode && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{invoice.customerDetails.postalCode}</p>}
-                      {invoice.customerDetails?.city && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{invoice.customerDetails.city}</p>}
-                    </>
-                  )}
+                  <p style={{ fontSize: '9px', fontWeight: '600', color: '#94a3b8', marginBottom: '1px' }}>POSTAL ADDRESS</p>
+                  {invoice.postalAddress?.filter(Boolean).map((line, i) => <p key={i} style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{line}</p>)}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8', marginBottom: '2px' }}>PHYSICAL ADDRESS</p>
-                  {invoice.customerDetails?.address && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{invoice.customerDetails.address}</p>}
-                  {invoice.customerDetails?.city && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{invoice.customerDetails.city}</p>}
-                  {invoice.customerDetails?.postalCode && <p style={{ fontSize: '12px', color: '#475569', margin: 0 }}>{invoice.customerDetails.postalCode}</p>}
+                  <p style={{ fontSize: '9px', fontWeight: '600', color: '#94a3b8', marginBottom: '1px' }}>PHYSICAL ADDRESS</p>
+                  {invoice.customerDetails?.address && <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{invoice.customerDetails.address}</p>}
+                  {invoice.customerDetails?.city && <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{invoice.customerDetails.city}</p>}
                 </div>
               </div>
-              {(invoice.customerDetails?.email || invoice.customerDetails?.phone) && (
-                <p style={{ fontSize: '12px', color: '#475569', marginTop: '4px' }}>
-                  {[invoice.customerDetails?.email, invoice.customerDetails?.phone ? `Tel: ${invoice.customerDetails.phone}` : null].filter(Boolean).join(' | ')}
-                </p>
-              )}
             </div>
           </div>
-          
-          <div className="border rounded-xl overflow-hidden mb-6">
-            <table className="w-full">
+
+          {/* Items Table */}
+          <div style={{ border: '1px solid #e2e8f0', borderRadius: '6px', overflow: 'hidden', marginBottom: '12px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr style={{ backgroundColor: '#d4e6f5', borderBottom: '2px solid #2e6da4' }}>
-                  <th className="text-left py-2 px-3 text-sm" style={{ color: '#1d3557' }}>Description</th>
-                  <th className="text-right py-2 px-3 text-sm" style={{ color: '#1d3557' }}>Qty</th>
-                  <th className="text-right py-2 px-3 text-sm" style={{ color: '#1d3557' }}>Price</th>
-                  <th className="text-right py-2 px-3 text-sm" style={{ color: '#1d3557' }}>Total</th>
+                <tr style={{ backgroundColor: '#d4e6f5', borderBottom: '2px solid #2e82c4' }}>
+                  <th style={{ textAlign: 'left', padding: '6px 10px', fontSize: '11px', fontWeight: '700', color: '#1d3557' }}>Description</th>
+                  <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: '11px', fontWeight: '700', color: '#1d3557', width: '50px' }}>Qty</th>
+                  <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: '11px', fontWeight: '700', color: '#1d3557', width: '90px' }}>Price</th>
+                  <th style={{ textAlign: 'right', padding: '6px 10px', fontSize: '11px', fontWeight: '700', color: '#1d3557', width: '90px' }}>Total</th>
                 </tr>
               </thead>
               <tbody>
                 {invoice.items?.map((item, idx) => (
-                  <tr key={idx} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'} border-b last:border-b-0`}>
-                    <td className="py-2 px-3 text-sm">{item.description || 'Item'}</td>
-                    <td className="py-2 px-3 text-sm text-right">{item.qty}</td>
-                    <td className="py-2 px-3 text-sm text-right">R {(item.price || 0).toFixed(2)}</td>
-                    <td className="py-2 px-3 text-sm text-right">R {((item.qty || 0) * (item.price || 0)).toFixed(2)}</td>
+                  <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#fff' : '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '5px 10px', fontSize: '11px' }}>{item.description || 'Item'}</td>
+                    <td style={{ padding: '5px 10px', fontSize: '11px', textAlign: 'right' }}>{item.qty}</td>
+                    <td style={{ padding: '5px 10px', fontSize: '11px', textAlign: 'right' }}>R {(item.price || 0).toFixed(2)}</td>
+                    <td style={{ padding: '5px 10px', fontSize: '11px', textAlign: 'right' }}>R {((item.qty || 0) * (item.price || 0)).toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2400,55 +2361,56 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           </div>
 
           {(invoice.paymentTerms || invoice.notes) && (
-            <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
               {invoice.paymentTerms && (
-                <div className="border rounded-lg p-3 bg-slate-50">
-                  <p className="text-xs font-semibold text-slate-500 mb-1">Payment Terms</p>
-                  <p className="text-sm text-slate-700">{invoice.paymentTerms}</p>
+                <div style={{ flex: 1, border: '1px solid #e2e8f0', borderRadius: '4px', padding: '8px 10px', backgroundColor: '#f8fafc' }}>
+                  <p style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8', margin: '0 0 2px 0' }}>Payment Terms</p>
+                  <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{invoice.paymentTerms}</p>
                 </div>
               )}
               {invoice.notes && (
-                <div className="border rounded-lg p-3 bg-slate-50">
-                  <p className="text-xs font-semibold text-slate-500 mb-1">Notes</p>
-                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{invoice.notes}</p>
+                <div style={{ flex: 1, border: '1px solid #e2e8f0', borderRadius: '4px', padding: '8px 10px', backgroundColor: '#f8fafc' }}>
+                  <p style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8', margin: '0 0 2px 0' }}>Notes</p>
+                  <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{invoice.notes}</p>
                 </div>
               )}
             </div>
           )}
-          
-          <div className="flex justify-end">
-            <div className="w-80 border rounded-lg p-4 bg-slate-50">
-              <div className="flex justify-between py-1 text-sm"><span className="text-slate-600">Subtotal:</span><span>R {(invoice.subtotal || 0).toFixed(2)}</span></div>
-              {(invoice.invoiceDiscount || 0) > 0 && <div className="flex justify-between py-1 text-sm"><span className="text-slate-600">Invoice Discount:</span><span className="text-red-600">- R {(invoice.invoiceDiscount || 0).toFixed(2)}</span></div>}
-              <div className="flex justify-between py-1 text-sm"><span className="text-slate-600">VAT:</span><span>R {(invoice.vat || 0).toFixed(2)}</span></div>
-              <div className="flex justify-between py-2 font-bold text-lg border-t-2 border-emerald-600 mt-2"><span>Grand Total:</span><span className="text-emerald-700">R {(invoice.amount || 0).toFixed(2)}</span></div>
+
+          {/* Totals */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+            <div style={{ width: '280px', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '10px 14px', backgroundColor: '#f8fafc' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '11px' }}><span style={{ color: '#64748b' }}>Subtotal:</span><span>R {(invoice.subtotal || 0).toFixed(2)}</span></div>
+              {(invoice.invoiceDiscount || 0) > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '11px' }}><span style={{ color: '#64748b' }}>Invoice Discount:</span><span style={{ color: '#dc2626' }}>- R {(invoice.invoiceDiscount || 0).toFixed(2)}</span></div>}
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '11px' }}><span style={{ color: '#64748b' }}>VAT:</span><span>R {(invoice.vat || 0).toFixed(2)}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 2px 0', fontSize: '13px', fontWeight: 'bold', borderTop: '2px solid #059669', marginTop: '4px' }}><span>Grand Total:</span><span style={{ color: '#059669' }}>R {(invoice.amount || 0).toFixed(2)}</span></div>
             </div>
           </div>
 
-          <div className="mt-6 flex justify-between items-start">
-            {/* Banking Details */}
-            <div style={{ fontSize: '13px', maxWidth: '280px' }}>
-              <div style={{ display: 'flex', backgroundColor: '#eef4fb', border: '1px solid #c5d9ef', borderRadius: '6px', padding: '12px 16px' }}>
-                <div style={{ width: '4px', borderRadius: '4px', marginRight: '12px', flexShrink: 0, backgroundColor: '#2e6da4' }}></div>
+          {/* Banking Details + Thank You */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div style={{ maxWidth: '260px' }}>
+              <div style={{ display: 'flex', backgroundColor: '#eef4fb', border: '1px solid #c5d9ef', borderRadius: '5px', padding: '8px 12px' }}>
+                <div style={{ width: '3px', borderRadius: '3px', marginRight: '10px', flexShrink: 0, backgroundColor: '#2e82c4' }}></div>
                 <div>
-                  <p style={{ fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#1d3557', margin: '0 0 8px 0' }}>Banking Details</p>
-                  <table style={{ borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <p style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.5px', color: '#1d3557', margin: '0 0 5px 0' }}>Banking Details</p>
+                  <table style={{ borderCollapse: 'collapse', fontSize: '11px' }}>
                     <tbody>
-                      <tr><td style={{ color: '#64748b', paddingRight: '12px', paddingBottom: '2px' }}>Account Name:</td><td style={{ fontWeight: '600', color: '#1e293b' }}>AME Business Accountants</td></tr>
-                      <tr><td style={{ color: '#64748b', paddingRight: '12px', paddingBottom: '2px' }}>Bank:</td><td style={{ fontWeight: '600', color: '#1e293b' }}>FNB</td></tr>
-                      <tr><td style={{ color: '#64748b', paddingRight: '12px', paddingBottom: '2px' }}>Account No:</td><td style={{ fontWeight: '600', color: '#1e293b' }}>6300 418 3446</td></tr>
-                      <tr><td style={{ color: '#64748b', paddingRight: '12px' }}>Branch Code:</td><td style={{ fontWeight: '600', color: '#1e293b' }}>250655</td></tr>
+                      <tr><td style={{ color: '#64748b', paddingRight: '10px', paddingBottom: '1px' }}>Account Name:</td><td style={{ fontWeight: '600', color: '#1e293b' }}>AME Business Accountants</td></tr>
+                      <tr><td style={{ color: '#64748b', paddingRight: '10px', paddingBottom: '1px' }}>Bank:</td><td style={{ fontWeight: '600', color: '#1e293b' }}>FNB</td></tr>
+                      <tr><td style={{ color: '#64748b', paddingRight: '10px', paddingBottom: '1px' }}>Account No:</td><td style={{ fontWeight: '600', color: '#1e293b' }}>6300 418 3446</td></tr>
+                      <tr><td style={{ color: '#64748b', paddingRight: '10px' }}>Branch Code:</td><td style={{ fontWeight: '600', color: '#1e293b' }}>250655</td></tr>
                     </tbody>
                   </table>
                 </div>
               </div>
             </div>
-            {/* Thank you note */}
-            <div className="text-center text-sm text-slate-600">
-              <p>Thank you for your business.</p>
-              <p className="mt-1">Payment due by {(() => { const d = invoice.dueDate; if (!d) return ''; const parts = d.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d; })()}.</p>
+            <div style={{ textAlign: 'center', fontSize: '11px', color: '#64748b' }}>
+              <p style={{ margin: '0 0 2px 0' }}>Thank you for your business.</p>
+              <p style={{ margin: 0 }}>Payment due by {(() => { const d = invoice.dueDate; if (!d) return ''; const parts = d.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d; })()}.</p>
             </div>
           </div>
+
           </div>{/* end padding div */}
         </div>
       </div>
