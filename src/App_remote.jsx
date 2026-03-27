@@ -2242,19 +2242,12 @@ const PrintPreview = ({ invoice, onClose, company }) => {
         <div id="invoice-print" style={{ fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '12px' }}>
           {/* Dark Navy Header Banner */}
           <div style={{ display: 'flex', alignItems: 'stretch', backgroundColor: '#1d3557' }}>
-            {/* Left: Logo box - bright medium blue */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '14px 16px', textAlign: 'center', backgroundColor: '#2e82c4', minWidth: '150px', maxWidth: '180px' }}>
-              {company?.logo ? (
-                <div>
-                  <img src={company.logo} alt="Company Logo" style={{ maxWidth: '100px', maxHeight: '55px', objectFit: 'contain', border: 'none', boxShadow: 'none', filter: 'none', marginBottom: '4px' }} />
-                  <p style={{ fontSize: '12px', fontWeight: 'bold', color: '#fff', margin: 0 }}>{company?.name || 'AME Business'}</p>
-                </div>
-              ) : (
-                <div>
-                  <p style={{ fontSize: '14px', fontWeight: 'bold', color: '#fff', margin: '0 0 3px 0' }}>{company?.name || 'AME Business'}</p>
-                  <p style={{ fontSize: '10px', color: '#bfdbfe', margin: 0, fontStyle: 'italic' }}>{company?.tradingName || 'Accountants and Tax Practitioners'}</p>
-                </div>
-              )}
+            {/* Left: Logo box - bright medium blue, text only */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '14px 16px', textAlign: 'center', backgroundColor: '#2e82c4', minWidth: '160px', maxWidth: '190px' }}>
+              <div>
+                <p style={{ fontSize: '16px', fontWeight: 'bold', color: '#fff', margin: '0 0 5px 0' }}>{company?.name || 'AME Business'}</p>
+                <p style={{ fontSize: '10px', color: '#dbeafe', margin: 0 }}>{company?.tradingName || 'Accountants and Tax Practitioners'}</p>
+              </div>
             </div>
             {/* Center: Company info */}
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '14px 24px' }}>
