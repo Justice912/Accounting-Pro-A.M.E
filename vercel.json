@@ -1,7 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "installCommand": "npm ci --include=dev",
+  "installCommand": "npm install --ignore-scripts",
   "buildCommand": "npm run build:ci",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index_accounting.html" }
+  ]
 }
