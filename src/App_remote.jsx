@@ -1484,73 +1484,66 @@ const PrintPreview = ({ invoice, onClose, company }) => {
         </div>
         
         {/* Invoice Content - A4 Size */}
-        <div className="min-h-[297mm]" id="invoice-print">
-          {/* Dark Navy Header Banner */}
-          <div className="flex items-stretch mb-8" style={{ backgroundColor: '#1d3557' }}>
-            {/* Company Logo/Name Box - Medium Blue */}
-            <div className="flex items-center justify-center p-5 text-center" style={{ backgroundColor: '#2e6da4', minWidth: '160px' }}>
+        <div className="p-8 min-h-[297mm] print:p-12" id="invoice-print">
+          {/* Header with Logo and Invoice Details */}
+          <div className="flex justify-between items-start mb-8">
+            {/* Left side - Logo and Company Name */}
+            <div className="flex-shrink-0">
               {company?.logo ? (
                 <div>
-                  <img src={company.logo} alt="Company Logo" className="w-28 h-auto object-contain mb-2" style={{ maxHeight: '60px' }} />
-                  <div className="text-base font-bold text-white leading-tight">{company?.name || 'Your Company'}</div>
-                  {company?.tradingName && <p className="text-xs text-blue-100">{company.tradingName}</p>}
+                  <img src={company.logo} alt="Company Logo" className="w-40 h-auto object-contain mb-2" style={{ maxHeight: '80px' }} />
+                  <div className="text-xl font-bold text-slate-800">{company?.name || 'Your Company'}</div>
+                  {company?.tradingName && (
+                    <p className="text-sm text-slate-500">t/a {company.tradingName}</p>
+                  )}
                 </div>
               ) : (
                 <div>
-                  <div className="text-lg font-bold text-white leading-tight">{company?.name || 'Your Company'}</div>
-                  {company?.tradingName && <p className="text-xs text-blue-100 mt-1">{company.tradingName}</p>}
+                  <div className="text-2xl font-bold text-slate-800">{company?.name || 'Your Company'}</div>
+                  {company?.tradingName && (
+                    <p className="text-sm text-slate-500">t/a {company.tradingName}</p>
+                  )}
                 </div>
               )}
             </div>
-            {/* Company Info Center */}
-            <div className="flex-1 flex items-center px-8">
-              <div>
-                <div className="text-lg font-bold text-white">{company?.name || 'Your Company'}</div>
-                {(company?.tagline || company?.tradingName) && (
-                  <p className="text-sm text-blue-200 italic mt-1">{company?.tagline || company?.tradingName}</p>
-                )}
-              </div>
-            </div>
-            {/* INVOICE Title + Details Box */}
-            <div className="flex flex-col items-end justify-center p-5">
-              <h1 className="text-4xl font-bold text-white mb-3">
+            
+            {/* Right side - Invoice Details Box */}
+            <div className="text-right">
+              <h1 className="text-3xl font-bold text-slate-800 mb-4">
                 {invoice.invoiceType === 'supplier' ? 'SUPPLIER INVOICE' : 'INVOICE'}
               </h1>
-              <div className="text-xs border p-3 rounded bg-white w-64">
-                <div className="flex justify-between gap-4 py-1 border-b border-slate-200">
-                  <span className="text-slate-500 font-medium">NUMBER</span>
-                  <span className="font-bold text-slate-800">{invoice.documentNo}</span>
+              <div className="text-sm space-y-1 border p-4 rounded bg-slate-50">
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">NUMBER:</span>
+                  <span className="font-bold">{invoice.documentNo}</span>
                 </div>
                 {invoice.externalInvoiceNo && (
-                  <div className="flex justify-between gap-4 py-1 border-b border-slate-200">
-                    <span className="text-slate-500 font-medium">REFERENCE</span>
-                    <span className="font-bold text-slate-800">{invoice.externalInvoiceNo}</span>
+                  <div className="flex justify-between gap-8">
+                    <span className="text-slate-500">REFERENCE:</span>
+                    <span className="font-bold">{invoice.externalInvoiceNo}</span>
                   </div>
                 )}
-                <div className="flex justify-between gap-4 py-1 border-b border-slate-200">
-                  <span className="text-slate-500 font-medium">DATE</span>
-                  <span className="font-bold text-slate-800">{invoice.date}</span>
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">DATE:</span>
+                  <span className="font-bold">{invoice.date}</span>
                 </div>
-                <div className="flex justify-between gap-4 py-1 border-b border-slate-200">
-                  <span className="text-slate-500 font-medium">DUE DATE</span>
-                  <span className="font-bold text-slate-800">{invoice.dueDate}</span>
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">DUE DATE:</span>
+                  <span className="font-bold">{invoice.dueDate}</span>
                 </div>
                 {invoice.salesRep && (
-                  <div className="flex justify-between gap-4 py-1 border-b border-slate-200">
-                    <span className="text-slate-500 font-medium">SALES REP</span>
-                    <span className="font-bold text-slate-800">{invoice.salesRep}</span>
+                  <div className="flex justify-between gap-8">
+                    <span className="text-slate-500">SALES REP:</span>
+                    <span className="font-bold">{invoice.salesRep}</span>
                   </div>
                 )}
-                <div className="flex justify-between gap-4 py-1">
-                  <span className="text-slate-500 font-medium">PAGE</span>
-                  <span className="text-slate-800">1 of 1</span>
+                <div className="flex justify-between gap-8">
+                  <span className="text-slate-500">PAGE:</span>
+                  <span>1/1</span>
                 </div>
               </div>
             </div>
           </div>
-
-          {/* Padded content area */}
-          <div className="px-8 pb-8 print:px-12 print:pb-12">
           
           {/* FROM and TO Section */}
           <div className="grid grid-cols-2 gap-8 mb-8 border-t border-b border-slate-300 py-6">
@@ -1610,14 +1603,14 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           {/* Line Items Table */}
           <table className="w-full mb-8 text-sm">
             <thead>
-              <tr className="border-b-2" style={{ backgroundColor: '#d4e6f5', borderColor: '#2e6da4' }}>
-                <th className="text-left py-3 px-2 font-bold" style={{ color: '#1d3557' }}>Description</th>
-                <th className="text-center py-3 px-2 font-bold w-20" style={{ color: '#1d3557' }}>Quantity</th>
-                <th className="text-right py-3 px-2 font-bold w-28" style={{ color: '#1d3557' }}>Unit Price</th>
-                <th className="text-center py-3 px-2 font-bold w-16" style={{ color: '#1d3557' }}>Disc %</th>
-                <th className="text-center py-3 px-2 font-bold w-16" style={{ color: '#1d3557' }}>VAT %</th>
-                <th className="text-right py-3 px-2 font-bold w-28" style={{ color: '#1d3557' }}>Excl. Total</th>
-                <th className="text-right py-3 px-2 font-bold w-28" style={{ color: '#1d3557' }}>Incl. Total</th>
+              <tr className="border-b-2 border-slate-400 bg-slate-100">
+                <th className="text-left py-3 px-2 font-bold text-slate-700">Description</th>
+                <th className="text-center py-3 px-2 font-bold text-slate-700 w-20">Quantity</th>
+                <th className="text-right py-3 px-2 font-bold text-slate-700 w-28">Unit Price</th>
+                <th className="text-center py-3 px-2 font-bold text-slate-700 w-16">Disc %</th>
+                <th className="text-center py-3 px-2 font-bold text-slate-700 w-16">VAT %</th>
+                <th className="text-right py-3 px-2 font-bold text-slate-700 w-28">Excl. Total</th>
+                <th className="text-right py-3 px-2 font-bold text-slate-700 w-28">Incl. Total</th>
               </tr>
             </thead>
             <tbody>
@@ -1642,30 +1635,14 @@ const PrintPreview = ({ invoice, onClose, company }) => {
           <div className="flex justify-between items-end mt-auto">
             {/* Banking Details - Left */}
             <div className="text-sm max-w-xs">
-              <div className="border rounded p-4 flex" style={{ backgroundColor: '#eef4fb', borderColor: '#c5d9ef' }}>
-                <div className="w-1 rounded-full mr-3 flex-shrink-0" style={{ backgroundColor: '#2e6da4' }}></div>
-                <div>
-                  <p className="font-bold mb-2 uppercase tracking-wide" style={{ color: '#1d3557' }}>Banking Details</p>
-                  <div className="space-y-1 text-slate-700">
-                    <div className="flex gap-2">
-                      <span className="text-slate-500 flex-shrink-0" style={{ minWidth: '100px' }}>Account Name:</span>
-                      <span className="font-semibold">AME Business Accountants</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <span className="text-slate-500 flex-shrink-0" style={{ minWidth: '100px' }}>Bank:</span>
-                      <span className="font-semibold">FNB</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <span className="text-slate-500 flex-shrink-0" style={{ minWidth: '100px' }}>Account No:</span>
-                      <span className="font-semibold">6300 418 3446</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <span className="text-slate-500 flex-shrink-0" style={{ minWidth: '100px' }}>Branch Code:</span>
-                      <span className="font-semibold">250655</span>
-                    </div>
-                  </div>
+              {company?.bankName && (
+                <div className="border rounded p-4 bg-slate-50">
+                  <p className="font-bold text-slate-700 mb-2">Banking Details</p>
+                  <p className="font-semibold">{company.bankName}</p>
+                  {company?.bankAccountNo && <p>Account No. {company.bankAccountNo}</p>}
+                  {company?.bankBranchCode && <p>Branch Code: {company.bankBranchCode}</p>}
                 </div>
-              </div>
+              )}
               <p className="mt-4 text-xs text-slate-500 italic">N.B DEPOSIT OF 50% IS REQUIRED BEFORE COMMENCING WORK.</p>
             </div>
             
@@ -1700,7 +1677,6 @@ const PrintPreview = ({ invoice, onClose, company }) => {
                 <p className="text-3xl font-bold">R{(invoice.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
             </div>
-          </div>
           </div>
         </div>
       </div>
