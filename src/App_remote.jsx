@@ -270,6 +270,8 @@ const AccountingDashboard = () => {
   const [showClientSelector, setShowClientSelector] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const [employees, setEmployees] = useState([]);
+  const [payslips, setPayslips] = useState([]);
 
   // Load data on mount
   useEffect(() => {
@@ -294,22 +296,26 @@ const AccountingDashboard = () => {
         return;
       }
 
-      const [invRes, clientRes, customerRes, suppRes, bankRes, vatRes, accRes] = await Promise.all([
+      const [invRes, clientRes, customerRes, suppRes, bankRes, vatRes, accRes, empRes, payRes] = await Promise.all([
         Promise.resolve({ value: localStorage.getItem('accounting-invoices') }),
         Promise.resolve({ value: localStorage.getItem('accounting-clients') }),
         Promise.resolve({ value: localStorage.getItem('accounting-customers') }),
         Promise.resolve({ value: localStorage.getItem('accounting-suppliers') }),
         Promise.resolve({ value: localStorage.getItem('accounting-bank-statements') }),
         Promise.resolve({ value: localStorage.getItem('accounting-vat-transactions') }),
-        Promise.resolve({ value: localStorage.getItem('accounting-accounts') })
+        Promise.resolve({ value: localStorage.getItem('accounting-accounts') }),
+        Promise.resolve({ value: localStorage.getItem('accounting-employees') }),
+        Promise.resolve({ value: localStorage.getItem('accounting-payslips') }),
       ]);
-      
+
       if (invRes?.value) setInvoices(JSON.parse(invRes.value));
       if (clientRes?.value) setClients(JSON.parse(clientRes.value));
       if (customerRes?.value) setCustomers(JSON.parse(customerRes.value));
       if (suppRes?.value) setSuppliers(JSON.parse(suppRes.value));
       if (bankRes?.value) setBankStatements(JSON.parse(bankRes.value));
       if (vatRes?.value) setVatTransactions(JSON.parse(vatRes.value));
+      if (empRes?.value) setEmployees(JSON.parse(empRes.value));
+      if (payRes?.value) setPayslips(JSON.parse(payRes.value));
 
       // Load API key
       const savedApiKey = localStorage.getItem('anthropic-api-key');
@@ -375,6 +381,16 @@ const AccountingDashboard = () => {
     localStorage.setItem('accounting-accounts', JSON.stringify(data));
   };
 
+  const saveEmployees = (data) => {
+    setEmployees(data);
+    localStorage.setItem('accounting-employees', JSON.stringify(data));
+  };
+
+  const savePayslips = (data) => {
+    setPayslips(data);
+    localStorage.setItem('accounting-payslips', JSON.stringify(data));
+  };
+
   // Calculate totals - filtered by active company
   const activeCompanyStatements = activeCompanyId ? bankStatements.filter(s => s.companyId === activeCompanyId) : bankStatements;
   const activeCompanyInvoices = activeCompanyId ? invoices.filter(inv => inv.companyId === activeCompanyId) : invoices;
@@ -417,6 +433,8 @@ const AccountingDashboard = () => {
     { id: 'accounts', label: 'Accounts', icon: Wallet },
     { id: 'banking', label: 'Banking', icon: Landmark },
     { id: 'vatrecon', label: 'VAT Recon', icon: Calculator },
+    { id: 'forecast', label: 'Cash Flow', icon: TrendingUp },
+    { id: 'payroll', label: 'Payroll', icon: Users },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
     { id: 'audit', label: 'Audit Module', icon: Shield }
   ];
@@ -649,6 +667,22 @@ const AccountingDashboard = () => {
             saveVatTransactions={saveVatTransactions}
             company={activeCompany}
             accounts={accounts}
+          />
+        )}
+        {activeTab === 'forecast' && (
+          <CashFlowForecastView
+            invoices={invoices}
+            bankStatements={bankStatements}
+            company={activeCompany}
+          />
+        )}
+        {activeTab === 'payroll' && (
+          <PayrollView
+            employees={employees}
+            saveEmployees={saveEmployees}
+            payslips={payslips}
+            savePayslips={savePayslips}
+            company={activeCompany}
           />
         )}
         {activeTab === 'reports' && (
@@ -5199,6 +5233,7 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
             { id: 'attached', label: 'Attached', count: attachedTransactions.length },
             { id: 'new', label: 'New Transactions', count: newTransactions.length },
             { id: 'reviewed', label: 'Reviewed Transactions', count: reviewedTransactions.length },
+            { id: 'rules', label: 'Allocation Rules', count: allocationRules.filter(r => r.companyId === company?.id).length },
           ].map(tab => (
             <button
               key={tab.id}
@@ -5210,6 +5245,19 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
           ))}
         </div>
       </div>
+
+      {/* ── RULES TAB ── */}
+      {activeBankSubTab === 'rules' && (
+        <BankRulesTab
+          allocationRules={allocationRules}
+          saveAllocationRules={saveAllocationRules}
+          company={company}
+          selectionOptions={selectionOptions}
+          extractPatternsFromHistory={extractPatternsFromHistory}
+          trainingInProgress={trainingInProgress}
+          setSaveMessage={setSaveMessage}
+        />
+      )}
 
       <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -5918,6 +5966,273 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// ==================== BANK RULES TAB ====================
+const BankRulesTab = ({ allocationRules, saveAllocationRules, company, selectionOptions, extractPatternsFromHistory, trainingInProgress, setSaveMessage }) => {
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [testDesc, setTestDesc] = useState('');
+  const [testResult, setTestResult] = useState(null);
+  const [filterText, setFilterText] = useState('');
+  const [newRule, setNewRule] = useState({ pattern: '', accountName: '', vatRate: 'No VAT', matchType: 'contains', direction: 'both' });
+
+  const companyRules = allocationRules
+    .filter(r => r.companyId === company?.id)
+    .filter(r => !filterText || r.pattern.toLowerCase().includes(filterText.toLowerCase()) || r.accountName.toLowerCase().includes(filterText.toLowerCase()))
+    .sort((a, b) => b.confidenceScore - a.confidenceScore);
+
+  const testRule = () => {
+    if (!testDesc.trim()) return;
+    const desc = testDesc.toLowerCase();
+    const match = allocationRules
+      .filter(r => r.companyId === company?.id)
+      .sort((a, b) => b.confidenceScore - a.confidenceScore)
+      .find(r => {
+        const p = r.pattern.toLowerCase();
+        if (r.matchType === 'startswith') return desc.startsWith(p);
+        if (r.matchType === 'endswith') return desc.endsWith(p);
+        if (r.matchType === 'exact') return desc === p;
+        return desc.includes(p);
+      });
+    setTestResult(match || null);
+  };
+
+  const startEdit = (rule) => {
+    setEditingId(rule.id);
+    setEditForm({ pattern: rule.pattern, accountName: rule.accountName, vatRate: rule.vatRate, matchType: rule.matchType || 'contains', direction: rule.direction || 'both' });
+  };
+
+  const saveEdit = () => {
+    const updated = allocationRules.map(r => r.id === editingId ? { ...r, ...editForm } : r);
+    saveAllocationRules(updated);
+    setEditingId(null);
+    setSaveMessage('Rule updated.');
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
+  const addRule = () => {
+    if (!newRule.pattern.trim()) return;
+    const rule = {
+      id: `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      pattern: newRule.pattern.toLowerCase().trim(),
+      matchType: newRule.matchType,
+      direction: newRule.direction,
+      accountName: newRule.accountName || selectionOptions.filter(o => o !== 'Unallocated Expen')[0],
+      vatRate: newRule.vatRate,
+      confidenceScore: 5,
+      timesMatched: 0,
+      lastUsed: new Date().toISOString().split('T')[0],
+      companyId: company?.id,
+      source: 'manual',
+    };
+    saveAllocationRules([...allocationRules, rule]);
+    setNewRule({ pattern: '', accountName: '', vatRate: 'No VAT', matchType: 'contains', direction: 'both' });
+    setSaveMessage('Rule added.');
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
+  return (
+    <div className="space-y-5 p-1">
+      {/* Stats row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: 'Auto-allocate (≥3)', value: allocationRules.filter(r => r.companyId === company?.id && r.confidenceScore >= 3).length, color: 'emerald' },
+          { label: 'Learning (1–2)', value: allocationRules.filter(r => r.companyId === company?.id && r.confidenceScore < 3 && r.confidenceScore >= 1).length, color: 'blue' },
+          { label: 'Total Times Applied', value: allocationRules.filter(r => r.companyId === company?.id).reduce((s, r) => s + r.timesMatched, 0), color: 'purple' },
+          { label: 'Manual Rules', value: allocationRules.filter(r => r.companyId === company?.id && r.source === 'manual').length, color: 'amber' },
+        ].map(s => (
+          <div key={s.label} className={`bg-${s.color}-50 rounded-lg p-3 text-center border border-${s.color}-100`}>
+            <p className={`text-2xl font-bold text-${s.color}-700`}>{s.value}</p>
+            <p className={`text-xs text-${s.color}-600 mt-0.5`}>{s.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* How it works */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
+        <p className="font-semibold mb-1">How Smart Allocation Works</p>
+        <ul className="list-disc ml-4 space-y-0.5">
+          <li><span className="font-medium text-emerald-700">Confidence ≥ 3</span> — auto-allocates matching transactions without AI</li>
+          <li><span className="font-medium text-blue-700">Confidence 1–2</span> — guides AI suggestions; user confirms</li>
+          <li>Every manual allocation strengthens the rule automatically</li>
+        </ul>
+      </div>
+
+      {/* Test Rule */}
+      <div className="bg-white rounded-lg border shadow-sm p-4">
+        <h3 className="font-semibold text-slate-700 mb-2 flex items-center gap-2"><Search className="w-4 h-4" /> Test a Rule</h3>
+        <p className="text-xs text-slate-500 mb-2">Paste a bank transaction description to see which rule would match it.</p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={testDesc}
+            onChange={e => setTestDesc(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && testRule()}
+            placeholder="e.g. VODACOM*MONTHLY SUBSCRIPTION"
+            className="flex-1 border rounded px-3 py-2 text-sm"
+          />
+          <button onClick={testRule} className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Test</button>
+        </div>
+        {testResult !== undefined && testDesc && (
+          <div className={`mt-2 p-2 rounded text-sm ${testResult ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+            {testResult
+              ? <>✓ <strong>Match:</strong> "{testResult.pattern}" → <strong>{testResult.accountName}</strong> | VAT: {testResult.vatRate} | Confidence: {testResult.confidenceScore}</>
+              : '✗ No rule matched. Transaction would go to AI allocation or manual review.'}
+          </div>
+        )}
+      </div>
+
+      {/* Rules Table */}
+      <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
+        <div className="p-3 border-b flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-slate-700">Allocation Rules</h3>
+            <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{companyRules.length} rules</span>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              type="text"
+              value={filterText}
+              onChange={e => setFilterText(e.target.value)}
+              placeholder="Filter by pattern or account…"
+              className="border rounded px-3 py-1.5 text-sm w-52"
+            />
+            <button
+              onClick={extractPatternsFromHistory}
+              disabled={trainingInProgress}
+              className="px-3 py-1.5 bg-purple-600 text-white rounded text-sm hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {trainingInProgress ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />Training…</> : <><TrendingUp className="w-3.5 h-3.5" />Train from History</>}
+            </button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 border-b">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Pattern</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600 w-20">Match</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Account</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">VAT Rate</th>
+                <th className="text-center px-3 py-2 font-medium text-slate-600 w-20">Confidence</th>
+                <th className="text-center px-3 py-2 font-medium text-slate-600 w-14">Used</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600 w-16">Source</th>
+                <th className="w-20"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {companyRules.map(rule => (
+                <tr key={rule.id} className="border-t hover:bg-slate-50">
+                  {editingId === rule.id ? (
+                    <>
+                      <td className="px-2 py-1.5">
+                        <input value={editForm.pattern} onChange={e => setEditForm(f => ({ ...f, pattern: e.target.value }))} className="border rounded px-2 py-1 text-xs w-full" />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <select value={editForm.matchType} onChange={e => setEditForm(f => ({ ...f, matchType: e.target.value }))} className="border rounded px-1 py-1 text-xs w-full">
+                          <option value="contains">Contains</option>
+                          <option value="startswith">Starts with</option>
+                          <option value="endswith">Ends with</option>
+                          <option value="exact">Exact</option>
+                        </select>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <select value={editForm.accountName} onChange={e => setEditForm(f => ({ ...f, accountName: e.target.value }))} className="border rounded px-1 py-1 text-xs w-full">
+                          {selectionOptions.filter(o => o !== 'Unallocated Expen').map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <select value={editForm.vatRate} onChange={e => setEditForm(f => ({ ...f, vatRate: e.target.value }))} className="border rounded px-1 py-1 text-xs w-full">
+                          {VAT_RATES.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+                        </select>
+                      </td>
+                      <td colSpan={3} />
+                      <td className="px-2 py-1.5 flex gap-1">
+                        <button onClick={saveEdit} className="p-1 bg-emerald-500 text-white rounded hover:bg-emerald-600"><Check className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => setEditingId(null)} className="p-1 bg-slate-200 rounded hover:bg-slate-300"><X className="w-3.5 h-3.5" /></button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="px-3 py-2 font-mono text-xs max-w-[180px] truncate" title={rule.pattern}>{rule.pattern}</td>
+                      <td className="px-3 py-2 text-xs text-slate-500">{rule.matchType || 'contains'}</td>
+                      <td className="px-3 py-2 text-xs">{rule.accountName}</td>
+                      <td className="px-3 py-2 text-xs max-w-[130px] truncate" title={rule.vatRate}>{rule.vatRate}</td>
+                      <td className="px-3 py-2 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${rule.confidenceScore >= 3 ? 'bg-emerald-100 text-emerald-700' : rule.confidenceScore >= 1 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                          {rule.confidenceScore}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-center text-xs">{rule.timesMatched}</td>
+                      <td className="px-3 py-2">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] ${rule.source === 'manual' ? 'bg-amber-100 text-amber-700' : rule.source === 'default' ? 'bg-emerald-100 text-emerald-700' : rule.source === 'ai-confirmed' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                          {rule.source || 'learned'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex gap-1">
+                          <button onClick={() => startEdit(rule)} className="p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => saveAllocationRules(allocationRules.filter(r => r.id !== rule.id))} className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+              {companyRules.length === 0 && (
+                <tr><td colSpan={8} className="px-3 py-10 text-center text-slate-400 text-sm">No rules found. Add a manual rule below or click "Train from History".</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Add Rule Form */}
+        <div className="p-4 border-t bg-slate-50">
+          <h4 className="font-medium text-sm text-slate-700 mb-3">Add New Rule</h4>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Pattern</label>
+              <input type="text" value={newRule.pattern} onChange={e => setNewRule(r => ({ ...r, pattern: e.target.value }))} placeholder="e.g. vodacom" className="border rounded px-2 py-1.5 text-sm w-full" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Match Type</label>
+              <select value={newRule.matchType} onChange={e => setNewRule(r => ({ ...r, matchType: e.target.value }))} className="border rounded px-2 py-1.5 text-sm w-full">
+                <option value="contains">Contains</option>
+                <option value="startswith">Starts with</option>
+                <option value="endswith">Ends with</option>
+                <option value="exact">Exact</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Account</label>
+              <select value={newRule.accountName} onChange={e => setNewRule(r => ({ ...r, accountName: e.target.value }))} className="border rounded px-2 py-1.5 text-sm w-full">
+                {selectionOptions.filter(o => o !== 'Unallocated Expen').map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">VAT Rate</label>
+              <select value={newRule.vatRate} onChange={e => setNewRule(r => ({ ...r, vatRate: e.target.value }))} className="border rounded px-2 py-1.5 text-sm w-full">
+                {VAT_RATES.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+              </select>
+            </div>
+            <button onClick={addRule} className="px-4 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 flex items-center justify-center gap-1.5">
+              <Plus className="w-4 h-4" /> Add Rule
+            </button>
+          </div>
+        </div>
+
+        {/* Danger zone */}
+        <div className="px-4 py-2 border-t flex justify-between items-center">
+          <p className="text-xs text-slate-400">Confidence ≥ 3 = auto-allocate. Manual rules start at 5.</p>
+          <button
+            onClick={() => { if (window.confirm('Delete ALL rules for this company? This cannot be undone.')) { saveAllocationRules(allocationRules.filter(r => r.companyId !== company?.id)); } }}
+            className="text-xs text-red-500 hover:text-red-700 hover:underline"
+          >Clear All Rules</button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -8206,6 +8521,273 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
             <VATSection title="Zero Rate - Input VAT" color="green" transactions={vatReport.zeroInput.transactions} subtotal={0} />
             <VATSection title="Exempt & Non-Supplies - Input" color="amber" transactions={vatReport.exemptInput.transactions} subtotal={0} />
             {vatReport.capitalInput.transactions.length > 0 && <VATSection title="Capital & Imports - Input" color="purple" transactions={vatReport.capitalInput.transactions} subtotal={vatReport.capitalInput.vat} />}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ==================== CASH FLOW FORECAST VIEW ====================
+const CashFlowForecastView = ({ invoices, bankStatements, company }) => {
+  const today = new Date();
+  const fmt = (d) => d.toISOString().split('T')[0];
+  const fmtR = (n) => `R ${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  // Company-scoped bank statements
+  const stmts = company?.id ? bankStatements.filter(s => s.companyId === company.id) : bankStatements;
+  const companyInvoices = company?.id ? invoices.filter(i => i.companyId === company.id) : invoices;
+
+  // Current bank balance = last known balance or sum of received - spent
+  const currentBalance = stmts.length > 0
+    ? stmts.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))[0]?.balance
+      || stmts.reduce((s, t) => s + (t.received || 0) - (t.spent || 0), 0)
+    : 0;
+
+  // Manual expected outflows state
+  const [outflows, setOutflows] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('cf-outflows') || '[]'); } catch { return []; }
+  });
+  const [newOutflow, setNewOutflow] = React.useState({ description: '', amount: '', date: fmt(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7)) });
+  const [scenario, setScenario] = React.useState('optimistic');
+
+  const saveOutflows = (data) => {
+    setOutflows(data);
+    localStorage.setItem('cf-outflows', JSON.stringify(data));
+  };
+
+  // Build 13-week buckets
+  const weeks = Array.from({ length: 13 }, (_, i) => {
+    const start = new Date(today);
+    start.setDate(today.getDate() + i * 7);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return { start, end, label: `W${i + 1} ${start.getDate()}/${start.getMonth() + 1}` };
+  });
+
+  // Pending/unpaid invoices as projected inflows keyed by due date
+  const pendingInvoices = companyInvoices.filter(inv =>
+    inv.status === 'Pending' || inv.status === 'Overdue' || inv.status === 'Sent'
+  );
+
+  const weeklyData = weeks.map((week, i) => {
+    // Inflows: invoices due this week
+    const invoiceInflows = pendingInvoices.filter(inv => {
+      const due = new Date(inv.dueDate || inv.date);
+      return due >= week.start && due <= week.end;
+    }).reduce((s, inv) => s + (inv.total || inv.amount || 0), 0);
+
+    // Apply scenario factor
+    const scenarioFactor = scenario === 'optimistic' ? 1 : scenario === 'conservative' ? 0.5 : 0.75;
+    const inflow = invoiceInflows * scenarioFactor;
+
+    // Outflows: manual entries due this week
+    const outflow = outflows.filter(o => {
+      const d = new Date(o.date);
+      return d >= week.start && d <= week.end;
+    }).reduce((s, o) => s + parseFloat(o.amount || 0), 0);
+
+    return { week: week.label, inflow, outflow, invoiceCount: pendingInvoices.filter(inv => { const due = new Date(inv.dueDate || inv.date); return due >= week.start && due <= week.end; }).length };
+  });
+
+  // Running balance
+  let runningBalance = currentBalance;
+  const forecastData = weeklyData.map(w => {
+    const open = runningBalance;
+    runningBalance = runningBalance + w.inflow - w.outflow;
+    return { ...w, openBal: open, closeBal: runningBalance };
+  });
+
+  const totalPendingInvoicesValue = pendingInvoices.reduce((s, inv) => s + (inv.total || inv.amount || 0), 0);
+  const totalOutflows13w = outflows.reduce((s, o) => s + parseFloat(o.amount || 0), 0);
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-emerald-700 to-emerald-600 rounded-xl p-5 text-white">
+        <h2 className="text-xl font-bold mb-1">13-Week Cash Flow Forecast</h2>
+        <p className="text-emerald-100 text-sm">{company?.name || 'All Companies'} — as at {today.toLocaleDateString('en-ZA')}</p>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: 'Current Bank Balance', value: fmtR(currentBalance), color: currentBalance >= 0 ? 'emerald' : 'red', sub: 'from bank statements' },
+          { label: 'Outstanding Invoices', value: fmtR(totalPendingInvoicesValue), color: 'blue', sub: `${pendingInvoices.length} pending` },
+          { label: 'Planned Outflows (13w)', value: fmtR(totalOutflows13w), color: 'amber', sub: `${outflows.length} entries` },
+          { label: 'Forecast Closing Balance', value: fmtR(forecastData[12]?.closeBal || 0), color: (forecastData[12]?.closeBal || 0) >= 0 ? 'emerald' : 'red', sub: 'week 13' },
+        ].map(k => (
+          <div key={k.label} className={`bg-white rounded-xl border shadow-sm p-4 border-l-4 border-l-${k.color}-500`}>
+            <p className="text-xs text-slate-500 mb-1">{k.label}</p>
+            <p className={`text-xl font-bold text-${k.color}-700`}>{k.value}</p>
+            <p className="text-xs text-slate-400 mt-0.5">{k.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Scenario selector */}
+      <div className="bg-white rounded-xl border shadow-sm p-4 flex items-center gap-4 flex-wrap">
+        <span className="text-sm font-medium text-slate-700">Invoice Collection Scenario:</span>
+        {[
+          { id: 'optimistic', label: 'Optimistic (100%)' },
+          { id: 'moderate', label: 'Moderate (75%)' },
+          { id: 'conservative', label: 'Conservative (50%)' },
+        ].map(s => (
+          <button
+            key={s.id}
+            onClick={() => setScenario(s.id)}
+            className={`px-4 py-1.5 rounded-full text-sm border transition ${scenario === s.id ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-300 text-slate-600 hover:border-emerald-400'}`}
+          >{s.label}</button>
+        ))}
+      </div>
+
+      {/* Chart */}
+      <div className="bg-white rounded-xl border shadow-sm p-4">
+        <h3 className="font-semibold text-slate-700 mb-4">Weekly Cash Flow & Running Balance</h3>
+        <ResponsiveContainer width="100%" height={280}>
+          <LineChart data={forecastData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="week" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `R${(v/1000).toFixed(0)}k`} />
+            <Tooltip formatter={(v) => fmtR(v)} />
+            <Legend />
+            <Line type="monotone" dataKey="closeBal" name="Running Balance" stroke="#10b981" strokeWidth={2.5} dot={{ r: 3 }} />
+            <Bar dataKey="inflow" name="Inflows" fill="#34d399" opacity={0.7} />
+            <Bar dataKey="outflow" name="Outflows" fill="#f87171" opacity={0.7} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Combined Bar + Line chart */}
+      <div className="bg-white rounded-xl border shadow-sm p-4">
+        <h3 className="font-semibold text-slate-700 mb-4">Inflows vs Outflows by Week</h3>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={forecastData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="week" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `R${(v/1000).toFixed(0)}k`} />
+            <Tooltip formatter={(v) => fmtR(v)} />
+            <Legend />
+            <Bar dataKey="inflow" name="Expected Inflows" fill="#10b981" radius={[3,3,0,0]} />
+            <Bar dataKey="outflow" name="Planned Outflows" fill="#ef4444" radius={[3,3,0,0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Forecast Table */}
+      <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+        <div className="p-4 border-b">
+          <h3 className="font-semibold text-slate-700">Weekly Forecast Detail</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="text-left px-4 py-2 font-medium text-slate-600">Week</th>
+                <th className="text-right px-4 py-2 font-medium text-slate-600">Opening Balance</th>
+                <th className="text-right px-4 py-2 font-medium text-emerald-600">Expected Inflows</th>
+                <th className="text-right px-4 py-2 font-medium text-red-500">Planned Outflows</th>
+                <th className="text-right px-4 py-2 font-medium text-slate-700">Closing Balance</th>
+                <th className="text-center px-4 py-2 font-medium text-slate-500">Invoices Due</th>
+              </tr>
+            </thead>
+            <tbody>
+              {forecastData.map((row, i) => (
+                <tr key={i} className={`border-t ${row.closeBal < 0 ? 'bg-red-50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
+                  <td className="px-4 py-2 font-medium text-slate-700">{row.week}</td>
+                  <td className="px-4 py-2 text-right text-slate-600">{fmtR(row.openBal)}</td>
+                  <td className="px-4 py-2 text-right text-emerald-600 font-medium">{row.inflow > 0 ? `+${fmtR(row.inflow)}` : '—'}</td>
+                  <td className="px-4 py-2 text-right text-red-500">{row.outflow > 0 ? `-${fmtR(row.outflow)}` : '—'}</td>
+                  <td className={`px-4 py-2 text-right font-bold ${row.closeBal < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{fmtR(row.closeBal)}</td>
+                  <td className="px-4 py-2 text-center">
+                    {row.invoiceCount > 0 ? <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">{row.invoiceCount}</span> : <span className="text-slate-300">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Manual Outflows */}
+      <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+        <div className="p-4 border-b">
+          <h3 className="font-semibold text-slate-700">Planned Outflows</h3>
+          <p className="text-xs text-slate-500 mt-0.5">Add upcoming bills, payroll dates, loan repayments, or any expected payments.</p>
+        </div>
+        <div className="p-4">
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Description</label>
+              <input type="text" value={newOutflow.description} onChange={e => setNewOutflow(o => ({ ...o, description: e.target.value }))} placeholder="e.g. Rent, Payroll, Loan" className="border rounded px-2 py-1.5 text-sm w-full" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Amount (R)</label>
+              <input type="number" value={newOutflow.amount} onChange={e => setNewOutflow(o => ({ ...o, amount: e.target.value }))} placeholder="0.00" className="border rounded px-2 py-1.5 text-sm w-full" />
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <label className="text-xs text-slate-500 block mb-1">Expected Date</label>
+                <input type="date" value={newOutflow.date} onChange={e => setNewOutflow(o => ({ ...o, date: e.target.value }))} className="border rounded px-2 py-1.5 text-sm w-full" />
+              </div>
+              <button
+                onClick={() => {
+                  if (!newOutflow.description || !newOutflow.amount) return;
+                  saveOutflows([...outflows, { id: Date.now(), ...newOutflow }]);
+                  setNewOutflow({ description: '', amount: '', date: fmt(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7)) });
+                }}
+                className="px-4 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 whitespace-nowrap flex items-center gap-1"
+              ><Plus className="w-4 h-4" />Add</button>
+            </div>
+          </div>
+          {outflows.length > 0 ? (
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50"><tr>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Description</th>
+                <th className="text-right px-3 py-2 font-medium text-slate-600">Amount</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
+                <th className="w-10"></th>
+              </tr></thead>
+              <tbody>
+                {outflows.sort((a, b) => new Date(a.date) - new Date(b.date)).map(o => (
+                  <tr key={o.id} className="border-t">
+                    <td className="px-3 py-2">{o.description}</td>
+                    <td className="px-3 py-2 text-right text-red-600 font-medium">{fmtR(o.amount)}</td>
+                    <td className="px-3 py-2 text-slate-500">{new Date(o.date).toLocaleDateString('en-ZA')}</td>
+                    <td className="px-3 py-2"><button onClick={() => saveOutflows(outflows.filter(x => x.id !== o.id))} className="text-red-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <p className="text-sm text-slate-400 text-center py-4">No planned outflows added yet.</p>}
+        </div>
+      </div>
+
+      {/* Pending invoices breakdown */}
+      {pendingInvoices.length > 0 && (
+        <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+          <div className="p-4 border-b"><h3 className="font-semibold text-slate-700">Outstanding Invoices (Projected Inflows)</h3></div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50"><tr>
+                <th className="text-left px-4 py-2 font-medium text-slate-600">Invoice #</th>
+                <th className="text-left px-4 py-2 font-medium text-slate-600">Customer</th>
+                <th className="text-left px-4 py-2 font-medium text-slate-600">Due Date</th>
+                <th className="text-right px-4 py-2 font-medium text-slate-600">Amount</th>
+                <th className="text-left px-4 py-2 font-medium text-slate-600">Status</th>
+              </tr></thead>
+              <tbody>
+                {pendingInvoices.sort((a, b) => new Date(a.dueDate || a.date) - new Date(b.dueDate || b.date)).map(inv => (
+                  <tr key={inv.id} className="border-t hover:bg-slate-50">
+                    <td className="px-4 py-2 font-mono text-xs">{inv.invoiceNumber || inv.id}</td>
+                    <td className="px-4 py-2">{inv.customerName || inv.client || '—'}</td>
+                    <td className="px-4 py-2 text-slate-500">{inv.dueDate ? new Date(inv.dueDate).toLocaleDateString('en-ZA') : '—'}</td>
+                    <td className="px-4 py-2 text-right font-medium text-emerald-700">{fmtR(inv.total || inv.amount)}</td>
+                    <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${inv.status === 'Overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{inv.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
