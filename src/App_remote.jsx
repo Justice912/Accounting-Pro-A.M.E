@@ -8795,4 +8795,597 @@ const CashFlowForecastView = ({ invoices, bankStatements, company }) => {
   );
 };
 
+
+const PayrollView = ({ employees, saveEmployees, payslips, savePayslips, company }) => {
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const fmtR = (n) => `R ${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const now = new Date();
+
+  const [activePayrollTab, setActivePayrollTab] = useState('employees');
+
+  const [showEmployeeForm, setShowEmployeeForm] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState(null);
+  const emptyEmployeeForm = {
+    employeeNumber: '',
+    firstName: '',
+    lastName: '',
+    idNumber: '',
+    taxNumber: '',
+    email: '',
+    phone: '',
+    jobTitle: '',
+    department: '',
+    bankName: '',
+    bankAccountNumber: '',
+    branchCode: '',
+    salaryType: 'monthly',
+    basicSalary: 0,
+    dateOfBirth: '',
+    isActive: true
+  };
+  const [employeeForm, setEmployeeForm] = useState(emptyEmployeeForm);
+
+  const [payrollMonth, setPayrollMonth] = useState(now.getMonth() + 1);
+  const [payrollYear, setPayrollYear] = useState(now.getFullYear());
+  const [payrollResults, setPayrollResults] = useState([]);
+  const [payrollApproved, setPayrollApproved] = useState(false);
+
+  const [emp201Month, setEmp201Month] = useState(now.getMonth() + 1);
+  const [emp201Year, setEmp201Year] = useState(now.getFullYear());
+
+  const [irp5Year, setIrp5Year] = useState(now.getFullYear());
+
+  const [provEstimatedIncome, setProvEstimatedIncome] = useState(0);
+  const [provPriorYearIncome, setProvPriorYearIncome] = useState(0);
+  const [provAge, setProvAge] = useState(30);
+  const [provEmployeesTaxPaid, setProvEmployeesTaxPaid] = useState(0);
+  const [provYear, setProvYear] = useState(now.getFullYear());
+  const [provResult, setProvResult] = useState(null);
+
+  const companyEmployees = (employees || []).filter(e => e.companyId === company?.id);
+  const activeEmployees = companyEmployees.filter(e => e.isActive !== false);
+
+  const calculateAgeAtTaxYearEnd = (dateOfBirth, taxYear) => {
+    if (!dateOfBirth) return 30;
+    const dob = new Date(dateOfBirth);
+    if (Number.isNaN(dob.getTime())) return 30;
+    const ref = new Date(taxYear, 1, 28);
+    let age = ref.getFullYear() - dob.getFullYear();
+    const beforeBirthday = ref.getMonth() < dob.getMonth() || (ref.getMonth() === dob.getMonth() && ref.getDate() < dob.getDate());
+    if (beforeBirthday) age -= 1;
+    return Math.max(age, 0);
+  };
+
+  const calculateAnnualTaxBeforeRebates = (annualTaxableIncome) => {
+    const income = Number(annualTaxableIncome || 0);
+    if (income <= 0) return 0;
+    if (income <= 237100) return income * 0.18;
+    if (income <= 370500) return 42678 + (income - 237100) * 0.26;
+    if (income <= 512800) return 77362 + (income - 370500) * 0.31;
+    if (income <= 673000) return 121475 + (income - 512800) * 0.36;
+    if (income <= 857900) return 179147 + (income - 673000) * 0.39;
+    if (income <= 1817000) return 251258 + (income - 857900) * 0.41;
+    return 644489 + (income - 1817000) * 0.45;
+  };
+
+  const getRebateBreakdown = (age) => {
+    const primary = 17235;
+    const secondary = age >= 65 ? 9444 : 0;
+    const tertiary = age >= 75 ? 3145 : 0;
+    return { primary, secondary, tertiary, total: primary + secondary + tertiary };
+  };
+
+  const getTaxThreshold = (age) => {
+    if (age >= 75) return 165689;
+    if (age >= 65) return 148217;
+    return 95750;
+  };
+
+  const calculatePAYE = (annualTaxableIncome, age) => {
+    const annualIncome = Number(annualTaxableIncome || 0);
+    if (annualIncome <= getTaxThreshold(age)) return 0;
+    const taxBeforeRebates = calculateAnnualTaxBeforeRebates(annualIncome);
+    const rebates = getRebateBreakdown(age).total;
+    const annualAfterRebate = Math.max(0, taxBeforeRebates - rebates);
+    return annualAfterRebate / 12;
+  };
+
+  const handleEditEmployee = (employee) => {
+    setEditingEmployee(employee);
+    setEmployeeForm({ ...emptyEmployeeForm, ...employee });
+    setShowEmployeeForm(true);
+  };
+
+  const toggleEmployeeStatus = (employee) => {
+    const updated = (employees || []).map(e => (e.id === employee.id ? { ...e, isActive: !(e.isActive !== false) } : e));
+    saveEmployees(updated);
+  };
+
+  const handleSaveEmployee = () => {
+    if (editingEmployee) {
+      const updated = (employees || []).map(e => (e.id === editingEmployee.id ? { ...e, ...employeeForm } : e));
+      saveEmployees(updated);
+    } else {
+      const newEmployee = { ...employeeForm, id: Date.now(), companyId: company?.id };
+      saveEmployees([...(employees || []), newEmployee]);
+    }
+    setShowEmployeeForm(false);
+    setEditingEmployee(null);
+    setEmployeeForm(emptyEmployeeForm);
+  };
+
+  const calculateAllPayroll = () => {
+    const results = activeEmployees.map(employee => {
+      const salaryType = employee.salaryType || 'monthly';
+      const basicSalary = Number(employee.basicSalary || 0);
+      const grossSalary = basicSalary;
+      const ppiAnnual = salaryType === 'weekly' ? grossSalary * 52 : salaryType === 'hourly' ? grossSalary * 2080 : grossSalary * 12;
+      const age = calculateAgeAtTaxYearEnd(employee.dateOfBirth, payrollYear + 1);
+      const monthlyPAYE = calculatePAYE(ppiAnnual, age);
+      const uifEmployee = Math.min(grossSalary * 0.01, 177.12);
+      const uifEmployer = Math.min(grossSalary * 0.01, 177.12);
+      const sdl = grossSalary * 0.01;
+      const netPay = grossSalary - monthlyPAYE - uifEmployee;
+
+      return {
+        employeeId: employee.id,
+        employeeName: `${employee.firstName || ''} ${employee.lastName || ''}`.trim(),
+        employeeNumber: employee.employeeNumber || '',
+        idNumber: employee.idNumber || '',
+        taxNumber: employee.taxNumber || '',
+        department: employee.department || '',
+        grossSalary,
+        ppiAnnual,
+        paye: monthlyPAYE,
+        uifEmployee,
+        uifEmployer,
+        sdl,
+        netPay
+      };
+    });
+    setPayrollResults(results);
+    setPayrollApproved(false);
+  };
+
+  const approveAndSavePayroll = () => {
+    if (!payrollResults.length) return;
+    const period = `${payrollYear}-${String(payrollMonth).padStart(2, '0')}`;
+    const newPayslips = payrollResults.map((result, index) => ({
+      id: Date.now() + index,
+      companyId: company?.id,
+      employeeId: result.employeeId,
+      employeeName: result.employeeName,
+      period,
+      grossSalary: result.grossSalary,
+      ppiAnnual: result.ppiAnnual,
+      paye: result.paye,
+      uifEmployee: result.uifEmployee,
+      uifEmployer: result.uifEmployer,
+      sdl: result.sdl,
+      netPay: result.netPay,
+      approved: true,
+      approvedDate: new Date().toISOString()
+    }));
+    savePayslips([...(payslips || []), ...newPayslips]);
+    setPayrollApproved(true);
+  };
+
+  const printPayslip = (result) => {
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(`<html><head><title>Payslip</title><style>
+      body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+      table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+      th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+      th { background: #f0f0f0; }
+      .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
+      .net-pay { font-size: 1.4em; font-weight: bold; }
+      .section-title { font-weight: bold; margin-top: 15px; background: #e8e8e8; padding: 5px; }
+      @media print { button { display: none; } }
+    </style></head><body>
+      <div class="header">
+        <h2>${company?.name || 'Company'}</h2>
+        <p>${company?.address || ''}</p>
+        <p>VAT: ${company?.vatNumber || 'N/A'}</p>
+      </div>
+      <h3>PAYSLIP — ${monthNames[payrollMonth - 1]} ${payrollYear}</h3>
+      <table>
+        <tr><td><b>Employee:</b> ${result.employeeName}</td><td><b>Employee #:</b> ${result.employeeNumber}</td></tr>
+        <tr><td><b>ID Number:</b> ${result.idNumber}</td><td><b>Tax Number:</b> ${result.taxNumber}</td></tr>
+        <tr><td><b>Department:</b> ${result.department}</td><td><b>Period:</b> ${monthNames[payrollMonth - 1]} ${payrollYear}</td></tr>
+      </table>
+      <div class="section-title">Earnings</div>
+      <table><tr><th>Description</th><th style="text-align:right">Amount</th></tr>
+        <tr><td>Basic Salary</td><td style="text-align:right">${fmtR(result.grossSalary)}</td></tr>
+        <tr><td><b>Gross Income</b></td><td style="text-align:right"><b>${fmtR(result.grossSalary)}</b></td></tr></table>
+      <div class="section-title">Deductions</div>
+      <table><tr><th>Description</th><th style="text-align:right">Amount</th></tr>
+        <tr><td>PAYE</td><td style="text-align:right">${fmtR(result.paye)}</td></tr>
+        <tr><td>UIF (Employee)</td><td style="text-align:right">${fmtR(result.uifEmployee)}</td></tr>
+        <tr><td class="net-pay">NET PAY</td><td style="text-align:right" class="net-pay">${fmtR(result.netPay)}</td></tr></table>
+      <div class="section-title">Employer Contributions</div>
+      <table><tr><th>Description</th><th style="text-align:right">Amount</th></tr>
+        <tr><td>UIF (Employer)</td><td style="text-align:right">${fmtR(result.uifEmployer)}</td></tr>
+        <tr><td>SDL</td><td style="text-align:right">${fmtR(result.sdl)}</td></tr></table>
+      <button onclick="window.print()">Print</button>
+    </body></html>`);
+    w.document.close();
+  };
+
+  const selectedEmp201Period = `${emp201Year}-${String(emp201Month).padStart(2, '0')}`;
+  const emp201Payslips = (payslips || []).filter(p => p.companyId === company?.id && p.period === selectedEmp201Period);
+  const emp201Totals = emp201Payslips.reduce((acc, p) => ({
+    grossSalary: acc.grossSalary + Number(p.grossSalary || 0),
+    paye: acc.paye + Number(p.paye || 0),
+    uifEmployee: acc.uifEmployee + Number(p.uifEmployee || 0),
+    uifEmployer: acc.uifEmployer + Number(p.uifEmployer || 0),
+    sdl: acc.sdl + Number(p.sdl || 0)
+  }), { grossSalary: 0, paye: 0, uifEmployee: 0, uifEmployer: 0, sdl: 0 });
+
+  const printEMP201 = () => {
+    const w = window.open('', '_blank');
+    if (!w) return;
+    const totalUIF = emp201Totals.uifEmployee + emp201Totals.uifEmployer;
+    const grandTotal = emp201Totals.paye + emp201Totals.sdl + totalUIF;
+    const rows = emp201Payslips.map(p => `
+      <tr>
+        <td>${p.employeeName || ''}</td>
+        <td style="text-align:right">${fmtR(p.grossSalary)}</td>
+        <td style="text-align:right">${fmtR(p.paye)}</td>
+        <td style="text-align:right">${fmtR(p.uifEmployee)}</td>
+        <td style="text-align:right">${fmtR(p.uifEmployer)}</td>
+        <td style="text-align:right">${fmtR(p.sdl)}</td>
+      </tr>`).join('');
+    w.document.write(`<html><head><title>EMP201</title><style>
+      body { font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }
+      table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+      th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+      th { background: #f0f0f0; }
+      .box { border: 2px solid #333; padding: 10px; margin-top: 12px; }
+      @media print { button { display: none; } }
+    </style></head><body>
+      <h2>${company?.name || 'Company'} — EMP201 Declaration</h2>
+      <p>Period: ${monthNames[emp201Month - 1]} ${emp201Year}</p>
+      <table><tr><th>Employee</th><th>Gross</th><th>PAYE</th><th>UIF Emp</th><th>UIF Employer</th><th>SDL</th></tr>${rows}
+      <tr><th>Total</th><th style="text-align:right">${fmtR(emp201Totals.grossSalary)}</th><th style="text-align:right">${fmtR(emp201Totals.paye)}</th><th style="text-align:right">${fmtR(emp201Totals.uifEmployee)}</th><th style="text-align:right">${fmtR(emp201Totals.uifEmployer)}</th><th style="text-align:right">${fmtR(emp201Totals.sdl)}</th></tr>
+      </table>
+      <div class="box">
+        <p><b>Total PAYE Payable:</b> ${fmtR(emp201Totals.paye)}</p>
+        <p><b>Total SDL Payable:</b> ${fmtR(emp201Totals.sdl)}</p>
+        <p><b>Total UIF Payable:</b> ${fmtR(totalUIF)}</p>
+        <p><b>Grand Total Due to SARS:</b> ${fmtR(grandTotal)}</p>
+      </div>
+      <button onclick="window.print()">Print</button>
+    </body></html>`);
+    w.document.close();
+  };
+
+  const irp5Grouped = ((payslips || []).filter(p => {
+    if (p.companyId !== company?.id || !p.period) return false;
+    const [yearStr, monthStr] = String(p.period).split('-');
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    if (!year || !month) return false;
+    return (year === irp5Year && month >= 3) || (year === irp5Year + 1 && month <= 2);
+  })).reduce((acc, slip) => {
+    if (!acc[slip.employeeId]) {
+      const employee = companyEmployees.find(e => e.id === slip.employeeId) || {};
+      acc[slip.employeeId] = {
+        employeeId: slip.employeeId,
+        employeeName: slip.employeeName,
+        employeeNumber: employee.employeeNumber || '',
+        idNumber: employee.idNumber || '',
+        taxNumber: employee.taxNumber || '',
+        grossSalary: 0,
+        paye: 0,
+        uifEmployee: 0,
+        sdl: 0
+      };
+    }
+    acc[slip.employeeId].grossSalary += Number(slip.grossSalary || 0);
+    acc[slip.employeeId].paye += Number(slip.paye || 0);
+    acc[slip.employeeId].uifEmployee += Number(slip.uifEmployee || 0);
+    acc[slip.employeeId].sdl += Number(slip.sdl || 0);
+    return acc;
+  }, {});
+  const irp5Rows = Object.values(irp5Grouped);
+
+  const printIRP5 = (row) => {
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(`<html><head><title>IRP5 Certificate</title><style>
+      body { font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }
+      table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+      th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+      th { background: #f0f0f0; }
+      @media print { button { display: none; } }
+    </style></head><body>
+      <h2>IRP5 — Employee Tax Certificate</h2>
+      <p><b>Tax Year:</b> ${irp5Year}/${irp5Year + 1} (1 March to 28/29 February)</p>
+      <h3>Employer Details</h3>
+      <p>${company?.name || 'Company'}</p>
+      <p>${company?.address || ''}</p>
+      <p>VAT: ${company?.vatNumber || 'N/A'}</p>
+      <h3>Employee Details</h3>
+      <p>Name: ${row.employeeName || ''}</p>
+      <p>ID Number: ${row.idNumber || ''}</p>
+      <p>Tax Number: ${row.taxNumber || ''}</p>
+      <p>Employee Number: ${row.employeeNumber || ''}</p>
+      <h3>Income Codes</h3>
+      <table>
+        <tr><th>Code</th><th>Description</th><th style="text-align:right">Amount</th></tr>
+        <tr><td>3601</td><td>Gross Remuneration</td><td style="text-align:right">${fmtR(row.grossSalary)}</td></tr>
+        <tr><td>4001</td><td>Employees Tax (PAYE)</td><td style="text-align:right">${fmtR(row.paye)}</td></tr>
+        <tr><td>4141</td><td>UIF Contributions</td><td style="text-align:right">${fmtR(row.uifEmployee)}</td></tr>
+      </table>
+      <button onclick="window.print()">Print</button>
+    </body></html>`);
+    w.document.close();
+  };
+
+  const calculateProvisional = () => {
+    const age = Number(provAge || 0);
+    const estimatedIncome = Number(provEstimatedIncome || 0);
+    const employeesTaxPaid = Number(provEmployeesTaxPaid || 0);
+    const threshold = getTaxThreshold(age);
+    const annualTaxBeforeRebates = estimatedIncome <= threshold ? 0 : calculateAnnualTaxBeforeRebates(estimatedIncome);
+    const rebates = getRebateBreakdown(age);
+    const netAnnualTax = Math.max(0, annualTaxBeforeRebates - rebates.total);
+    const firstPayment = Math.max(0, netAnnualTax * 0.5 - employeesTaxPaid);
+    const secondPayment = Math.max(0, netAnnualTax - employeesTaxPaid - firstPayment);
+    const warning80 = Number(provPriorYearIncome || 0) > 0 && estimatedIncome < Number(provPriorYearIncome || 0) * 0.8;
+
+    setProvResult({
+      annualTaxBeforeRebates,
+      rebates,
+      netAnnualTax,
+      employeesTaxPaid,
+      firstPayment,
+      secondPayment,
+      warning80
+    });
+  };
+
+  const payrollTotals = payrollResults.reduce((acc, r) => ({
+    grossSalary: acc.grossSalary + r.grossSalary,
+    paye: acc.paye + r.paye,
+    uifEmployee: acc.uifEmployee + r.uifEmployee,
+    uifEmployer: acc.uifEmployer + r.uifEmployer,
+    sdl: acc.sdl + r.sdl,
+    netPay: acc.netPay + r.netPay
+  }), { grossSalary: 0, paye: 0, uifEmployee: 0, uifEmployer: 0, sdl: 0, netPay: 0 });
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl shadow p-4 flex flex-wrap gap-2">
+        {[
+          ['employees', 'Employees'],
+          ['run', 'Run Payroll'],
+          ['emp201', 'EMP201'],
+          ['irp5', 'IRP5'],
+          ['provisional', 'Provisional Tax']
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setActivePayrollTab(key)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${activePayrollTab === key ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activePayrollTab === 'employees' && (
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-semibold text-slate-700">Employees</h3>
+            <button className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white" onClick={() => { setEditingEmployee(null); setEmployeeForm(emptyEmployeeForm); setShowEmployeeForm(true); }}>Add Employee</button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600"><tr>
+                <th className="text-left px-3 py-2">Employee #</th><th className="text-left px-3 py-2">Name</th><th className="text-left px-3 py-2">ID Number</th><th className="text-left px-3 py-2">Tax Number</th><th className="text-left px-3 py-2">Job Title</th><th className="text-left px-3 py-2">Department</th><th className="text-right px-3 py-2">Basic Salary</th><th className="text-left px-3 py-2">Status</th><th className="text-left px-3 py-2">Actions</th>
+              </tr></thead>
+              <tbody>
+                {companyEmployees.map(emp => (
+                  <tr key={emp.id} className="border-t hover:bg-slate-50">
+                    <td className="px-3 py-2">{emp.employeeNumber || '—'}</td>
+                    <td className="px-3 py-2">{`${emp.firstName || ''} ${emp.lastName || ''}`.trim() || '—'}</td>
+                    <td className="px-3 py-2">{emp.idNumber || '—'}</td>
+                    <td className="px-3 py-2">{emp.taxNumber || '—'}</td>
+                    <td className="px-3 py-2">{emp.jobTitle || '—'}</td>
+                    <td className="px-3 py-2">{emp.department || '—'}</td>
+                    <td className="px-3 py-2 text-right">{fmtR(emp.basicSalary)}</td>
+                    <td className="px-3 py-2"><span className={`px-2 py-1 rounded-full text-xs ${emp.isActive !== false ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-700'}`}>{emp.isActive !== false ? 'Active' : 'Inactive'}</span></td>
+                    <td className="px-3 py-2 space-x-2">
+                      <button onClick={() => handleEditEmployee(emp)} className="px-3 py-1 rounded-lg text-xs bg-amber-100 text-amber-700">Edit</button>
+                      <button onClick={() => toggleEmployeeStatus(emp)} className="px-3 py-1 rounded-lg text-xs bg-slate-200 text-slate-700">{emp.isActive !== false ? 'Set Inactive' : 'Set Active'}</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {showEmployeeForm && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                <h4 className="text-lg font-semibold mb-4">{editingEmployee ? 'Edit Employee' : 'Add Employee'}</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {[
+                    ['employeeNumber', 'Employee Number', 'text'], ['firstName', 'First Name', 'text'], ['lastName', 'Last Name', 'text'],
+                    ['idNumber', 'ID Number', 'text'], ['taxNumber', 'Tax Number', 'text'], ['email', 'Email', 'email'], ['phone', 'Phone', 'text'],
+                    ['jobTitle', 'Job Title', 'text'], ['department', 'Department', 'text'], ['bankName', 'Bank Name', 'text'],
+                    ['bankAccountNumber', 'Bank Account Number', 'text'], ['branchCode', 'Branch Code', 'text'], ['basicSalary', 'Basic Salary', 'number'], ['dateOfBirth', 'Date of Birth', 'date']
+                  ].map(([key, label, type]) => (
+                    <label key={key} className="text-sm text-slate-600">{label}
+                      <input
+                        type={type}
+                        className="mt-1 w-full border rounded-lg px-3 py-2"
+                        value={employeeForm[key] ?? ''}
+                        onChange={(e) => setEmployeeForm(prev => ({ ...prev, [key]: type === 'number' ? Number(e.target.value || 0) : e.target.value }))}
+                      />
+                    </label>
+                  ))}
+                  <label className="text-sm text-slate-600">Salary Type
+                    <select className="mt-1 w-full border rounded-lg px-3 py-2" value={employeeForm.salaryType} onChange={(e) => setEmployeeForm(prev => ({ ...prev, salaryType: e.target.value }))}>
+                      <option value="monthly">monthly</option>
+                      <option value="weekly">weekly</option>
+                      <option value="hourly">hourly</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-600 flex items-center gap-2 mt-6">
+                    <input type="checkbox" checked={employeeForm.isActive !== false} onChange={(e) => setEmployeeForm(prev => ({ ...prev, isActive: e.target.checked }))} />
+                    Is Active
+                  </label>
+                </div>
+                <div className="mt-6 flex justify-end gap-2">
+                  <button className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700" onClick={() => { setShowEmployeeForm(false); setEditingEmployee(null); }}>Cancel</button>
+                  <button className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white" onClick={handleSaveEmployee}>Save</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activePayrollTab === 'run' && (
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+          <div className="flex flex-wrap gap-3 items-end">
+            <label className="text-sm text-slate-600">Month
+              <select className="mt-1 border rounded-lg px-3 py-2" value={payrollMonth} onChange={(e) => setPayrollMonth(Number(e.target.value))}>
+                {monthNames.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">Year
+              <input className="mt-1 border rounded-lg px-3 py-2" type="number" value={payrollYear} onChange={(e) => setPayrollYear(Number(e.target.value || now.getFullYear()))} />
+            </label>
+            <button className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white" onClick={calculateAllPayroll}>Calculate All</button>
+            <button className="px-4 py-2 rounded-lg text-sm font-medium bg-emerald-600 text-white" onClick={approveAndSavePayroll}>Approve & Save</button>
+            {payrollApproved && <span className="text-emerald-700 text-sm font-medium">Payroll approved and saved.</span>}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600"><tr>
+                <th className="text-left px-3 py-2">Employee Name</th><th className="text-right px-3 py-2">Gross Salary</th><th className="text-right px-3 py-2">PAYE</th><th className="text-right px-3 py-2">UIF (Employee)</th><th className="text-right px-3 py-2">UIF (Employer)</th><th className="text-right px-3 py-2">SDL</th><th className="text-right px-3 py-2">Net Pay</th><th className="text-left px-3 py-2">Actions</th>
+              </tr></thead>
+              <tbody>
+                {payrollResults.map((r, idx) => (
+                  <tr key={`${r.employeeId}-${idx}`} className="border-t hover:bg-slate-50">
+                    <td className="px-3 py-2">{r.employeeName}</td><td className="px-3 py-2 text-right">{fmtR(r.grossSalary)}</td><td className="px-3 py-2 text-right">{fmtR(r.paye)}</td><td className="px-3 py-2 text-right">{fmtR(r.uifEmployee)}</td><td className="px-3 py-2 text-right">{fmtR(r.uifEmployer)}</td><td className="px-3 py-2 text-right">{fmtR(r.sdl)}</td><td className="px-3 py-2 text-right font-medium">{fmtR(r.netPay)}</td>
+                    <td className="px-3 py-2"><button className="px-3 py-1 rounded-lg text-xs bg-indigo-100 text-indigo-700" onClick={() => printPayslip(r)}>Print Payslip</button></td>
+                  </tr>
+                ))}
+                {payrollResults.length > 0 && (
+                  <tr className="border-t bg-slate-50 font-semibold">
+                    <td className="px-3 py-2">Totals</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.grossSalary)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.paye)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.uifEmployee)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.uifEmployer)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.sdl)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.netPay)}</td><td className="px-3 py-2" />
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activePayrollTab === 'emp201' && (
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+          <div className="flex flex-wrap gap-3 items-end">
+            <label className="text-sm text-slate-600">Month
+              <select className="mt-1 border rounded-lg px-3 py-2" value={emp201Month} onChange={(e) => setEmp201Month(Number(e.target.value))}>
+                {monthNames.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">Year
+              <input className="mt-1 border rounded-lg px-3 py-2" type="number" value={emp201Year} onChange={(e) => setEmp201Year(Number(e.target.value || now.getFullYear()))} />
+            </label>
+            <button className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white" onClick={printEMP201}>Print EMP201</button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600"><tr><th className="text-left px-3 py-2">Employee Name</th><th className="text-right px-3 py-2">Gross</th><th className="text-right px-3 py-2">PAYE</th><th className="text-right px-3 py-2">UIF Employee</th><th className="text-right px-3 py-2">UIF Employer</th><th className="text-right px-3 py-2">SDL</th></tr></thead>
+              <tbody>
+                {emp201Payslips.map(p => (
+                  <tr key={p.id} className="border-t hover:bg-slate-50">
+                    <td className="px-3 py-2">{p.employeeName}</td><td className="px-3 py-2 text-right">{fmtR(p.grossSalary)}</td><td className="px-3 py-2 text-right">{fmtR(p.paye)}</td><td className="px-3 py-2 text-right">{fmtR(p.uifEmployee)}</td><td className="px-3 py-2 text-right">{fmtR(p.uifEmployer)}</td><td className="px-3 py-2 text-right">{fmtR(p.sdl)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t bg-slate-50 font-semibold"><td className="px-3 py-2">Totals</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.grossSalary)}</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.paye)}</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.uifEmployee)}</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.uifEmployer)}</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.sdl)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="border rounded-xl p-4 bg-slate-50">
+            <p><b>Total PAYE Payable:</b> {fmtR(emp201Totals.paye)}</p>
+            <p><b>Total SDL Payable:</b> {fmtR(emp201Totals.sdl)}</p>
+            <p><b>Total UIF Payable:</b> {fmtR(emp201Totals.uifEmployee + emp201Totals.uifEmployer)}</p>
+            <p><b>Grand Total Due to SARS:</b> {fmtR(emp201Totals.paye + emp201Totals.sdl + emp201Totals.uifEmployee + emp201Totals.uifEmployer)}</p>
+          </div>
+        </div>
+      )}
+
+      {activePayrollTab === 'irp5' && (
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+          <label className="text-sm text-slate-600">Tax Year Start
+            <input className="mt-1 border rounded-lg px-3 py-2 ml-3" type="number" value={irp5Year} onChange={(e) => setIrp5Year(Number(e.target.value || now.getFullYear()))} />
+          </label>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600"><tr><th className="text-left px-3 py-2">Employee Name</th><th className="text-right px-3 py-2">Total Gross</th><th className="text-right px-3 py-2">Total PAYE</th><th className="text-right px-3 py-2">Total UIF</th><th className="text-right px-3 py-2">Total SDL</th><th className="text-left px-3 py-2">Actions</th></tr></thead>
+              <tbody>
+                {irp5Rows.map(r => (
+                  <tr key={r.employeeId} className="border-t hover:bg-slate-50">
+                    <td className="px-3 py-2">{r.employeeName}</td><td className="px-3 py-2 text-right">{fmtR(r.grossSalary)}</td><td className="px-3 py-2 text-right">{fmtR(r.paye)}</td><td className="px-3 py-2 text-right">{fmtR(r.uifEmployee)}</td><td className="px-3 py-2 text-right">{fmtR(r.sdl)}</td>
+                    <td className="px-3 py-2"><button className="px-3 py-1 rounded-lg text-xs bg-indigo-100 text-indigo-700" onClick={() => printIRP5(r)}>Print IRP5</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activePayrollTab === 'provisional' && (
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-sm text-slate-600">Estimated Taxable Income
+              <input className="mt-1 w-full border rounded-lg px-3 py-2" type="number" value={provEstimatedIncome} onChange={(e) => setProvEstimatedIncome(Number(e.target.value || 0))} />
+            </label>
+            <label className="text-sm text-slate-600">Prior Year Taxable Income
+              <input className="mt-1 w-full border rounded-lg px-3 py-2" type="number" value={provPriorYearIncome} onChange={(e) => setProvPriorYearIncome(Number(e.target.value || 0))} />
+            </label>
+            <label className="text-sm text-slate-600">Age
+              <input className="mt-1 w-full border rounded-lg px-3 py-2" type="number" value={provAge} onChange={(e) => setProvAge(Number(e.target.value || 0))} />
+            </label>
+            <label className="text-sm text-slate-600">Employees Tax Already Paid
+              <input className="mt-1 w-full border rounded-lg px-3 py-2" type="number" value={provEmployeesTaxPaid} onChange={(e) => setProvEmployeesTaxPaid(Number(e.target.value || 0))} />
+            </label>
+            <label className="text-sm text-slate-600">Provisional Tax Year
+              <input className="mt-1 w-full border rounded-lg px-3 py-2" type="number" value={provYear} onChange={(e) => setProvYear(Number(e.target.value || now.getFullYear()))} />
+            </label>
+          </div>
+          <button className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white" onClick={calculateProvisional}>Calculate</button>
+
+          {provResult && (
+            <div className="border rounded-xl p-4 bg-slate-50 space-y-1">
+              <p><b>Annual Tax (before rebates):</b> {fmtR(provResult.annualTaxBeforeRebates)}</p>
+              <p><b>Less: Primary Rebate:</b> {fmtR(provResult.rebates.primary)}</p>
+              <p><b>Less: Secondary Rebate:</b> {fmtR(provResult.rebates.secondary)}</p>
+              <p><b>Less: Tertiary Rebate:</b> {fmtR(provResult.rebates.tertiary)}</p>
+              <p><b>Net Annual Tax:</b> {fmtR(provResult.netAnnualTax)}</p>
+              <p><b>Less: Employees Tax Already Paid:</b> {fmtR(provResult.employeesTaxPaid)}</p>
+              <p><b>1st Provisional Payment — due 31 August {provYear}:</b> {fmtR(provResult.firstPayment)}</p>
+              <p><b>2nd Provisional Payment — due 28 February {provYear + 1}:</b> {fmtR(provResult.secondPayment)}</p>
+              {provResult.warning80 && (
+                <p className="mt-2 px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm">Warning: Your estimate is below 80% of prior year income. SARS may impose penalties if actual income exceeds the estimate.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default AccountingDashboard;
