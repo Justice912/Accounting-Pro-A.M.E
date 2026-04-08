@@ -8795,4 +8795,922 @@ const CashFlowForecastView = ({ invoices, bankStatements, company }) => {
   );
 };
 
+
+const PayrollView = ({ employees, saveEmployees, payslips, savePayslips, company }) => {
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const fmtR = (n) => `R ${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const now = new Date();
+
+  const [activePayrollTab, setActivePayrollTab] = useState('employees');
+  const [openEmployeeSections, setOpenEmployeeSections] = useState({
+    core: true,
+    overtime: false,
+    commission: false,
+    allowances: false,
+    retirement: false,
+    medical: false,
+    insurance: false,
+    deductions: false,
+    car: false,
+    leave: false,
+    banking: false
+  });
+
+  const defaultEmployee = {
+    employeeNumber: '',
+    firstName: '',
+    lastName: '',
+    idNumber: '',
+    taxNumber: '',
+    email: '',
+    phone: '',
+    jobTitle: '',
+    department: '',
+    salaryType: 'monthly',
+    basicSalary: 0,
+    dateOfBirth: '',
+    isActive: true,
+    overtimeEligible: true,
+    commissionEligible: false,
+    travelAllowance: 0,
+    cellPhoneAllowance: 0,
+    housingAllowance: 0,
+    shiftDifferential: 0,
+    actingAllowance: 0,
+    standbyAllowance: 0,
+    toolUniformAllowance: 0,
+    retirementFundType: 'None',
+    retirementEmployeePercent: 7.5,
+    retirementEmployerPercent: 7.5,
+    medicalAidScheme: '',
+    medicalAidPlan: '',
+    medicalAidEmployee: 0,
+    medicalAidEmployer: 0,
+    medicalAidDependants: 1,
+    gapCover: 0,
+    groupLifeCover: 0,
+    disabilityCover: 0,
+    funeralCover: 0,
+    educationPolicy: 0,
+    unionFees: 0,
+    garnisheeOrder: 0,
+    loanRepayment: 0,
+    hasCompanyCar: false,
+    carDeterminedValue: 0,
+    carMaintenancePlan: false,
+    annualLeaveEntitlement: 15,
+    annualLeaveBalance: 0,
+    sickLeaveCycleStart: '',
+    sickLeaveTaken: 0,
+    familyResponsibilityTaken: 0,
+    bankName: '',
+    bankAccountLast4: '',
+    bankBranchCode: ''
+  };
+
+  const [showEmployeeForm, setShowEmployeeForm] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState(null);
+  const [employeeForm, setEmployeeForm] = useState(defaultEmployee);
+
+  const [payrollMonth, setPayrollMonth] = useState(now.getMonth() + 1);
+  const [payrollYear, setPayrollYear] = useState(now.getFullYear());
+  const [payrollResults, setPayrollResults] = useState([]);
+  const [payrollApproved, setPayrollApproved] = useState(false);
+  const [validationErrors, setValidationErrors] = useState([]);
+  const [leaveWarnings, setLeaveWarnings] = useState([]);
+
+  const [emp201Month, setEmp201Month] = useState(now.getMonth() + 1);
+  const [emp201Year, setEmp201Year] = useState(now.getFullYear());
+  const [irp5Year, setIrp5Year] = useState(now.getFullYear());
+
+  const [provEstimatedIncome, setProvEstimatedIncome] = useState(0);
+  const [provPriorYearIncome, setProvPriorYearIncome] = useState(0);
+  const [provAge, setProvAge] = useState(30);
+  const [provEmployeesTaxPaid, setProvEmployeesTaxPaid] = useState(0);
+  const [provYear, setProvYear] = useState(now.getFullYear());
+  const [provResult, setProvResult] = useState(null);
+
+  const [payrollInputs, setPayrollInputs] = useState({});
+
+  const companyEmployees = (employees || []).filter(e => e.companyId === company?.id);
+  const activeEmployees = companyEmployees.filter(e => e.isActive !== false);
+
+  const taxYearForPeriod = (year, month) => (month >= 3 ? year : year - 1);
+
+  const calculateAgeAtTaxYearEnd = (dateOfBirth, taxYearStartYear) => {
+    if (!dateOfBirth) return 30;
+    const dob = new Date(dateOfBirth);
+    if (Number.isNaN(dob.getTime())) return 30;
+    const ref = new Date(taxYearStartYear + 1, 1, 28);
+    let age = ref.getFullYear() - dob.getFullYear();
+    const beforeBirthday = ref.getMonth() < dob.getMonth() || (ref.getMonth() === dob.getMonth() && ref.getDate() < dob.getDate());
+    if (beforeBirthday) age -= 1;
+    return Math.max(age, 0);
+  };
+
+  const calculateAnnualTaxBeforeRebates = (annualTaxableIncome) => {
+    const income = Number(annualTaxableIncome || 0);
+    if (income <= 0) return 0;
+    if (income <= 237100) return income * 0.18;
+    if (income <= 370500) return 42678 + (income - 237100) * 0.26;
+    if (income <= 512800) return 77362 + (income - 370500) * 0.31;
+    if (income <= 673000) return 121475 + (income - 512800) * 0.36;
+    if (income <= 857900) return 179147 + (income - 673000) * 0.39;
+    if (income <= 1817000) return 251258 + (income - 857900) * 0.41;
+    return 644489 + (income - 1817000) * 0.45;
+  };
+
+  const getRebateBreakdown = (age) => {
+    const primary = 17235;
+    const secondary = age >= 65 ? 9444 : 0;
+    const tertiary = age >= 75 ? 3145 : 0;
+    return { primary, secondary, tertiary, total: primary + secondary + tertiary };
+  };
+
+  const getTaxThreshold = (age) => {
+    if (age >= 75) return 165689;
+    if (age >= 65) return 148217;
+    return 95750;
+  };
+
+  const getMedicalCreditsAnnual = (dependants) => {
+    const d = Number(dependants || 0);
+    if (d <= 0) return 0;
+    if (d === 1) return 364 * 12;
+    return (364 * 2 * 12) + ((d - 2) * 246 * 12);
+  };
+
+  const handleEditEmployee = (employee) => {
+    setEditingEmployee(employee);
+    setEmployeeForm({ ...defaultEmployee, ...employee });
+    setShowEmployeeForm(true);
+  };
+
+  const handleSaveEmployee = () => {
+    if (editingEmployee) {
+      const updated = (employees || []).map(e => (e.id === editingEmployee.id ? { ...e, ...employeeForm } : e));
+      saveEmployees(updated);
+    } else {
+      const newEmployee = { ...defaultEmployee, ...employeeForm, id: Date.now(), companyId: company?.id };
+      saveEmployees([...(employees || []), newEmployee]);
+    }
+    setShowEmployeeForm(false);
+    setEditingEmployee(null);
+    setEmployeeForm(defaultEmployee);
+  };
+
+  const toggleEmployeeStatus = (employee) => {
+    const updated = (employees || []).map(e => (e.id === employee.id ? { ...e, isActive: !(e.isActive !== false) } : e));
+    saveEmployees(updated);
+  };
+
+  const updatePayrollInput = (employeeId, field, value) => {
+    setPayrollInputs(prev => ({
+      ...prev,
+      [employeeId]: { ...(prev[employeeId] || {}), [field]: value }
+    }));
+  };
+
+  const getPeriodBounds = (year, month) => {
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0);
+    return { start, end };
+  };
+
+  const computeEmployeePayroll = (employee) => {
+    const ov = payrollInputs[employee.id] || {};
+    const basicSalary = Number(employee.basicSalary || 0);
+    const hourlyRate = basicSalary / 173.33;
+
+    const ordinaryOTHours = Math.max(0, Number(ov.ordinaryOTHours || 0));
+    const sundayOTHours = Math.max(0, Number(ov.sundayOTHours || 0));
+    const commission = Math.max(0, Number(ov.commission || 0));
+    const bonus = Math.max(0, Number(ov.bonus || 0));
+    const actingAllowanceApplied = ov.actingAllowanceOverride !== '' && ov.actingAllowanceOverride !== undefined
+      ? Number(ov.actingAllowanceOverride || 0)
+      : Number(employee.actingAllowance || 0);
+
+    const additionalEarnings = Math.max(0, Number(ov.additionalEarnings || 0));
+    const additionalDeductions = Math.max(0, Number(ov.additionalDeductions || 0));
+    const annualLeaveTaken = Math.max(0, Number(ov.annualLeaveTaken || 0));
+    const sickLeaveTaken = Math.max(0, Number(ov.sickLeaveTaken || 0));
+    const familyRespLeaveTaken = Math.max(0, Number(ov.familyRespLeaveTaken || 0));
+
+    const travelAllowance = Number(employee.travelAllowance || 0);
+    const cellPhoneAllowance = Number(employee.cellPhoneAllowance || 0);
+    const housingAllowance = Number(employee.housingAllowance || 0);
+    const shiftDifferential = Number(employee.shiftDifferential || 0);
+    const standbyAllowance = Number(employee.standbyAllowance || 0);
+    const toolUniformAllowance = Number(employee.toolUniformAllowance || 0);
+
+    const carFringeBenefit = employee.hasCompanyCar
+      ? Number(employee.carDeterminedValue || 0) * (employee.carMaintenancePlan ? 0.0325 : 0.035) / 12
+      : 0;
+
+    const ordinaryOT = employee.overtimeEligible !== false ? ordinaryOTHours * hourlyRate * 1.5 : 0;
+    const sundayOT = employee.overtimeEligible !== false ? sundayOTHours * hourlyRate * 2.0 : 0;
+
+    const grossEarnings = basicSalary + ordinaryOT + sundayOT + commission + bonus + travelAllowance + cellPhoneAllowance + housingAllowance + shiftDifferential + actingAllowanceApplied + standbyAllowance + toolUniformAllowance + carFringeBenefit + additionalEarnings;
+    const cashEarnings = grossEarnings - carFringeBenefit;
+
+    const retirementEmployeeAmount = employee.retirementFundType && employee.retirementFundType !== 'None'
+      ? basicSalary * (Number(employee.retirementEmployeePercent || 0) / 100)
+      : 0;
+    const retirementEmployerAmount = employee.retirementFundType && employee.retirementFundType !== 'None'
+      ? basicSalary * (Number(employee.retirementEmployerPercent || 0) / 100)
+      : 0;
+
+    const annualRetirementCap = Math.min(grossEarnings * 12 * 0.275, 350000);
+    const deductibleRetirementAnnual = Math.min((retirementEmployeeAmount + retirementEmployerAmount) * 12, annualRetirementCap);
+
+    const taxYearStart = taxYearForPeriod(payrollYear, payrollMonth);
+    const age = calculateAgeAtTaxYearEnd(employee.dateOfBirth, taxYearStart);
+    const annualGross = grossEarnings * 12;
+    const annualTaxable = Math.max(0, annualGross - deductibleRetirementAnnual);
+    const threshold = getTaxThreshold(age);
+    const annualTaxBeforeRebates = annualTaxable <= threshold ? 0 : calculateAnnualTaxBeforeRebates(annualTaxable);
+    const rebates = getRebateBreakdown(age);
+    const medicalCreditsAnnual = getMedicalCreditsAnnual(employee.medicalAidDependants);
+    const annualPAYE = Math.max(0, annualTaxBeforeRebates - rebates.total - medicalCreditsAnnual);
+    const monthlyPAYE = annualPAYE / 12;
+
+    const uifBase = basicSalary + travelAllowance + cellPhoneAllowance + housingAllowance + shiftDifferential + actingAllowanceApplied + standbyAllowance + toolUniformAllowance;
+    const uifEmployee = Math.min(Math.max(0, uifBase * 0.01), 177.12);
+    const uifEmployer = uifEmployee;
+    const sdl = Math.max(0, uifBase * 0.01);
+
+    const medicalAidEmployee = Number(employee.medicalAidEmployee || 0);
+    const medicalAidEmployer = Number(employee.medicalAidEmployer || 0);
+    const gapCover = Number(employee.gapCover || 0);
+    const groupLifeCover = Number(employee.groupLifeCover || 0);
+    const disabilityCover = Number(employee.disabilityCover || 0);
+    const funeralCover = Number(employee.funeralCover || 0);
+    const educationPolicy = Number(employee.educationPolicy || 0);
+    const unionFees = Number(employee.unionFees || 0);
+    const garnisheeOrder = Number(employee.garnisheeOrder || 0);
+    const loanRepayment = Number(employee.loanRepayment || 0);
+
+    const totalVoluntaryDeductions = retirementEmployeeAmount + medicalAidEmployee + gapCover + groupLifeCover + disabilityCover + funeralCover + educationPolicy + unionFees + garnisheeOrder + loanRepayment + additionalDeductions;
+    const totalDeductions = monthlyPAYE + uifEmployee + totalVoluntaryDeductions;
+
+    const totalEmployerCosts = uifEmployer + sdl + retirementEmployerAmount + medicalAidEmployer + groupLifeCover;
+    const netPay = cashEarnings - monthlyPAYE - uifEmployee - totalVoluntaryDeductions;
+    const costToCompany = netPay + monthlyPAYE + uifEmployee + totalVoluntaryDeductions + totalEmployerCosts;
+
+    const annualLeaveOpening = Number(employee.annualLeaveBalance || 0);
+    const annualLeaveAccrued = Number(employee.annualLeaveEntitlement || 15) / 12;
+    const annualLeaveBalance = annualLeaveOpening + annualLeaveAccrued - annualLeaveTaken;
+
+    const sickLeaveUsedTotal = Number(employee.sickLeaveTaken || 0) + sickLeaveTaken;
+    const sickLeaveBalance = 30 - sickLeaveUsedTotal;
+
+    const familyUsedTotal = Number(employee.familyResponsibilityTaken || 0) + familyRespLeaveTaken;
+    const familyRespBalance = 3 - familyUsedTotal;
+
+    const taxYearRows = (payslips || []).filter(ps => {
+      if (ps.companyId !== company?.id || ps.employeeId !== employee.id || !ps.period || ps.approved !== true) return false;
+      const [y, m] = ps.period.split('-').map(Number);
+      const t = taxYearForPeriod(y, m);
+      return t === taxYearStart;
+    });
+
+    const ytd = taxYearRows.reduce((acc, row) => ({
+      gross: acc.gross + Number(row.grossEarnings || row.grossSalary || 0),
+      paye: acc.paye + Number(row.paye || 0),
+      uif: acc.uif + Number(row.uifEmployee || 0),
+      retirement: acc.retirement + Number(row.retirementEmployee || 0),
+      medical: acc.medical + Number(row.medicalAidEmployee || 0),
+      net: acc.net + Number(row.netPay || 0)
+    }), { gross: grossEarnings, paye: monthlyPAYE, uif: uifEmployee, retirement: retirementEmployeeAmount, medical: medicalAidEmployee, net: netPay });
+
+    return {
+      employeeId: employee.id,
+      employeeName: `${employee.firstName || ''} ${employee.lastName || ''}`.trim(),
+      employeeNumber: employee.employeeNumber || '',
+      idNumber: employee.idNumber || '',
+      taxNumber: employee.taxNumber || '',
+      department: employee.department || '',
+      jobTitle: employee.jobTitle || '',
+      bankName: employee.bankName || '',
+      bankAccountLast4: employee.bankAccountLast4 || '',
+      bankBranchCode: employee.bankBranchCode || '',
+      hourlyRate,
+      basicSalary,
+      ordinaryOTHours,
+      sundayOTHours,
+      ordinaryOT,
+      sundayOT,
+      commission,
+      bonus,
+      travelAllowance,
+      cellPhoneAllowance,
+      housingAllowance,
+      shiftDifferential,
+      actingAllowance: actingAllowanceApplied,
+      standbyAllowance,
+      toolUniformAllowance,
+      carFringeBenefit,
+      additionalEarnings,
+      additionalEarningsDesc: ov.additionalEarningsDesc || '',
+      additionalDeductions,
+      additionalDeductionsDesc: ov.additionalDeductionsDesc || '',
+      grossEarnings,
+      cashEarnings,
+      paye: monthlyPAYE,
+      annualGross,
+      annualTaxable,
+      annualTaxBeforeRebates,
+      medicalCreditsAnnual,
+      annualPAYE,
+      rebates,
+      uifEmployee,
+      uifEmployer,
+      sdl,
+      retirementEmployee: retirementEmployeeAmount,
+      retirementEmployer: retirementEmployerAmount,
+      deductibleRetirementAnnual,
+      medicalAidEmployee,
+      medicalAidEmployer,
+      medicalAidDependants: Number(employee.medicalAidDependants || 0),
+      gapCover,
+      groupLifeCover,
+      disabilityCover,
+      funeralCover,
+      educationPolicy,
+      unionFees,
+      garnisheeOrder,
+      loanRepayment,
+      totalVoluntaryDeductions,
+      totalDeductions,
+      totalEmployerCosts,
+      netPay,
+      costToCompany,
+      annualLeaveTaken,
+      sickLeaveTaken,
+      familyRespLeaveTaken,
+      annualLeaveOpening,
+      annualLeaveAccrued,
+      annualLeaveBalance,
+      sickLeaveBalance,
+      familyRespBalance,
+      ytd,
+      paymentDate: new Date(payrollYear, payrollMonth, 0).toISOString(),
+      period: `${payrollYear}-${String(payrollMonth).padStart(2, '0')}`,
+      taxYearStart
+    };
+  };
+
+  const calculateAllPayroll = () => {
+    const errors = [];
+    const warnings = [];
+
+    const hasHighOT = activeEmployees.some(emp => Number((payrollInputs[emp.id] || {}).ordinaryOTHours || 0) * 4.33 > 10);
+    if (hasHighOT) {
+      const proceed = window.confirm('Overtime exceeds BCEA limit of 10 hours/week. Proceed?');
+      if (!proceed) return;
+    }
+
+    const results = activeEmployees.map(computeEmployeePayroll).filter((row) => {
+      if (row.netPay < 0) {
+        errors.push(`Deductions exceed earnings for ${row.employeeName}`);
+        return false;
+      }
+      if (row.annualLeaveBalance < 0) warnings.push(`Annual leave below zero: ${row.employeeName}`);
+      if (row.sickLeaveBalance < 0) warnings.push(`Sick leave below zero: ${row.employeeName}`);
+      if (row.familyRespBalance < 0) warnings.push(`Family responsibility leave below zero: ${row.employeeName}`);
+      return true;
+    });
+
+    setValidationErrors(errors);
+    setLeaveWarnings(warnings);
+    setPayrollResults(results);
+    setPayrollApproved(false);
+  };
+
+  const approveAndSavePayroll = () => {
+    if (!payrollResults.length) return;
+
+    const newPayslips = payrollResults.map((r, idx) => ({
+      id: Date.now() + idx,
+      companyId: company?.id,
+      employeeId: r.employeeId,
+      employeeName: r.employeeName,
+      period: r.period,
+      basicSalary: r.basicSalary,
+      ordinaryOT: r.ordinaryOT,
+      sundayOT: r.sundayOT,
+      commission: r.commission,
+      bonus: r.bonus,
+      travelAllowance: r.travelAllowance,
+      cellPhoneAllowance: r.cellPhoneAllowance,
+      housingAllowance: r.housingAllowance,
+      shiftDifferential: r.shiftDifferential,
+      actingAllowance: r.actingAllowance,
+      standbyAllowance: r.standbyAllowance,
+      toolUniformAllowance: r.toolUniformAllowance,
+      carFringeBenefit: r.carFringeBenefit,
+      additionalEarnings: r.additionalEarnings,
+      grossEarnings: r.grossEarnings,
+      cashEarnings: r.cashEarnings,
+      paye: r.paye,
+      uifEmployee: r.uifEmployee,
+      uifEmployer: r.uifEmployer,
+      sdl: r.sdl,
+      retirementEmployee: r.retirementEmployee,
+      retirementEmployer: r.retirementEmployer,
+      medicalAidEmployee: r.medicalAidEmployee,
+      medicalAidEmployer: r.medicalAidEmployer,
+      gapCover: r.gapCover,
+      groupLifeCover: r.groupLifeCover,
+      disabilityCover: r.disabilityCover,
+      funeralCover: r.funeralCover,
+      educationPolicy: r.educationPolicy,
+      unionFees: r.unionFees,
+      garnisheeOrder: r.garnisheeOrder,
+      loanRepayment: r.loanRepayment,
+      additionalDeductions: r.additionalDeductions,
+      totalDeductions: r.totalDeductions,
+      totalEmployerCosts: r.totalEmployerCosts,
+      netPay: r.netPay,
+      costToCompany: r.costToCompany,
+      annualLeaveTaken: r.annualLeaveTaken,
+      sickLeaveTaken: r.sickLeaveTaken,
+      familyRespLeaveTaken: r.familyRespLeaveTaken,
+      approved: true,
+      approvedDate: new Date().toISOString()
+    }));
+
+    savePayslips([...(payslips || []), ...newPayslips]);
+
+    const updatedEmployees = (employees || []).map(emp => {
+      const result = payrollResults.find(r => r.employeeId === emp.id);
+      if (!result) return emp;
+      return {
+        ...emp,
+        annualLeaveBalance: result.annualLeaveBalance,
+        sickLeaveTaken: Number(emp.sickLeaveTaken || 0) + result.sickLeaveTaken,
+        familyResponsibilityTaken: Number(emp.familyResponsibilityTaken || 0) + result.familyRespLeaveTaken
+      };
+    });
+    saveEmployees(updatedEmployees);
+
+    setPayrollApproved(true);
+  };
+
+  const printPayslip = (result) => {
+    const w = window.open('', '_blank');
+    if (!w) return;
+    const { start, end } = getPeriodBounds(payrollYear, payrollMonth);
+    const payslipNo = `PS-${payrollYear}-${String(payrollMonth).padStart(2, '0')}-${String(result.employeeId).slice(-3)}`;
+
+    const earningsItems = [
+      ['Basic Salary', result.basicSalary],
+      ['Overtime (Ord 1.5×)', result.ordinaryOT],
+      ['Overtime (Sun/PH 2×)', result.sundayOT],
+      ['Commission', result.commission],
+      ['Bonus / 13th Cheque', result.bonus],
+      ['Travel Allowance', result.travelAllowance],
+      ['Cell Phone Allowance', result.cellPhoneAllowance],
+      ['Housing Allowance', result.housingAllowance],
+      ['Shift Differential', result.shiftDifferential],
+      ['Acting Allowance', result.actingAllowance],
+      ['Standby Allowance', result.standbyAllowance],
+      ['Tool/Uniform Allowance', result.toolUniformAllowance],
+      ['Fringe Benefit (Car)', result.carFringeBenefit],
+      ['Additional Earnings', result.additionalEarnings]
+    ].filter(([, amount]) => Number(amount || 0) > 0);
+
+    const deductionItems = [
+      ['PAYE', result.paye],
+      ['UIF (Employee)', result.uifEmployee],
+      ['Provident/Pension Fund', result.retirementEmployee],
+      ['Medical Aid', result.medicalAidEmployee],
+      ['Gap Cover', result.gapCover],
+      ['Group Life Cover', result.groupLifeCover],
+      ['Disability Cover', result.disabilityCover],
+      ['Funeral Cover', result.funeralCover],
+      ['Education Policy', result.educationPolicy],
+      ['Union Fees', result.unionFees],
+      ['Garnishee Order', result.garnisheeOrder],
+      ['Loan Repayment', result.loanRepayment],
+      ['Additional Deductions', result.additionalDeductions]
+    ].filter(([, amount]) => Number(amount || 0) > 0);
+
+    const employerItems = [
+      ['UIF (Employer)', result.uifEmployer],
+      ['SDL', result.sdl],
+      ['Provident/Pension (Co.)', result.retirementEmployer],
+      ['Medical Aid (Co.)', result.medicalAidEmployer],
+      ['Group Life (Co.)', result.groupLifeCover]
+    ].filter(([, amount]) => Number(amount || 0) > 0);
+
+    const makeRows = (arr) => arr.map(([label, amount]) => `<tr><td>${label}</td><td style="text-align:right">${fmtR(amount)}</td></tr>`).join('');
+
+    w.document.write(`<html><head><title>Payslip</title><style>
+      body { font-family: Arial, sans-serif; max-width: 1100px; margin: 0 auto; padding: 16px; color: #1f2937; }
+      .header { background:#1a365d; color:white; padding:16px; display:flex; justify-content:space-between; align-items:flex-start; }
+      .info { background:#edf2f7; padding:10px; margin:10px 0; display:flex; gap:12px; flex-wrap:wrap; }
+      table { width:100%; border-collapse:collapse; margin:10px 0; }
+      th, td { border:1px solid #cbd5e0; padding:7px; font-size:12px; }
+      .box { border:1px solid #cbd5e0; padding:8px; }
+      .cols { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+      .h-green { background:#38a169; color:white; }
+      .h-red { background:#e53e3e; color:white; }
+      .h-purple { background:#805ad5; color:white; }
+      .net { background:#1a365d; color:white; font-size:24px; font-weight:bold; padding:12px; text-align:center; margin-top:10px; }
+      .sig { display:flex; justify-content:space-between; margin-top:18px; }
+      @media print { .no-print { display:none; } }
+    </style></head><body>
+      <div class="header">
+        <div>
+          <div style="font-size:26px;font-weight:700">${company?.name || 'Company'}</div>
+          <div>Reg: ${company?.registrationNumber || 'N/A'}</div>
+          <div>${company?.address || ''}</div>
+          <div>Tel: ${company?.telephone || company?.phone || 'N/A'}</div>
+        </div>
+        <div style="font-size:28px;font-weight:700">PAYSLIP</div>
+      </div>
+
+      <div class="info">
+        <div><b>Payslip No:</b> ${payslipNo}</div>
+        <div><b>Payment Date:</b> ${new Date(result.paymentDate).toLocaleDateString('en-ZA')}</div>
+        <div><b>Pay Period:</b> ${start.toLocaleDateString('en-ZA')} — ${end.toLocaleDateString('en-ZA')}</div>
+        <div><b>Tax Year:</b> ${result.taxYearStart}/${result.taxYearStart + 1}</div>
+      </div>
+
+      <table>
+        <tr><th colspan="2">Employee Details</th><th colspan="2">Employee Details</th></tr>
+        <tr><td><b>Employee Name</b></td><td>${result.employeeName}</td><td><b>Employee Number</b></td><td>${result.employeeNumber || ''}</td></tr>
+        <tr><td><b>ID Number</b></td><td>${result.idNumber || ''}</td><td><b>Tax Reference</b></td><td>${result.taxNumber || ''}</td></tr>
+        <tr><td><b>Job Title</b></td><td>${result.jobTitle || ''}</td><td><b>Department</b></td><td>${result.department || ''}</td></tr>
+        <tr><td><b>Date of Employment</b></td><td>${''}</td><td><b>Payment Method</b></td><td>EFT</td></tr>
+        <tr><td><b>Bank</b></td><td>${result.bankName || ''} ••••${result.bankAccountLast4 || ''}</td><td><b>Branch Code</b></td><td>${result.bankBranchCode || ''}</td></tr>
+      </table>
+
+      <div class="cols">
+        <table><thead><tr><th colspan="2" class="h-green">EARNINGS</th></tr></thead><tbody>${makeRows(earningsItems)}<tr><th>TOTAL EARNINGS</th><th style="text-align:right">${fmtR(result.grossEarnings)}</th></tr></tbody></table>
+        <table><thead><tr><th colspan="2" class="h-red">DEDUCTIONS</th></tr></thead><tbody>${makeRows(deductionItems)}<tr><th>TOTAL DEDUCTIONS</th><th style="text-align:right">${fmtR(result.totalDeductions)}</th></tr></tbody></table>
+        <table><thead><tr><th colspan="2" class="h-purple">EMPLOYER COSTS</th></tr></thead><tbody>${makeRows(employerItems)}<tr><th>TOTAL EMPLOYER COSTS</th><th style="text-align:right">${fmtR(result.totalEmployerCosts)}</th></tr></tbody></table>
+      </div>
+
+      <div class="net">NET PAY: ${fmtR(result.netPay)}</div>
+
+      <table>
+        <tr><th>Leave Type</th><th>Opening</th><th>Accrued</th><th>Taken</th><th>Balance</th></tr>
+        <tr><td>Annual Leave</td><td>${result.annualLeaveOpening.toFixed(2)}</td><td>${result.annualLeaveAccrued.toFixed(2)}</td><td>${result.annualLeaveTaken.toFixed(2)}</td><td>${result.annualLeaveBalance.toFixed(2)}</td></tr>
+        <tr><td>Sick Leave (3yr cycle)</td><td>30</td><td>—</td><td>${result.sickLeaveTaken}</td><td>${result.sickLeaveBalance}</td></tr>
+        <tr><td>Family Responsibility</td><td>3</td><td>—</td><td>${result.familyRespLeaveTaken}</td><td>${result.familyRespBalance}</td></tr>
+      </table>
+
+      <table>
+        <tr><th>YTD Gross</th><th>YTD PAYE</th><th>YTD UIF</th><th>YTD Retirement</th><th>YTD Medical</th><th>YTD Net Pay</th></tr>
+        <tr><td>${fmtR(result.ytd.gross)}</td><td>${fmtR(result.ytd.paye)}</td><td>${fmtR(result.ytd.uif)}</td><td>${fmtR(result.ytd.retirement)}</td><td>${fmtR(result.ytd.medical)}</td><td>${fmtR(result.ytd.net)}</td></tr>
+      </table>
+
+      <table>
+        <tr><th colspan="2">PAYE Calculation Breakdown</th></tr>
+        <tr><td>Annual equivalent gross</td><td style="text-align:right">${fmtR(result.annualGross)}</td></tr>
+        <tr><td>Less: Retirement deduction</td><td style="text-align:right">${fmtR(result.deductibleRetirementAnnual)} (27.5% cap / R350,000 max)</td></tr>
+        <tr><td>Annual taxable income</td><td style="text-align:right">${fmtR(result.annualTaxable)}</td></tr>
+        <tr><td>Tax per brackets</td><td style="text-align:right">${fmtR(result.annualTaxBeforeRebates)}</td></tr>
+        <tr><td>Less: Primary rebate</td><td style="text-align:right">${fmtR(result.rebates.primary)}</td></tr>
+        <tr><td>Less: Secondary rebate</td><td style="text-align:right">${fmtR(result.rebates.secondary)}</td></tr>
+        <tr><td>Less: Tertiary rebate</td><td style="text-align:right">${fmtR(result.rebates.tertiary)}</td></tr>
+        <tr><td>Less: Medical tax credits</td><td style="text-align:right">${fmtR(result.medicalCreditsAnnual)} (${result.medicalAidDependants} dependants)</td></tr>
+        <tr><td>Annual PAYE</td><td style="text-align:right">${fmtR(result.annualPAYE)}</td></tr>
+        <tr><td>Monthly PAYE</td><td style="text-align:right">${fmtR(result.paye)}</td></tr>
+      </table>
+
+      <div class="sig">
+        <div>Employee Signature __________________ Date ______</div>
+        <div>Authorised Signature __________________ Date ______</div>
+      </div>
+      <p style="margin-top:12px;font-size:11px">Computer-generated payslip. Generated ${new Date().toLocaleString('en-ZA')}. Confidential — for named employee only.</p>
+
+      <button class="no-print" onclick="window.print()">Print</button>
+    </body></html>`);
+    w.document.close();
+  };
+
+  const printAllPayslips = () => {
+    const w = window.open('', '_blank');
+    if (!w) return;
+    const blocks = payrollResults.map((r, idx) => `<div style="page-break-after:${idx === payrollResults.length - 1 ? 'auto' : 'always'}">
+<h2>${r.employeeName}</h2><p>Period: ${r.period}</p><p>Gross: ${fmtR(r.grossEarnings)} | PAYE: ${fmtR(r.paye)} | Net: ${fmtR(r.netPay)}</p></div>`).join('');
+    w.document.write(`<html><head><title>All Payslips</title></head><body>${blocks}<button onclick="window.print()">Print All</button></body></html>`);
+    w.document.close();
+  };
+
+  const selectedEmp201Period = `${emp201Year}-${String(emp201Month).padStart(2, '0')}`;
+  const emp201Rows = (payslips || []).filter(p => p.companyId === company?.id && p.period === selectedEmp201Period);
+  const emp201Totals = emp201Rows.reduce((acc, p) => ({
+    gross: acc.gross + Number(p.grossEarnings || p.grossSalary || 0),
+    paye: acc.paye + Number(p.paye || 0),
+    uifEmployee: acc.uifEmployee + Number(p.uifEmployee || 0),
+    uifEmployer: acc.uifEmployer + Number(p.uifEmployer || 0),
+    sdl: acc.sdl + Number(p.sdl || 0),
+    retirement: acc.retirement + Number(p.retirementEmployee || 0) + Number(p.retirementEmployer || 0)
+  }), { gross: 0, paye: 0, uifEmployee: 0, uifEmployer: 0, sdl: 0, retirement: 0 });
+
+  const irp5Rows = ((payslips || []).filter(p => {
+    if (p.companyId !== company?.id || !p.period) return false;
+    const [y, m] = p.period.split('-').map(Number);
+    return (y === irp5Year && m >= 3) || (y === irp5Year + 1 && m <= 2);
+  })).reduce((acc, p) => {
+    if (!acc[p.employeeId]) acc[p.employeeId] = { employeeId: p.employeeId, employeeName: p.employeeName, gross: 0, paye: 0, uif: 0, sdl: 0 };
+    acc[p.employeeId].gross += Number(p.grossEarnings || p.grossSalary || 0);
+    acc[p.employeeId].paye += Number(p.paye || 0);
+    acc[p.employeeId].uif += Number(p.uifEmployee || 0);
+    acc[p.employeeId].sdl += Number(p.sdl || 0);
+    return acc;
+  }, {});
+
+  const calculateProvisional = () => {
+    const age = Number(provAge || 0);
+    const income = Number(provEstimatedIncome || 0);
+    const threshold = getTaxThreshold(age);
+    const annualTaxBeforeRebates = income <= threshold ? 0 : calculateAnnualTaxBeforeRebates(income);
+    const rebates = getRebateBreakdown(age);
+    const netAnnualTax = Math.max(0, annualTaxBeforeRebates - rebates.total);
+    const firstPayment = Math.max(0, (netAnnualTax * 0.5) - Number(provEmployeesTaxPaid || 0));
+    const secondPayment = Math.max(0, netAnnualTax - Number(provEmployeesTaxPaid || 0) - firstPayment);
+    const warning80 = income < Number(provPriorYearIncome || 0) * 0.8;
+    setProvResult({ annualTaxBeforeRebates, rebates, netAnnualTax, firstPayment, secondPayment, warning80, employeesTaxPaid: Number(provEmployeesTaxPaid || 0) });
+  };
+
+  const payrollTotals = payrollResults.reduce((acc, r) => ({
+    basic: acc.basic + r.basicSalary,
+    ot: acc.ot + r.ordinaryOT + r.sundayOT,
+    allowances: acc.allowances + r.travelAllowance + r.cellPhoneAllowance + r.housingAllowance + r.shiftDifferential + r.actingAllowance + r.standbyAllowance + r.toolUniformAllowance,
+    gross: acc.gross + r.grossEarnings,
+    paye: acc.paye + r.paye,
+    uifEe: acc.uifEe + r.uifEmployee,
+    retirementEe: acc.retirementEe + r.retirementEmployee,
+    medicalEe: acc.medicalEe + r.medicalAidEmployee,
+    otherDed: acc.otherDed + r.gapCover + r.groupLifeCover + r.disabilityCover + r.funeralCover + r.educationPolicy + r.unionFees + r.garnisheeOrder + r.loanRepayment + r.additionalDeductions,
+    net: acc.net + r.netPay,
+    uifEr: acc.uifEr + r.uifEmployer,
+    sdl: acc.sdl + r.sdl,
+    retirementEr: acc.retirementEr + r.retirementEmployer,
+    medicalEr: acc.medicalEr + r.medicalAidEmployer,
+    ctc: acc.ctc + r.costToCompany
+  }), { basic: 0, ot: 0, allowances: 0, gross: 0, paye: 0, uifEe: 0, retirementEe: 0, medicalEe: 0, otherDed: 0, net: 0, uifEr: 0, sdl: 0, retirementEr: 0, medicalEr: 0, ctc: 0 });
+
+  const section = (key, title, children) => (
+    <div className="border rounded-lg overflow-hidden">
+      <button type="button" onClick={() => setOpenEmployeeSections(prev => ({ ...prev, [key]: !prev[key] }))} className="w-full text-left px-3 py-2 bg-slate-100 font-medium text-slate-700">{title}</button>
+      {openEmployeeSections[key] && <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3">{children}</div>}
+    </div>
+  );
+
+  const numInput = (label, key) => (
+    <label className="text-sm text-slate-600">{label}
+      <input type="number" className="mt-1 w-full border rounded-lg px-3 py-2" value={employeeForm[key] ?? 0} onChange={(e) => setEmployeeForm(prev => ({ ...prev, [key]: Number(e.target.value || 0) }))} />
+    </label>
+  );
+
+  const textInput = (label, key, type='text') => (
+    <label className="text-sm text-slate-600">{label}
+      <input type={type} className="mt-1 w-full border rounded-lg px-3 py-2" value={employeeForm[key] ?? ''} onChange={(e) => setEmployeeForm(prev => ({ ...prev, [key]: e.target.value }))} />
+    </label>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl shadow p-4 flex flex-wrap gap-2">
+        {[['employees', 'Employees'], ['run', 'Run Payroll'], ['emp201', 'EMP201'], ['irp5', 'IRP5'], ['provisional', 'Provisional Tax']].map(([k, l]) => (
+          <button key={k} onClick={() => setActivePayrollTab(k)} className={`px-4 py-2 rounded-lg text-sm font-medium ${activePayrollTab === k ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>{l}</button>
+        ))}
+      </div>
+
+      {activePayrollTab === 'employees' && (
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-semibold text-slate-700">Employees</h3>
+            <button className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white" onClick={() => { setEditingEmployee(null); setEmployeeForm(defaultEmployee); setShowEmployeeForm(true); }}>Add Employee</button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600"><tr>
+                <th className="text-left px-3 py-2">Employee #</th><th className="text-left px-3 py-2">Name</th><th className="text-left px-3 py-2">Tax Number</th><th className="text-left px-3 py-2">Job</th><th className="text-right px-3 py-2">Basic</th><th className="text-left px-3 py-2">Status</th><th className="text-left px-3 py-2">Actions</th>
+              </tr></thead>
+              <tbody>
+                {companyEmployees.map((emp, idx) => (
+                  <tr key={emp.id} className={`border-t ${idx % 2 ? 'bg-slate-50' : 'bg-white'}`}>
+                    <td className="px-3 py-2">{emp.employeeNumber || '—'}</td>
+                    <td className="px-3 py-2">{`${emp.firstName || ''} ${emp.lastName || ''}`.trim()}</td>
+                    <td className="px-3 py-2">{emp.taxNumber || '—'}</td>
+                    <td className="px-3 py-2">{emp.jobTitle || '—'}</td>
+                    <td className="px-3 py-2 text-right">{fmtR(emp.basicSalary)}</td>
+                    <td className="px-3 py-2"><span className={`px-2 py-1 rounded-full text-xs ${emp.isActive !== false ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-700'}`}>{emp.isActive !== false ? 'Active' : 'Inactive'}</span></td>
+                    <td className="px-3 py-2 space-x-2">
+                      <button onClick={() => handleEditEmployee(emp)} className="px-3 py-1 rounded-lg text-xs bg-amber-100 text-amber-700">Edit</button>
+                      <button onClick={() => toggleEmployeeStatus(emp)} className="px-3 py-1 rounded-lg text-xs bg-slate-200 text-slate-700">{emp.isActive !== false ? 'Set Inactive' : 'Set Active'}</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {showEmployeeForm && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-xl p-6 max-w-6xl w-full max-h-[92vh] overflow-y-auto space-y-3">
+                <h4 className="text-lg font-semibold">{editingEmployee ? 'Edit Employee' : 'Add Employee'}</h4>
+
+                {section('core', 'Core Details', <>
+                  {textInput('Employee Number', 'employeeNumber')}
+                  {textInput('First Name', 'firstName')}
+                  {textInput('Last Name', 'lastName')}
+                  {textInput('ID Number', 'idNumber')}
+                  {textInput('Tax Number', 'taxNumber')}
+                  {textInput('Email', 'email', 'email')}
+                  {textInput('Phone', 'phone')}
+                  {textInput('Job Title', 'jobTitle')}
+                  {textInput('Department', 'department')}
+                  <label className="text-sm text-slate-600">Salary Type<select className="mt-1 w-full border rounded-lg px-3 py-2" value={employeeForm.salaryType} onChange={(e) => setEmployeeForm(prev => ({ ...prev, salaryType: e.target.value }))}><option value="monthly">monthly</option><option value="weekly">weekly</option><option value="hourly">hourly</option></select></label>
+                  {numInput('Basic Salary', 'basicSalary')}
+                  <label className="text-sm text-slate-600">Hourly Rate (auto)<input readOnly className="mt-1 w-full border rounded-lg px-3 py-2 bg-slate-100" value={fmtR(Number(employeeForm.basicSalary || 0) / 173.33)} /></label>
+                  {textInput('Date of Birth', 'dateOfBirth', 'date')}
+                  <label className="text-sm text-slate-600 flex items-center gap-2 mt-6"><input type="checkbox" checked={employeeForm.isActive !== false} onChange={(e) => setEmployeeForm(prev => ({ ...prev, isActive: e.target.checked }))} /> Is Active</label>
+                </>)}
+
+                {section('overtime', 'Overtime Settings', <label className="text-sm text-slate-600 flex items-center gap-2 mt-2"><input type="checkbox" checked={employeeForm.overtimeEligible !== false} onChange={(e) => setEmployeeForm(prev => ({ ...prev, overtimeEligible: e.target.checked }))} /> Overtime Eligible</label>)}
+                {section('commission', 'Commission & Bonus', <label className="text-sm text-slate-600 flex items-center gap-2 mt-2"><input type="checkbox" checked={employeeForm.commissionEligible === true} onChange={(e) => setEmployeeForm(prev => ({ ...prev, commissionEligible: e.target.checked }))} /> Commission Eligible</label>)}
+                {section('allowances', 'Allowances', <>
+                  {numInput('Travel Allowance', 'travelAllowance')}
+                  {numInput('Cell Phone Allowance', 'cellPhoneAllowance')}
+                  {numInput('Housing Allowance', 'housingAllowance')}
+                  {numInput('Shift Differential', 'shiftDifferential')}
+                  {numInput('Acting Allowance', 'actingAllowance')}
+                  {numInput('Standby Allowance', 'standbyAllowance')}
+                  {numInput('Tool/Uniform Allowance', 'toolUniformAllowance')}
+                </>)}
+                {section('retirement', 'Retirement Fund', <>
+                  <label className="text-sm text-slate-600">Type<select className="mt-1 w-full border rounded-lg px-3 py-2" value={employeeForm.retirementFundType} onChange={(e) => setEmployeeForm(prev => ({ ...prev, retirementFundType: e.target.value }))}><option>None</option><option>Provident Fund</option><option>Pension Fund</option></select></label>
+                  {numInput('Employee %', 'retirementEmployeePercent')}
+                  {numInput('Employer %', 'retirementEmployerPercent')}
+                </>)}
+                {section('medical', 'Medical Aid', <>
+                  {textInput('Scheme', 'medicalAidScheme')}
+                  {textInput('Plan', 'medicalAidPlan')}
+                  {numInput('Employee Contribution', 'medicalAidEmployee')}
+                  {numInput('Employer Contribution', 'medicalAidEmployer')}
+                  {numInput('Dependants', 'medicalAidDependants')}
+                  {numInput('Gap Cover', 'gapCover')}
+                </>)}
+                {section('insurance', 'Insurance & Benefits', <>
+                  {numInput('Group Life Cover', 'groupLifeCover')}
+                  {numInput('Disability Cover', 'disabilityCover')}
+                  {numInput('Funeral Cover', 'funeralCover')}
+                  {numInput('Education Policy', 'educationPolicy')}
+                </>)}
+                {section('deductions', 'Other Deductions', <>
+                  {numInput('Union Fees', 'unionFees')}
+                  {numInput('Garnishee Order', 'garnisheeOrder')}
+                  {numInput('Loan Repayment', 'loanRepayment')}
+                </>)}
+                {section('car', 'Company Car Fringe Benefit', <>
+                  <label className="text-sm text-slate-600 flex items-center gap-2 mt-2"><input type="checkbox" checked={employeeForm.hasCompanyCar === true} onChange={(e) => setEmployeeForm(prev => ({ ...prev, hasCompanyCar: e.target.checked }))} /> Has Company Car</label>
+                  {numInput('Car Determined Value', 'carDeterminedValue')}
+                  <label className="text-sm text-slate-600 flex items-center gap-2 mt-2"><input type="checkbox" checked={employeeForm.carMaintenancePlan === true} onChange={(e) => setEmployeeForm(prev => ({ ...prev, carMaintenancePlan: e.target.checked }))} /> Maintenance plan included</label>
+                  <label className="text-sm text-slate-600">Car Fringe Benefit (auto)<input readOnly className="mt-1 w-full border rounded-lg px-3 py-2 bg-slate-100" value={fmtR((Number(employeeForm.carDeterminedValue || 0) * (employeeForm.carMaintenancePlan ? 0.0325 : 0.035)) / 12)} /></label>
+                </>)}
+                {section('leave', 'Leave Setup', <>
+                  {numInput('Annual Leave Entitlement', 'annualLeaveEntitlement')}
+                  {numInput('Annual Leave Opening Balance', 'annualLeaveBalance')}
+                  {textInput('Sick Leave Cycle Start', 'sickLeaveCycleStart', 'date')}
+                  {numInput('Sick Leave Taken (cycle)', 'sickLeaveTaken')}
+                  {numInput('Family Responsibility Taken', 'familyResponsibilityTaken')}
+                </>)}
+                {section('banking', 'Banking', <>
+                  {textInput('Bank Name', 'bankName')}
+                  {textInput('Bank Account Last 4', 'bankAccountLast4')}
+                  {textInput('Bank Branch Code', 'bankBranchCode')}
+                </>)}
+
+                <div className="mt-4 flex justify-end gap-2">
+                  <button className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700" onClick={() => { setShowEmployeeForm(false); setEditingEmployee(null); }}>Cancel</button>
+                  <button className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white" onClick={handleSaveEmployee}>Save</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activePayrollTab === 'run' && (
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+          <div className="flex flex-wrap gap-3 items-end">
+            <label className="text-sm text-slate-600">Month<select className="mt-1 border rounded-lg px-3 py-2" value={payrollMonth} onChange={(e) => setPayrollMonth(Number(e.target.value))}>{monthNames.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select></label>
+            <label className="text-sm text-slate-600">Year<input className="mt-1 border rounded-lg px-3 py-2" type="number" value={payrollYear} onChange={(e) => setPayrollYear(Number(e.target.value || now.getFullYear()))} /></label>
+            <button className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white" onClick={calculateAllPayroll}>Calculate All</button>
+            <button className="px-4 py-2 rounded-lg text-sm font-medium bg-emerald-600 text-white" onClick={approveAndSavePayroll}>Approve & Save</button>
+            <button className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white" onClick={printAllPayslips}>Print All Payslips</button>
+          </div>
+
+          {validationErrors.length > 0 && <div className="p-3 rounded-lg bg-red-100 text-red-700 text-sm">{validationErrors.map((e, i) => <div key={i}>{e}</div>)}</div>}
+          {leaveWarnings.length > 0 && <div className="p-3 rounded-lg bg-amber-100 text-amber-800 text-sm">{leaveWarnings.map((w, i) => <div key={i}>{w}</div>)}</div>}
+
+          <div className="overflow-x-auto border rounded-xl">
+            <table className="w-full text-sm min-w-[2200px]">
+              <thead className="bg-slate-50 text-slate-600"><tr>
+                <th className="px-2 py-2 text-left">Employee</th>
+                <th className="px-2 py-2 text-left">Ordinary OT Hours</th>
+                <th className="px-2 py-2 text-left">Sunday/PH OT Hours</th>
+                <th className="px-2 py-2 text-left">Commission</th>
+                <th className="px-2 py-2 text-left">Bonus / 13th</th>
+                <th className="px-2 py-2 text-left">Acting Allowance Override</th>
+                <th className="px-2 py-2 text-left">Additional Earnings</th>
+                <th className="px-2 py-2 text-left">Additional Earnings Desc</th>
+                <th className="px-2 py-2 text-left">Additional Deductions</th>
+                <th className="px-2 py-2 text-left">Additional Deductions Desc</th>
+                <th className="px-2 py-2 text-left">Annual Leave Taken</th>
+                <th className="px-2 py-2 text-left">Sick Leave Taken</th>
+                <th className="px-2 py-2 text-left">Family Resp. Leave</th>
+              </tr></thead>
+              <tbody>
+                {activeEmployees.map((emp, idx) => {
+                  const row = payrollInputs[emp.id] || {};
+                  return (
+                    <tr key={emp.id} className={`border-t ${idx % 2 ? 'bg-slate-50' : 'bg-white'}`}>
+                      <td className="px-2 py-2">{emp.firstName} {emp.lastName}</td>
+                      {['ordinaryOTHours','sundayOTHours','commission','bonus','actingAllowanceOverride','additionalEarnings','additionalDeductions','annualLeaveTaken','sickLeaveTaken','familyRespLeaveTaken'].map((f) => (
+                        <td key={f} className="px-2 py-2"><input type="number" min="0" className="border rounded px-2 py-1 w-28" value={row[f] ?? 0} onChange={(e) => updatePayrollInput(emp.id, f, Number(e.target.value || 0))} /></td>
+                      ))}
+                      <td className="px-2 py-2"><input className="border rounded px-2 py-1 w-40" value={row.additionalEarningsDesc || ''} onChange={(e) => updatePayrollInput(emp.id, 'additionalEarningsDesc', e.target.value)} /></td>
+                      <td className="px-2 py-2"><input className="border rounded px-2 py-1 w-40" value={row.additionalDeductionsDesc || ''} onChange={(e) => updatePayrollInput(emp.id, 'additionalDeductionsDesc', e.target.value)} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[1800px]">
+              <thead className="bg-slate-50 text-slate-600"><tr><th className="px-3 py-2 text-left">Employee</th><th className="px-3 py-2 text-right">Basic</th><th className="px-3 py-2 text-right">OT</th><th className="px-3 py-2 text-right">Allowances</th><th className="px-3 py-2 text-right">Gross</th><th className="px-3 py-2 text-right">PAYE</th><th className="px-3 py-2 text-right">UIF(Ee)</th><th className="px-3 py-2 text-right">Retirement</th><th className="px-3 py-2 text-right">Medical</th><th className="px-3 py-2 text-right">Other Ded.</th><th className="px-3 py-2 text-right">Net Pay</th><th className="px-3 py-2 text-right">UIF(Er)</th><th className="px-3 py-2 text-right">SDL</th><th className="px-3 py-2 text-right">Ret.(Er)</th><th className="px-3 py-2 text-right">Med.(Er)</th><th className="px-3 py-2 text-right">CTC</th><th className="px-3 py-2">Action</th></tr></thead>
+              <tbody>
+                {payrollResults.map((r, idx) => (
+                  <tr key={r.employeeId} className={`border-t ${idx % 2 ? 'bg-slate-50' : 'bg-white'}`}>
+                    <td className="px-3 py-2">{r.employeeName}</td><td className="px-3 py-2 text-right">{fmtR(r.basicSalary)}</td><td className="px-3 py-2 text-right">{fmtR(r.ordinaryOT + r.sundayOT)}</td><td className="px-3 py-2 text-right">{fmtR(r.travelAllowance + r.cellPhoneAllowance + r.housingAllowance + r.shiftDifferential + r.actingAllowance + r.standbyAllowance + r.toolUniformAllowance)}</td><td className="px-3 py-2 text-right">{fmtR(r.grossEarnings)}</td><td className="px-3 py-2 text-right">{fmtR(r.paye)}</td><td className="px-3 py-2 text-right">{fmtR(r.uifEmployee)}</td><td className="px-3 py-2 text-right">{fmtR(r.retirementEmployee)}</td><td className="px-3 py-2 text-right">{fmtR(r.medicalAidEmployee)}</td><td className="px-3 py-2 text-right">{fmtR(r.gapCover + r.groupLifeCover + r.disabilityCover + r.funeralCover + r.educationPolicy + r.unionFees + r.garnisheeOrder + r.loanRepayment + r.additionalDeductions)}</td><td className="px-3 py-2 text-right font-semibold">{fmtR(r.netPay)}</td><td className="px-3 py-2 text-right">{fmtR(r.uifEmployer)}</td><td className="px-3 py-2 text-right">{fmtR(r.sdl)}</td><td className="px-3 py-2 text-right">{fmtR(r.retirementEmployer)}</td><td className="px-3 py-2 text-right">{fmtR(r.medicalAidEmployer)}</td><td className="px-3 py-2 text-right">{fmtR(r.costToCompany)}</td>
+                    <td className="px-3 py-2"><button className="px-3 py-1 rounded-lg text-xs bg-indigo-100 text-indigo-700" onClick={() => printPayslip(r)}>Print Payslip</button></td>
+                  </tr>
+                ))}
+                {payrollResults.length > 0 && <tr className="border-t bg-slate-100 font-semibold"><td className="px-3 py-2">Totals</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.basic)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.ot)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.allowances)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.gross)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.paye)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.uifEe)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.retirementEe)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.medicalEe)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.otherDed)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.net)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.uifEr)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.sdl)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.retirementEr)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.medicalEr)}</td><td className="px-3 py-2 text-right">{fmtR(payrollTotals.ctc)}</td><td /></tr>}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="border rounded-xl p-4 bg-slate-50 text-sm space-y-1">
+            <p><b>Total PAYE Liability:</b> {fmtR(payrollTotals.paye)}</p>
+            <p><b>Total UIF Liability:</b> {fmtR(payrollTotals.uifEe + payrollTotals.uifEr)}</p>
+            <p><b>Total SDL Liability:</b> {fmtR(payrollTotals.sdl)}</p>
+            <p><b>Total Retirement Contributions:</b> {fmtR(payrollTotals.retirementEe + payrollTotals.retirementEr)}</p>
+            <p><b>Total Payroll Cost:</b> {fmtR(payrollTotals.ctc)}</p>
+            {payrollApproved && <p className="text-emerald-700 font-medium">Payroll approved and saved.</p>}
+          </div>
+        </div>
+      )}
+
+      {activePayrollTab === 'emp201' && (
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+          <div className="flex flex-wrap gap-3 items-end">
+            <label className="text-sm text-slate-600">Month<select className="mt-1 border rounded-lg px-3 py-2" value={emp201Month} onChange={(e) => setEmp201Month(Number(e.target.value))}>{monthNames.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select></label>
+            <label className="text-sm text-slate-600">Year<input className="mt-1 border rounded-lg px-3 py-2" type="number" value={emp201Year} onChange={(e) => setEmp201Year(Number(e.target.value || now.getFullYear()))} /></label>
+          </div>
+          <p className="text-amber-700 text-sm font-medium">Due by 7th of the following month.</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm"><thead className="bg-slate-50 text-slate-600"><tr><th className="px-3 py-2 text-left">Employee</th><th className="px-3 py-2 text-right">Gross</th><th className="px-3 py-2 text-right">PAYE</th><th className="px-3 py-2 text-right">UIF Ee</th><th className="px-3 py-2 text-right">UIF Er</th><th className="px-3 py-2 text-right">SDL</th><th className="px-3 py-2 text-right">Retirement</th></tr></thead><tbody>{emp201Rows.map((r, idx) => <tr key={r.id} className={`border-t ${idx % 2 ? 'bg-slate-50' : 'bg-white'}`}><td className="px-3 py-2">{r.employeeName}</td><td className="px-3 py-2 text-right">{fmtR(r.grossEarnings || r.grossSalary)}</td><td className="px-3 py-2 text-right">{fmtR(r.paye)}</td><td className="px-3 py-2 text-right">{fmtR(r.uifEmployee)}</td><td className="px-3 py-2 text-right">{fmtR(r.uifEmployer)}</td><td className="px-3 py-2 text-right">{fmtR(r.sdl)}</td><td className="px-3 py-2 text-right">{fmtR(Number(r.retirementEmployee || 0) + Number(r.retirementEmployer || 0))}</td></tr>)}<tr className="border-t bg-slate-100 font-semibold"><td className="px-3 py-2">Totals</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.gross)}</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.paye)}</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.uifEmployee)}</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.uifEmployer)}</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.sdl)}</td><td className="px-3 py-2 text-right">{fmtR(emp201Totals.retirement)}</td></tr></tbody></table>
+          </div>
+        </div>
+      )}
+
+      {activePayrollTab === 'irp5' && (
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+          <label className="text-sm text-slate-600">Tax Year Start<input className="mt-1 border rounded-lg px-3 py-2 ml-3" type="number" value={irp5Year} onChange={(e) => setIrp5Year(Number(e.target.value || now.getFullYear()))} /></label>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm"><thead className="bg-slate-50 text-slate-600"><tr><th className="px-3 py-2 text-left">Employee Name</th><th className="px-3 py-2 text-right">Total Gross</th><th className="px-3 py-2 text-right">Total PAYE</th><th className="px-3 py-2 text-right">Total UIF</th><th className="px-3 py-2 text-right">Total SDL</th></tr></thead><tbody>{Object.values(irp5Rows).map((r, idx) => <tr key={r.employeeId} className={`border-t ${idx % 2 ? 'bg-slate-50' : 'bg-white'}`}><td className="px-3 py-2">{r.employeeName}</td><td className="px-3 py-2 text-right">{fmtR(r.gross)}</td><td className="px-3 py-2 text-right">{fmtR(r.paye)}</td><td className="px-3 py-2 text-right">{fmtR(r.uif)}</td><td className="px-3 py-2 text-right">{fmtR(r.sdl)}</td></tr>)}</tbody></table>
+          </div>
+        </div>
+      )}
+
+      {activePayrollTab === 'provisional' && (
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-sm text-slate-600">Estimated Taxable Income<input className="mt-1 w-full border rounded-lg px-3 py-2" type="number" value={provEstimatedIncome} onChange={(e) => setProvEstimatedIncome(Number(e.target.value || 0))} /></label>
+            <label className="text-sm text-slate-600">Prior Year Taxable Income<input className="mt-1 w-full border rounded-lg px-3 py-2" type="number" value={provPriorYearIncome} onChange={(e) => setProvPriorYearIncome(Number(e.target.value || 0))} /></label>
+            <label className="text-sm text-slate-600">Age<input className="mt-1 w-full border rounded-lg px-3 py-2" type="number" value={provAge} onChange={(e) => setProvAge(Number(e.target.value || 0))} /></label>
+            <label className="text-sm text-slate-600">Employees Tax Already Paid<input className="mt-1 w-full border rounded-lg px-3 py-2" type="number" value={provEmployeesTaxPaid} onChange={(e) => setProvEmployeesTaxPaid(Number(e.target.value || 0))} /></label>
+            <label className="text-sm text-slate-600">Provisional Tax Year<input className="mt-1 w-full border rounded-lg px-3 py-2" type="number" value={provYear} onChange={(e) => setProvYear(Number(e.target.value || now.getFullYear()))} /></label>
+          </div>
+          <button className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white" onClick={calculateProvisional}>Calculate</button>
+          {provResult && <div className="border rounded-xl p-4 bg-slate-50 space-y-1"><p><b>Annual Tax (before rebates):</b> {fmtR(provResult.annualTaxBeforeRebates)}</p><p><b>Less: Primary Rebate:</b> {fmtR(provResult.rebates.primary)}</p><p><b>Less: Secondary Rebate:</b> {fmtR(provResult.rebates.secondary)}</p><p><b>Less: Tertiary Rebate:</b> {fmtR(provResult.rebates.tertiary)}</p><p><b>Net Annual Tax:</b> {fmtR(provResult.netAnnualTax)}</p><p><b>Less: Employees Tax Already Paid:</b> {fmtR(provResult.employeesTaxPaid)}</p><p><b>1st Provisional Payment — due 31 August {provYear}:</b> {fmtR(provResult.firstPayment)}</p><p><b>2nd Provisional Payment — due 28 February {provYear + 1}:</b> {fmtR(provResult.secondPayment)}</p>{provResult.warning80 && <p className="mt-2 px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-sm">Warning: Your estimate is below 80% of prior year income. SARS may impose penalties if actual income exceeds the estimate.</p>}</div>}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default AccountingDashboard;
