@@ -8974,14 +8974,65 @@ const PayrollView = ({ employees, saveEmployees, payslips, savePayslips, company
     const w = window.open('', '_blank');
     if (!w) return;
     w.document.write(`<html><head><title>Payslip</title><style>
-      body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-      table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-      th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+      @page { size: A4 portrait; margin: 8mm; }
+      * { box-sizing: border-box; }
+      body {
+        font-family: Arial, sans-serif;
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+        padding: 0;
+        color: #111;
+        font-size: 12px;
+        line-height: 1.2;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 6px 0 8px;
+        page-break-inside: avoid;
+      }
+      th, td {
+        border: 1px solid #333;
+        padding: 5px 6px;
+        text-align: left;
+        vertical-align: top;
+      }
       th { background: #f0f0f0; }
-      .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
-      .net-pay { font-size: 1.4em; font-weight: bold; }
-      .section-title { font-weight: bold; margin-top: 15px; background: #e8e8e8; padding: 5px; }
-      @media print { button { display: none; } }
+      .header {
+        text-align: center;
+        border-bottom: 2px solid #333;
+        padding-bottom: 6px;
+        margin-bottom: 8px;
+      }
+      .header h2 {
+        margin: 0 0 3px;
+        font-size: 18px;
+        line-height: 1.1;
+      }
+      .header p {
+        margin: 1px 0;
+        font-size: 11px;
+      }
+      h3 {
+        margin: 6px 0;
+        font-size: 14px;
+      }
+      .net-pay { font-size: 1.1em; font-weight: bold; }
+      .section-title {
+        font-weight: bold;
+        margin-top: 8px;
+        background: #e8e8e8;
+        padding: 4px 6px;
+        border: 1px solid #333;
+        border-bottom: none;
+      }
+      .print-btn-wrap {
+        margin-top: 8px;
+      }
+      @media print {
+        button { display: none; }
+      }
     </style></head><body>
       <div class="header">
         <h2>${company?.name || 'Company'}</h2>
@@ -9007,7 +9058,7 @@ const PayrollView = ({ employees, saveEmployees, payslips, savePayslips, company
       <table><tr><th>Description</th><th style="text-align:right">Amount</th></tr>
         <tr><td>UIF (Employer)</td><td style="text-align:right">${fmtR(result.uifEmployer)}</td></tr>
         <tr><td>SDL</td><td style="text-align:right">${fmtR(result.sdl)}</td></tr></table>
-      <button onclick="window.print()">Print</button>
+      <div class="print-btn-wrap"><button onclick="window.print()">Print</button></div>
     </body></html>`);
     w.document.close();
   };
