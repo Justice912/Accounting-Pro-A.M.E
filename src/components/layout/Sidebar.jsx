@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  Plus, Search, Settings, Home, X,
+  Plus, Search, Settings, Home, X, Receipt,
 } from 'lucide-react';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import ConversationList from '../sidebar/ConversationList';
@@ -146,6 +146,15 @@ export default function Sidebar() {
         >
           <Settings className="w-4 h-4" />
           Settings
+        </button>
+        <button
+          onClick={() => navigate('/vat-capture')}
+          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+            location.pathname === '/vat-capture' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-800/60 hover:text-white'
+          }`}
+        >
+          <Receipt className="w-4 h-4" />
+          VAT Capture
         </button>
       </div>
     </aside>
