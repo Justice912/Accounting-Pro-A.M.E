@@ -26,10 +26,17 @@ export default defineConfig({
   renderer: {
     root: '.',
     build: {
+      chunkSizeWarningLimit: 1300,
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'index.html')
-        }
+        },
+        output: {
+          manualChunks: {
+            vendor: ['react', 'react-dom'],
+            icons: ['lucide-react']
+          }
+        },
       }
     },
     plugins: [react()]
