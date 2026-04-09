@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield, Filter, SortAsc, TrendingUp, DollarSign, Clock, Settings } from 'lucide-react';
+import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield, Filter, SortAsc, TrendingUp, DollarSign, Clock, Settings, Receipt } from 'lucide-react';
 import AuditModule from './AuditModule';
+import VATCapture from './pages/VATCapture';
 
 // VAT Rate Options (South African VAT rates)
 const VAT_RATES = [
@@ -432,6 +433,7 @@ const AccountingDashboard = () => {
     { id: 'companies', label: 'Companies', icon: Users },
     { id: 'accounts', label: 'Accounts', icon: Wallet },
     { id: 'banking', label: 'Banking', icon: Landmark },
+    { id: 'vatcapture', label: 'VAT Capture', icon: Receipt },
     { id: 'vatrecon', label: 'VAT Recon', icon: Calculator },
     { id: 'forecast', label: 'Cash Flow', icon: TrendingUp },
     { id: 'payroll', label: 'Payroll', icon: Users },
@@ -668,6 +670,9 @@ const AccountingDashboard = () => {
             company={activeCompany}
             accounts={accounts}
           />
+        )}
+        {activeTab === 'vatcapture' && (
+          <VATCapture />
         )}
         {activeTab === 'forecast' && (
           <CashFlowForecastView
