@@ -334,7 +334,7 @@ const AccountingDashboard = () => {
       if (!loadedAccounts || loadedAccounts.length === 0) {
         setAccounts(DEFAULT_ACCOUNTS);
         // Save defaults to storage
-        window.storage.set('accounting-accounts', JSON.stringify(DEFAULT_ACCOUNTS)).catch(() => {});
+        localStorage.setItem('accounting-accounts', JSON.stringify(DEFAULT_ACCOUNTS));
       } else {
         setAccounts(loadedAccounts);
       }
