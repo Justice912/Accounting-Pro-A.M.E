@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, MessageSquare, Clock } from 'lucide-react';
+import { Sparkles, MessageSquare, Clock, Receipt } from 'lucide-react';
 import DomainCard from '../components/home/DomainCard';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 
@@ -35,6 +35,19 @@ export default function Dashboard() {
       </div>
 
       {/* Domain Cards */}
+      <div className="w-full max-w-3xl mb-4">
+        <button
+          onClick={() => navigate('/vat-capture')}
+          className="w-full flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 hover:bg-emerald-100 transition-colors"
+        >
+          <div className="text-left">
+            <p className="text-sm font-semibold text-emerald-800">New: VAT Capture Workbench</p>
+            <p className="text-xs text-emerald-700">Capture invoice lines and auto-calculate VAT totals.</p>
+          </div>
+          <Receipt className="w-5 h-5 text-emerald-700" />
+        </button>
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-3xl w-full mb-12">
         {DOMAINS.map(domain => (
           <DomainCard key={domain.id} domain={domain} onClick={handleDomainClick} />
