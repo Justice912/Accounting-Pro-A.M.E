@@ -75,6 +75,23 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('terminal:execute', command, cwd, timeout),
   killProcess: (pid) => ipcRenderer.invoke('terminal:kill', pid),
 
+  // VAT Capture
+  vatListReceipts: (clientId, filters) => ipcRenderer.invoke('vat:receipt:list', clientId, filters),
+  vatGetReceipt: (id) => ipcRenderer.invoke('vat:receipt:get', id),
+  vatSaveReceipt: (data) => ipcRenderer.invoke('vat:receipt:save', data),
+  vatDeleteReceipt: (id) => ipcRenderer.invoke('vat:receipt:delete', id),
+  vatUpdateReceiptStatus: (id, status, notes) => ipcRenderer.invoke('vat:receipt:update-status', id, status, notes),
+  vatBulkStatus: (ids, status) => ipcRenderer.invoke('vat:receipt:bulk-status', ids, status),
+  vatImportImage: () => ipcRenderer.invoke('vat:receipt:import-image'),
+  vatExtractReceipt: (imagePath) => ipcRenderer.invoke('vat:receipt:extract', imagePath),
+  vatVerifyVatNumber: (vatNumber) => ipcRenderer.invoke('vat:verify-vat', vatNumber),
+  vatImportBank: (clientId) => ipcRenderer.invoke('vat:bank:import', clientId),
+  vatListBankTxns: (clientId, filters) => ipcRenderer.invoke('vat:bank:list', clientId, filters),
+  vatMatchBankTxn: (txnId, receiptId) => ipcRenderer.invoke('vat:bank:match', txnId, receiptId),
+  vatGenerateSchedule: (clientId, period) => ipcRenderer.invoke('vat:schedule:generate', clientId, period),
+  vatGetSchedule: (clientId, period) => ipcRenderer.invoke('vat:schedule:get', clientId, period),
+  vatExportExcel: (clientId, period) => ipcRenderer.invoke('vat:export:excel', clientId, period),
+
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),

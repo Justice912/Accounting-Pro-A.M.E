@@ -26,6 +26,7 @@ import registerMemoryHandlers from './ipc/memory-handlers.js';
 import registerSearchHandlers from './ipc/search-handlers.js';
 import registerSkillHandlers from './ipc/skill-handlers.js';
 import registerClientHandlers from './ipc/client-handlers.js';
+import registerVatHandlers from './ipc/vat-handlers.js';
 
 // Menu
 import createMenu from './menu.js';
@@ -124,6 +125,7 @@ function registerAllHandlers() {
   registerSearchHandlers(ipcMain, services);
   registerSkillHandlers(ipcMain, services);
   registerClientHandlers(ipcMain, services);
+  registerVatHandlers(ipcMain, services);
 
   // App info handlers
   ipcMain.handle('app:version', () => {

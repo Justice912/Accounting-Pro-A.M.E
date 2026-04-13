@@ -134,6 +134,87 @@ CREATE TABLE IF NOT EXISTS skills (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS vat_receipts (
+  id TEXT PRIMARY KEY,
+  client_id TEXT REFERENCES clients(id),
+  capture_method TEXT DEFAULT 'manual',
+  image_path TEXT,
+  supplier_name TEXT,
+  supplier_vat_number TEXT,
+  supplier_address TEXT,
+  invoice_number TEXT,
+  invoice_date TEXT,
+  total_incl_vat REAL DEFAULT 0,
+  vat_amount REAL DEFAULT 0,
+  total_excl_vat REAL DEFAULT 0,
+  line_items TEXT,
+  vat_number_valid INTEGER,
+  maths_valid INTEGER,
+  ai_confidence REAL,
+  flags TEXT DEFAULT '[]',
+  expense_category TEXT DEFAULT 'General',
+  vat_type TEXT DEFAULT 'standard',
+  vat_period TEXT,
+  status TEXT DEFAULT 'pending',
+  reviewed_by TEXT,
+  reviewed_at DATETIME,
+  review_notes TEXT,
+  is_reconciled INTEGER DEFAULT 0,
+  bank_transaction_id TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS vat_bank_transactions (
+  id TEXT PRIMARY KEY,
+  client_id TEXT REFERENCES clients(id),
+  txn_date TEXT,
+  description TEXT,
+  amount REAL,
+  reference TEXT,
+  bank_name TEXT,
+  statement_period TEXT,
+  matched_receipt_id TEXT,
+  is_matched INTEGER DEFAULT 0,
+  imported_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS vat_schedules (
+  id TEXT PRIMARY KEY,
+  client_id TEXT REFERENCES clients(id),
+  period TEXT NOT NULL,
+  period_start TEXT,
+  period_end TEXT,
+  status TEXT DEFAULT 'draft',
+  input_vat_standard REAL DEFAULT 0,
+  input_vat_capital REAL DEFAULT 0,
+  input_vat_total REAL DEFAULT 0,
+  output_vat_standard REAL DEFAULT 0,
+  output_vat_total REAL DEFAULT 0,
+  net_vat REAL DEFAULT 0,
+  receipt_count INTEGER DEFAULT 0,
+  approved_count INTEGER DEFAULT 0,
+  pending_count INTEGER DEFAULT 0,
+  flagged_count INTEGER DEFAULT 0,
+  finalised_by TEXT,
+  finalised_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS vat_verified_vendors (
+  vat_number TEXT PRIMARY KEY,
+  vendor_name TEXT,
+  is_valid INTEGER,
+  verified_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_vat_receipts_client ON vat_receipts(client_id);
+CREATE INDEX IF NOT EXISTS idx_vat_receipts_period ON vat_receipts(vat_period);
+CREATE INDEX IF NOT EXISTS idx_vat_receipts_status ON vat_receipts(status);
+CREATE INDEX IF NOT EXISTS idx_vat_bank_client ON vat_bank_transactions(client_id);
+CREATE INDEX IF NOT EXISTS idx_vat_schedules_client ON vat_schedules(client_id);
 `;
 
 function getDbPath() {
