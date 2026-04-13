@@ -174,25 +174,34 @@ export default function VATCapture() {
 
   // ── Load clients ─────────────────────────────────────────────────────────
   useEffect(() => {
-    api.listClients().then(list => {
-      setClients(list || []);
-      if (list?.length && !selectedClientId) {
-        setSelectedClientId(list[0].id);
-      }
-    });
+    if (!api?.listClients) return;
+    api.listClients()
+      .then(list => {
+        setClients(list || []);
+        if (list?.length && !selectedClientId) {
+          setSelectedClientId(list[0].id);
+        }
+      })
+      .catch(err => console.error('[VATCapture] listClients error:', err));
   }, []);
 
   // ── Load receipts when client/period/filter changes ──────────────────────
   const loadReceipts = useCallback(async () => {
-    if (!selectedClientId) return;
+    if (!selectedClientId || !api?.vatListReceipts) return;
     setLoadingReceipts(true);
-    const list = await api.vatListReceipts(selectedClientId, {
-      period: selectedPeriod,
-      status: statusFilter !== 'all' ? statusFilter : undefined,
-    });
-    setReceipts(list || []);
-    setSelectedIds(new Set());
-    setLoadingReceipts(false);
+    try {
+      const list = await api.vatListReceipts(selectedClientId, {
+        period: selectedPeriod,
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+      });
+      setReceipts(list || []);
+      setSelectedIds(new Set());
+    } catch (err) {
+      console.error('[VATCapture] loadReceipts error:', err);
+      setReceipts([]);
+    } finally {
+      setLoadingReceipts(false);
+    }
   }, [selectedClientId, selectedPeriod, statusFilter]);
 
   useEffect(() => { loadReceipts(); }, [loadReceipts]);
@@ -200,34 +209,44 @@ export default function VATCapture() {
   // ── Load receipt detail ───────────────────────────────────────────────────
   useEffect(() => {
     if (!selectedReceiptId) { setSelectedReceipt(null); return; }
-    api.vatGetReceipt(selectedReceiptId).then(r => {
-      if (r) {
-        setSelectedReceipt(r);
-        setEditDraft({
-          supplier_name: r.supplier_name || '',
-          supplier_vat_number: r.supplier_vat_number || '',
-          supplier_address: r.supplier_address || '',
-          invoice_number: r.invoice_number || '',
-          invoice_date: r.invoice_date || '',
-          total_incl_vat: r.total_incl_vat,
-          vat_amount: r.vat_amount,
-          total_excl_vat: r.total_excl_vat,
-          expense_category: r.expense_category || 'General',
-          vat_type: r.vat_type || 'standard',
-          review_notes: r.review_notes || '',
-        });
-      }
-    });
+    if (!api?.vatGetReceipt) return;
+    api.vatGetReceipt(selectedReceiptId)
+      .then(r => {
+        if (r) {
+          setSelectedReceipt(r);
+          setEditDraft({
+            supplier_name: r.supplier_name || '',
+            supplier_vat_number: r.supplier_vat_number || '',
+            supplier_address: r.supplier_address || '',
+            invoice_number: r.invoice_number || '',
+            invoice_date: r.invoice_date || '',
+            total_incl_vat: r.total_incl_vat,
+            vat_amount: r.vat_amount,
+            total_excl_vat: r.total_excl_vat,
+            expense_category: r.expense_category || 'General',
+            vat_type: r.vat_type || 'standard',
+            review_notes: r.review_notes || '',
+          });
+        }
+      })
+      .catch(err => console.error('[VATCapture] vatGetReceipt error:', err));
   }, [selectedReceiptId]);
 
   // ── Load VAT schedule ─────────────────────────────────────────────────────
   const loadSchedule = useCallback(async () => {
-    if (!selectedClientId) return;
+    if (!selectedClientId || !api?.vatGetSchedule) return;
     setLoadingSchedule(true);
-    const result = await api.vatGetSchedule(selectedClientId, selectedPeriod);
-    setSchedule(result?.schedule || null);
-    setScheduleReceipts(result?.receipts || []);
-    setLoadingSchedule(false);
+    try {
+      const result = await api.vatGetSchedule(selectedClientId, selectedPeriod);
+      setSchedule(result?.schedule || null);
+      setScheduleReceipts(result?.receipts || []);
+    } catch (err) {
+      console.error('[VATCapture] loadSchedule error:', err);
+      setSchedule(null);
+      setScheduleReceipts([]);
+    } finally {
+      setLoadingSchedule(false);
+    }
   }, [selectedClientId, selectedPeriod]);
 
   useEffect(() => {
@@ -236,13 +255,19 @@ export default function VATCapture() {
 
   // ── Load bank transactions ────────────────────────────────────────────────
   const loadBankTxns = useCallback(async () => {
-    if (!selectedClientId) return;
+    if (!selectedClientId || !api?.vatListBankTxns) return;
     setLoadingBank(true);
-    const list = await api.vatListBankTxns(selectedClientId, {
-      matched: bankFilter === 'matched' ? true : bankFilter === 'unmatched' ? false : undefined,
-    });
-    setBankTxns(list || []);
-    setLoadingBank(false);
+    try {
+      const list = await api.vatListBankTxns(selectedClientId, {
+        matched: bankFilter === 'matched' ? true : bankFilter === 'unmatched' ? false : undefined,
+      });
+      setBankTxns(list || []);
+    } catch (err) {
+      console.error('[VATCapture] loadBankTxns error:', err);
+      setBankTxns([]);
+    } finally {
+      setLoadingBank(false);
+    }
   }, [selectedClientId, bankFilter]);
 
   useEffect(() => {
