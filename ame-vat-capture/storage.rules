@@ -1,0 +1,23 @@
+rules_version = '2';
+
+// Receipt images live at: firms/{firmId}/clients/{clientId}/receipts/{receiptId}/...
+// Only accountants (full) or the owning client (create/read only) may access.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    match /firms/{firmId}/clients/{clientId}/receipts/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf');
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
