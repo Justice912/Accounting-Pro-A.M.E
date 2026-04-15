@@ -139,6 +139,18 @@ export default function registerVatHandlers(ipcMain, services) {
     }
   });
 
+  /** Global pending-receipt count across all clients — powers the sidebar badge. */
+  ipcMain.handle('vat:receipt:pending-count', async () => {
+    try {
+      const row = database.getOne(
+        "SELECT COUNT(*) AS c FROM vat_receipts WHERE status = 'pending'"
+      );
+      return { count: row?.c || 0 };
+    } catch {
+      return { count: 0 };
+    }
+  });
+
   /** Get a single receipt by ID */
   ipcMain.handle('vat:receipt:get', async (event, id) => {
     try {

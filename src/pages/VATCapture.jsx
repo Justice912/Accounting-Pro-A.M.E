@@ -196,6 +196,8 @@ export default function VATCapture() {
       });
       setReceipts(list || []);
       setSelectedIds(new Set());
+      // Mutations all call loadReceipts, so dispatching here catches every receipt change.
+      window.dispatchEvent(new Event('vat:receipts-changed'));
     } catch (err) {
       console.error('[VATCapture] loadReceipts error:', err);
       setReceipts([]);

@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // VAT Capture
   vatListReceipts: (clientId, filters) => ipcRenderer.invoke('vat:receipt:list', clientId, filters),
+  vatPendingCount: () => ipcRenderer.invoke('vat:receipt:pending-count'),
   vatGetReceipt: (id) => ipcRenderer.invoke('vat:receipt:get', id),
   vatSaveReceipt: (data) => ipcRenderer.invoke('vat:receipt:save', data),
   vatDeleteReceipt: (id) => ipcRenderer.invoke('vat:receipt:delete', id),
