@@ -267,7 +267,7 @@ export default function registerVatHandlers(ipcMain, services) {
         ],
         properties: ['openFile'],
       });
-      if (result.cancelled || !result.filePaths.length) {
+      if (result.canceled || !result.filePaths.length) {
         return { success: false, cancelled: true };
       }
       const sourcePath = result.filePaths[0];
@@ -367,8 +367,8 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
 
       const extracted = JSON.parse(cleaned);
 
-      // Post-extraction validation flags
-      const flags = computeFlags(extracted);
+      // Normalize .confidence → .ai_confidence so computeFlags can fire low_confidence.
+      const flags = computeFlags({ ...extracted, ai_confidence: extracted.confidence });
 
       // Duplicate check (same invoice_number + supplier_name already in DB)
       if (extracted.invoice_number && extracted.supplier_name) {
@@ -436,7 +436,7 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
         filters: [{ name: 'CSV Files', extensions: ['csv'] }],
         properties: ['openFile'],
       });
-      if (result.cancelled || !result.filePaths.length) {
+      if (result.canceled || !result.filePaths.length) {
         return { success: false, cancelled: true };
       }
       const csv = fs.readFileSync(result.filePaths[0], 'utf-8');
@@ -714,7 +714,7 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
         defaultPath: `VAT_Schedule_${(client?.name || clientId).replace(/[/\\?%*:|"<>]/g, '_')}_${period}.xlsx`,
         filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }],
       });
-      if (saveResult.cancelled) return { success: false, cancelled: true };
+      if (saveResult.canceled || !saveResult.filePath) return { success: false, cancelled: true };
       await wb.xlsx.writeFile(saveResult.filePath);
       return { success: true, filePath: saveResult.filePath };
     } catch (e) {
