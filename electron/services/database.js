@@ -1,6 +1,8 @@
 import path from 'path';
 import crypto from 'crypto';
-import { app } from 'electron';
+import electron from 'electron';
+
+const { app } = electron;
 
 let db = null;
 
@@ -234,6 +236,23 @@ function getDbPath() {
   return path.join(app.getPath('userData'), 'database.sqlite');
 }
 
+const VAT_REMINDER_STATE_INDEX_SQL = 'CREATE UNIQUE INDEX IF NOT EXISTS idx_vat_reminder_state_period ON vat_reminder_state(client_id, vat_period, rule_key)';
+
+export function ensureVatReminderStateIndex(database = getDb()) {
+  const indexRows = database.prepare("PRAGMA index_list('vat_reminder_state')").all();
+  const existing = indexRows.find(row => row.name === 'idx_vat_reminder_state_period');
+
+  if (existing && Number(existing.unique) === 1) {
+    return;
+  }
+
+  if (existing) {
+    database.exec('DROP INDEX IF EXISTS idx_vat_reminder_state_period');
+  }
+
+  database.exec(VAT_REMINDER_STATE_INDEX_SQL);
+}
+
 async function initialize() {
   const Database = (await import('better-sqlite3')).default;
   const dbPath = getDbPath();
@@ -246,6 +265,7 @@ async function initialize() {
 
   // Run migrations / create tables
   db.exec(SCHEMA);
+  ensureVatReminderStateIndex(db);
 
   // Migration: add workflow_type column to conversations if missing
   const convCols = db.prepare("PRAGMA table_info('conversations')").all();
@@ -327,4 +347,5 @@ export default {
   insert,
   close,
   getDbPath,
+  ensureVatReminderStateIndex,
 };

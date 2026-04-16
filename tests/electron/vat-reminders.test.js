@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import {
   applyReminderState,
   buildReminderCandidates,
   parseFlags,
 } from '../../electron/services/vat-reminders.js';
+import { ensureVatReminderStateIndex } from '../../electron/services/database.js';
 
 test('buildReminderCandidates returns VAT reminder rules in priority order', () => {
   const reminders = buildReminderCandidates({
@@ -362,11 +362,51 @@ test('dismissed schedule_stale reminder resurfaces when approved values change b
   );
 });
 
-test('vat reminder state schema enforces one row per client period and rule key', () => {
-  const schema = readFileSync(new URL('../../electron/services/database.js', import.meta.url), 'utf8');
+test('ensureVatReminderStateIndex rebuilds a legacy non-unique reminder index as unique', () => {
+  const execCalls = [];
+  const fakeDb = {
+    prepare(sql) {
+      assert.equal(sql, "PRAGMA index_list('vat_reminder_state')");
+      return {
+        all() {
+          return [
+            { name: 'idx_vat_reminder_state_period', unique: 0 },
+          ];
+        },
+      };
+    },
+    exec(sql) {
+      execCalls.push(sql);
+    },
+  };
 
-  assert.match(
-    schema,
-    /CREATE UNIQUE INDEX IF NOT EXISTS idx_vat_reminder_state_period\s+ON vat_reminder_state\(client_id,\s*vat_period,\s*rule_key\)/,
-  );
+  ensureVatReminderStateIndex(fakeDb);
+
+  assert.deepEqual(execCalls, [
+    'DROP INDEX IF EXISTS idx_vat_reminder_state_period',
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_vat_reminder_state_period ON vat_reminder_state(client_id, vat_period, rule_key)',
+  ]);
+});
+
+test('ensureVatReminderStateIndex leaves an already unique reminder index alone', () => {
+  const execCalls = [];
+  const fakeDb = {
+    prepare(sql) {
+      assert.equal(sql, "PRAGMA index_list('vat_reminder_state')");
+      return {
+        all() {
+          return [
+            { name: 'idx_vat_reminder_state_period', unique: 1 },
+          ];
+        },
+      };
+    },
+    exec(sql) {
+      execCalls.push(sql);
+    },
+  };
+
+  ensureVatReminderStateIndex(fakeDb);
+
+  assert.deepEqual(execCalls, []);
 });
