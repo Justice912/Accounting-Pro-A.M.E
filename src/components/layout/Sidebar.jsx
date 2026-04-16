@@ -59,9 +59,10 @@ export default function Sidebar() {
 
   // Pending-receipt badge: refetch on route change and on `vat:receipts-changed` events from VATCapture.
   const [vatPending, setVatPending] = useState(0);
+  const [vatReminders, setVatReminders] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    const refresh = async () => {
+    const refreshPending = async () => {
       if (!window.api?.vatPendingCount) return;
       try {
         const res = await window.api.vatPendingCount();
@@ -70,12 +71,27 @@ export default function Sidebar() {
         if (!cancelled) setVatPending(0);
       }
     };
-    refresh();
-    const onChanged = () => refresh();
+    const refreshReminders = async () => {
+      if (!window.api?.vatReminderCount) return;
+      try {
+        const res = await window.api.vatReminderCount();
+        if (!cancelled) setVatReminders(res?.count || 0);
+      } catch {
+        if (!cancelled) setVatReminders(0);
+      }
+    };
+    refreshPending();
+    refreshReminders();
+    const onChanged = () => {
+      refreshPending();
+      refreshReminders();
+    };
     window.addEventListener('vat:receipts-changed', onChanged);
+    window.addEventListener('vat:reminders-changed', onChanged);
     return () => {
       cancelled = true;
       window.removeEventListener('vat:receipts-changed', onChanged);
+      window.removeEventListener('vat:reminders-changed', onChanged);
     };
   }, [location.pathname]);
 
@@ -177,14 +193,24 @@ export default function Sidebar() {
         >
           <Receipt className="w-4 h-4" />
           <span>VAT Capture</span>
-          {vatPending > 0 && (
-            <span
-              title={`${vatPending} pending receipt${vatPending === 1 ? '' : 's'}`}
-              className="ml-auto min-w-[20px] px-1.5 py-0.5 rounded-full bg-amber-500 text-[10px] font-semibold text-slate-900 text-center leading-none"
-            >
-              {vatPending > 99 ? '99+' : vatPending}
-            </span>
-          )}
+          <span className="ml-auto flex items-center gap-1.5">
+            {vatReminders > 0 && (
+              <span
+                title={`${vatReminders} active VAT reminder${vatReminders === 1 ? '' : 's'}`}
+                className="min-w-[18px] rounded-full bg-rose-500 px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-white"
+              >
+                {vatReminders > 99 ? '99+' : vatReminders}
+              </span>
+            )}
+            {vatPending > 0 && (
+              <span
+                title={`${vatPending} pending receipt${vatPending === 1 ? '' : 's'}`}
+                className="min-w-[20px] rounded-full bg-amber-500 px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-slate-900"
+              >
+                {vatPending > 99 ? '99+' : vatPending}
+              </span>
+            )}
+          </span>
         </button>
       </div>
     </aside>

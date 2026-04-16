@@ -6,6 +6,7 @@ import {
   ArrowLeft, AlertTriangle, Shield, ShieldCheck, ShieldOff,
   FileText, Banknote, BarChart3, X, Save, Camera,
 } from 'lucide-react';
+import { getSnoozeChoices, getVisibleReminders } from './vatReminderViewModel.js';
 
 // ── Design tokens (matching spec) ────────────────────────────────────────────
 const STATUS = {
@@ -123,6 +124,110 @@ function Toast({ message, type = 'info', onClose }) {
   );
 }
 
+function VatReminderStrip({ reminders, onAction, onDismiss, onSnooze }) {
+  const { items, overflowCount } = getVisibleReminders(reminders);
+  if (!items.length) return null;
+
+  return (
+    <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 px-6 py-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-700" />
+          <span className="text-sm font-semibold text-amber-900">VAT reminders</span>
+        </div>
+        {overflowCount > 0 && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+            +{overflowCount} more
+          </span>
+        )}
+      </div>
+      <div className="grid gap-2 xl:grid-cols-3">
+        {items.map(reminder => (
+          <VatReminderCard
+            key={reminder.ruleKey}
+            reminder={reminder}
+            onAction={onAction}
+            onDismiss={onDismiss}
+            onSnooze={onSnooze}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VatReminderCard({ reminder, onAction, onDismiss, onSnooze }) {
+  const [snoozeChoice, setSnoozeChoice] = useState(getSnoozeChoices()[0]);
+  const iconStyles = {
+    error: { Icon: AlertCircle, ring: 'bg-red-100 text-red-700', border: 'border-red-200', title: 'text-red-900', body: 'text-red-700', button: 'bg-red-600 hover:bg-red-500' },
+    warning: { Icon: AlertTriangle, ring: 'bg-amber-100 text-amber-700', border: 'border-amber-200', title: 'text-amber-900', body: 'text-amber-700', button: 'bg-amber-600 hover:bg-amber-500' },
+    info: { Icon: Clock, ring: 'bg-sky-100 text-sky-700', border: 'border-sky-200', title: 'text-sky-900', body: 'text-sky-700', button: 'bg-sky-600 hover:bg-sky-500' },
+  };
+  const config = iconStyles[reminder.severity] || iconStyles.info;
+  const Icon = config.Icon;
+  const title = reminder.title || reminder.ruleKey.replace(/_/g, ' ');
+  const message = reminder.message || '';
+  const actionLabel = reminder.ruleKey === 'flagged_receipts'
+    ? 'Focus receipt'
+    : reminder.ruleKey === 'period_closing'
+      ? 'Review period'
+      : reminder.actionTab === 'schedule' || reminder.ruleKey === 'schedule_missing' || reminder.ruleKey === 'schedule_stale'
+        ? 'Open schedule'
+        : 'Review receipts';
+
+  return (
+    <div className={`rounded-xl border bg-white p-3 shadow-sm ${config.border}`}>
+      <div className="flex gap-3">
+        <div className={`mt-0.5 flex h-8 w-8 items-center justify-center rounded-full ${config.ring}`}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className={`truncate text-sm font-semibold ${config.title}`}>{title}</div>
+              <div className={`mt-0.5 text-xs ${config.body}`}>{message}</div>
+            </div>
+            {reminder.count > 1 && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                {reminder.count}
+              </span>
+            )}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => onAction(reminder)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors ${config.button}`}
+            >
+              {actionLabel}
+            </button>
+            <select
+              value={snoozeChoice}
+              onChange={e => setSnoozeChoice(e.target.value)}
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700"
+            >
+              {getSnoozeChoices().map(choice => (
+                <option key={choice} value={choice}>{choice}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => onSnooze(reminder, snoozeChoice)}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Snooze
+            </button>
+            <button
+              onClick={() => onDismiss(reminder)}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Dismiss for this period
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function VATCapture() {
@@ -159,6 +264,7 @@ export default function VATCapture() {
   const [schedule, setSchedule] = useState(null);
   const [scheduleReceipts, setScheduleReceipts] = useState([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
+  const [reminders, setReminders] = useState([]);
 
   // ─ Bank tab ─
   const [bankTxns, setBankTxns] = useState([]);
@@ -192,7 +298,6 @@ export default function VATCapture() {
     try {
       const list = await api.vatListReceipts(selectedClientId, {
         period: selectedPeriod,
-        status: statusFilter !== 'all' ? statusFilter : undefined,
       });
       setReceipts(list || []);
       setSelectedIds(new Set());
@@ -204,9 +309,27 @@ export default function VATCapture() {
     } finally {
       setLoadingReceipts(false);
     }
-  }, [selectedClientId, selectedPeriod, statusFilter]);
+  }, [selectedClientId, selectedPeriod]);
 
   useEffect(() => { loadReceipts(); }, [loadReceipts]);
+
+  const loadReminders = useCallback(async () => {
+    if (!selectedClientId || !selectedPeriod || !api?.vatGetReminders) {
+      setReminders([]);
+      return;
+    }
+    try {
+      const list = await api.vatGetReminders(selectedClientId, selectedPeriod);
+      setReminders(list || []);
+    } catch (err) {
+      console.error('[VATCapture] loadReminders error:', err);
+      setReminders([]);
+    }
+  }, [api, selectedClientId, selectedPeriod]);
+
+  useEffect(() => {
+    loadReminders();
+  }, [loadReminders, receipts, schedule, scheduleReceipts]);
 
   // ── Load receipt detail ───────────────────────────────────────────────────
   useEffect(() => {
@@ -279,13 +402,16 @@ export default function VATCapture() {
   // ── Filtered receipts ─────────────────────────────────────────────────────
   const filteredReceipts = useMemo(() => {
     const q = searchQuery.toLowerCase();
-    return receipts.filter(r =>
-      !q ||
-      (r.supplier_name || '').toLowerCase().includes(q) ||
-      (r.invoice_number || '').toLowerCase().includes(q) ||
-      (r.expense_category || '').toLowerCase().includes(q)
-    );
-  }, [receipts, searchQuery]);
+    return receipts.filter(r => {
+      if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+      return (
+        !q ||
+        (r.supplier_name || '').toLowerCase().includes(q) ||
+        (r.invoice_number || '').toLowerCase().includes(q) ||
+        (r.expense_category || '').toLowerCase().includes(q)
+      );
+    });
+  }, [receipts, searchQuery, statusFilter]);
 
   // ── Summary counts ────────────────────────────────────────────────────────
   const summary = useMemo(() => {
@@ -344,6 +470,82 @@ export default function VATCapture() {
       showToast(res?.error || 'Save failed', 'error');
     }
   }
+
+  const findFirstFlaggedReceipt = useCallback(() => {
+    return receipts.find(receipt => parseFlags(receipt.flags).length > 0) || null;
+  }, [receipts]);
+
+  const refreshReminders = useCallback(() => {
+    window.dispatchEvent(new Event('vat:reminders-changed'));
+  }, []);
+
+  const handleReminderAction = useCallback((reminder) => {
+    setActiveTab(reminder.actionTab || 'receipts');
+
+    if (reminder.ruleKey === 'flagged_receipts') {
+      const flaggedReceipt = findFirstFlaggedReceipt();
+      if (flaggedReceipt) {
+        setStatusFilter('all');
+        setSelectedReceiptId(flaggedReceipt.id);
+        setShowDetail(true);
+        setEditMode(false);
+      }
+      return;
+    }
+
+    if (reminder.actionTab === 'receipts') {
+      setStatusFilter(reminder.actionFilter || 'all');
+      setShowDetail(false);
+      setSelectedReceiptId(null);
+      setEditMode(false);
+      return;
+    }
+
+    if (reminder.actionTab === 'schedule') {
+      setSelectedReceiptId(null);
+      setShowDetail(false);
+      setEditMode(false);
+    }
+  }, [findFirstFlaggedReceipt]);
+
+  const persistReminderState = useCallback(async (reminder, action, snoozedUntil = null) => {
+    if (!api?.vatUpdateReminderState) return;
+    const result = await api.vatUpdateReminderState({
+      clientId: selectedClientId,
+      period: selectedPeriod,
+      ruleKey: reminder.ruleKey,
+      action,
+      snoozedUntil,
+      conditionSignature: reminder.conditionSignature,
+    });
+
+    if (result?.success) {
+      refreshReminders();
+      await loadReminders();
+    } else {
+      showToast(result?.error || 'Failed to update reminder', 'error');
+    }
+  }, [api, loadReminders, refreshReminders, selectedClientId, selectedPeriod, showToast]);
+
+  const handleDismissReminder = useCallback((reminder) => {
+    void persistReminderState(reminder, 'dismissed');
+  }, [persistReminderState]);
+
+  const handleSnoozeReminder = useCallback((reminder, choice) => {
+    const now = new Date();
+    let snoozedUntil = now;
+
+    if (choice === '1 day') {
+      snoozedUntil = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    } else if (choice === '3 days') {
+      snoozedUntil = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 3);
+    } else if (choice === 'until period end') {
+      const [year, month] = selectedPeriod.split('-').map(Number);
+      snoozedUntil = new Date(year, month + 1, 0);
+    }
+
+    void persistReminderState(reminder, 'snoozed', snoozedUntil.toISOString());
+  }, [persistReminderState, selectedPeriod]);
 
   // ── Capture actions ───────────────────────────────────────────────────────
   async function pickImage() {
@@ -551,14 +753,22 @@ export default function VATCapture() {
 
       {/* ── Summary cards ── */}
       {selectedClientId && (
-        <div className="flex-shrink-0 grid grid-cols-6 gap-3 px-6 py-3 bg-white border-b border-slate-200">
-          <SummaryCard label="Total" value={summary.total} icon={Receipt} />
-          <SummaryCard label="Pending" value={summary.pending} color="amber" icon={Clock} />
-          <SummaryCard label="Approved" value={summary.approved} color="green" icon={CheckCircle2} />
-          <SummaryCard label="Flagged" value={summary.flagged} color="red" icon={AlertTriangle} />
-          <SummaryCard label="Input VAT" value={toZAR(summary.inputVat)} color="blue" icon={BarChart3} />
-          <SummaryCard label="Total Purchases" value={toZAR(summary.totalIncl)} icon={Banknote} />
-        </div>
+        <>
+          <div className="flex-shrink-0 grid grid-cols-6 gap-3 px-6 py-3 bg-white border-b border-slate-200">
+            <SummaryCard label="Total" value={summary.total} icon={Receipt} />
+            <SummaryCard label="Pending" value={summary.pending} color="amber" icon={Clock} />
+            <SummaryCard label="Approved" value={summary.approved} color="green" icon={CheckCircle2} />
+            <SummaryCard label="Flagged" value={summary.flagged} color="red" icon={AlertTriangle} />
+            <SummaryCard label="Input VAT" value={toZAR(summary.inputVat)} color="blue" icon={BarChart3} />
+            <SummaryCard label="Total Purchases" value={toZAR(summary.totalIncl)} icon={Banknote} />
+          </div>
+          <VatReminderStrip
+            reminders={reminders}
+            onAction={handleReminderAction}
+            onDismiss={handleDismissReminder}
+            onSnooze={handleSnoozeReminder}
+          />
+        </>
       )}
 
       {/* ── Main content ── */}
