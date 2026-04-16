@@ -11,6 +11,10 @@ test('getVisibleReminders returns the top three reminders and overflow count', (
   ]);
 
   assert.equal(result.items.length, 3);
+  assert.deepEqual(
+    result.items.map(item => item.ruleKey),
+    ['period_closing', 'pending_receipts', 'flagged_receipts']
+  );
   assert.equal(result.overflowCount, 1);
 });
 
