@@ -49,6 +49,23 @@ function buildReminder(ruleKey, clientId, period, count, extras = {}) {
   };
 }
 
+export function makeConditionSignature(ruleKey, items = []) {
+  return `${ruleKey}:${items.length}:${items.map(item => item?.id).filter(Boolean).sort().join('|')}`;
+}
+
+export function applyReminderState({ reminders = [], stateRows = [], now = new Date() }) {
+  const current = now instanceof Date ? now : new Date(now);
+
+  return reminders.filter(reminder => {
+    const match = stateRows.find(row => row.rule_key === reminder.ruleKey);
+    if (!match) return true;
+    if (match.condition_signature && match.condition_signature !== reminder.conditionSignature) return true;
+    if (match.state === 'dismissed') return false;
+    if (match.state === 'snoozed' && match.snoozed_until && new Date(match.snoozed_until) > current) return false;
+    return true;
+  });
+}
+
 export function buildReminderCandidates({
   clientId,
   period,
@@ -68,19 +85,27 @@ export function buildReminderCandidates({
   const reminders = [];
 
   if (pending.length) {
-    reminders.push(buildReminder('pending_receipts', clientId, period, pending.length));
+    reminders.push(buildReminder('pending_receipts', clientId, period, pending.length, {
+      conditionSignature: makeConditionSignature('pending_receipts', pending),
+    }));
   }
 
   if (flagged.length) {
-    reminders.push(buildReminder('flagged_receipts', clientId, period, flagged.length));
+    reminders.push(buildReminder('flagged_receipts', clientId, period, flagged.length, {
+      conditionSignature: makeConditionSignature('flagged_receipts', flagged),
+    }));
   }
 
   if (queried.length) {
-    reminders.push(buildReminder('queried_receipts', clientId, period, queried.length));
+    reminders.push(buildReminder('queried_receipts', clientId, period, queried.length, {
+      conditionSignature: makeConditionSignature('queried_receipts', queried),
+    }));
   }
 
   if (approved.length && !schedule) {
-    reminders.push(buildReminder('schedule_missing', clientId, period, approved.length));
+    reminders.push(buildReminder('schedule_missing', clientId, period, approved.length, {
+      conditionSignature: makeConditionSignature('schedule_missing', approved),
+    }));
   }
 
   let scheduleStale = false;
@@ -106,7 +131,9 @@ export function buildReminderCandidates({
     scheduleStale = approvedUpdatedAfterSchedule || approvedCountMismatch || vatTotalMismatch;
 
     if (scheduleStale) {
-      reminders.push(buildReminder('schedule_stale', clientId, period, approved.length || receipts.length));
+      reminders.push(buildReminder('schedule_stale', clientId, period, approved.length || receipts.length, {
+        conditionSignature: makeConditionSignature('schedule_stale', approved),
+      }));
     }
   }
 
@@ -122,10 +149,20 @@ export function buildReminderCandidates({
     (pending.length || queried.length || flagged.length || (approved.length && !schedule) || scheduleStale);
 
   if (needsClosingReminder) {
-    reminders.push(buildReminder('period_closing', clientId, period, daysToEnd));
+    const closingItems = [...pending, ...queried, ...flagged];
+    if (!schedule || scheduleStale) {
+      closingItems.push(...approved);
+    }
+    reminders.push(buildReminder('period_closing', clientId, period, daysToEnd, {
+      conditionSignature: makeConditionSignature('period_closing', closingItems),
+    }));
   }
 
-  return reminders.sort((a, b) => PRIORITY[a.ruleKey] - PRIORITY[b.ruleKey]);
+  return applyReminderState({
+    reminders: reminders.sort((a, b) => PRIORITY[a.ruleKey] - PRIORITY[b.ruleKey]),
+    stateRows: reminderStateRows,
+    now: reminderDate,
+  });
 }
 
 export { parseFlags };

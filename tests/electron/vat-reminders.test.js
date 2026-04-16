@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  applyReminderState,
   buildReminderCandidates,
   parseFlags,
 } from '../../electron/services/vat-reminders.js';
@@ -212,4 +213,57 @@ test('schedule_stale only tracks approved freshness', () => {
     reminders.some(reminder => reminder.ruleKey === 'schedule_stale'),
     false
   );
+});
+
+test('dismissed reminder stays hidden only while the signature matches', () => {
+  const reminders = [
+    { ruleKey: 'pending_receipts', count: 3, conditionSignature: 'pending:3:r1|r2|r3' },
+  ];
+  const stateRows = [
+    {
+      rule_key: 'pending_receipts',
+      state: 'dismissed',
+      condition_signature: 'pending:3:r1|r2|r3',
+      snoozed_until: null,
+    },
+  ];
+
+  assert.equal(applyReminderState({ reminders, stateRows, now: new Date('2026-04-20T10:00:00Z') }).length, 0);
+
+  const resurfaced = applyReminderState({
+    reminders: [{ ruleKey: 'pending_receipts', count: 4, conditionSignature: 'pending:4:r1|r2|r3|r4' }],
+    stateRows,
+    now: new Date('2026-04-20T10:00:00Z'),
+  });
+
+  assert.equal(resurfaced.length, 1);
+});
+
+test('buildReminderCandidates returns schedule_stale when approved receipts changed after schedule update', () => {
+  const reminders = buildReminderCandidates({
+    clientId: 'client-1',
+    period: '2026-03',
+    receipts: [
+      {
+        id: 'r3',
+        status: 'approved',
+        flags: '[]',
+        vat_amount: 150,
+        total_excl_vat: 1000,
+        total_incl_vat: 1150,
+        updated_at: '2026-04-25T09:00:00Z',
+      },
+    ],
+    schedule: {
+      id: 'client-1_2026-03',
+      updated_at: '2026-04-24T08:00:00Z',
+      approved_count: 1,
+      input_vat_total: 120,
+    },
+    reminderStateRows: [],
+    now: new Date('2026-04-26T10:00:00Z'),
+    closingDays: 7,
+  });
+
+  assert.equal(reminders.some(r => r.ruleKey === 'schedule_stale'), true);
 });

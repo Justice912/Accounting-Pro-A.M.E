@@ -210,11 +210,24 @@ CREATE TABLE IF NOT EXISTS vat_verified_vendors (
   verified_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS vat_reminder_state (
+  id TEXT PRIMARY KEY,
+  client_id TEXT REFERENCES clients(id),
+  vat_period TEXT NOT NULL,
+  rule_key TEXT NOT NULL,
+  state TEXT NOT NULL,
+  snoozed_until TEXT,
+  condition_signature TEXT,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_vat_receipts_client ON vat_receipts(client_id);
 CREATE INDEX IF NOT EXISTS idx_vat_receipts_period ON vat_receipts(vat_period);
 CREATE INDEX IF NOT EXISTS idx_vat_receipts_status ON vat_receipts(status);
 CREATE INDEX IF NOT EXISTS idx_vat_bank_client ON vat_bank_transactions(client_id);
 CREATE INDEX IF NOT EXISTS idx_vat_schedules_client ON vat_schedules(client_id);
+CREATE INDEX IF NOT EXISTS idx_vat_reminder_state_period
+ON vat_reminder_state(client_id, vat_period, rule_key);
 `;
 
 function getDbPath() {
