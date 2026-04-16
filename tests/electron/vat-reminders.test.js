@@ -5,7 +5,17 @@ import {
   buildReminderCandidates,
   parseFlags,
 } from '../../electron/services/vat-reminders.js';
-import { getVatReminderClientIdsForPeriod } from '../../electron/ipc/vat-handlers.js';
+import registerVatHandlers, { getVatReminderClientIdsForPeriod } from '../../electron/ipc/vat-handlers.js';
+
+function createFakeIpcMain() {
+  const handlers = {};
+  return {
+    handlers,
+    handle(name, handler) {
+      handlers[name] = handler;
+    },
+  };
+}
 
 test('buildReminderCandidates returns VAT reminder rules in priority order', () => {
   const reminders = buildReminderCandidates({
@@ -92,6 +102,170 @@ test('vat reminder count discovery includes schedule-only clients', () => {
 
   assert.deepEqual(getVatReminderClientIdsForPeriod(fakeDb, '2026-03'), ['client-a', 'client-b']);
   assert.equal(queries.length, 2);
+});
+
+test('vat:reminders:get returns reminder candidates from receipts, schedule, and state rows', async () => {
+  const pendingReceipts = [
+    {
+      id: 'r1',
+      status: 'pending',
+      flags: '[]',
+      updated_at: '2026-04-24T08:00:00Z',
+    },
+    {
+      id: 'r2',
+      status: 'approved',
+      flags: '[]',
+      vat_amount: 175,
+      total_excl_vat: 1000,
+      total_incl_vat: 1175,
+      updated_at: '2026-04-25T09:00:00Z',
+    },
+  ];
+  const schedule = {
+    id: 'client-1_2026-03',
+    updated_at: '2026-04-24T08:00:00Z',
+    approved_count: 1,
+    input_vat_total: 150,
+  };
+  const pendingSignature = buildReminderCandidates({
+    clientId: 'client-1',
+    period: '2026-03',
+    receipts: pendingReceipts,
+    schedule,
+    reminderStateRows: [],
+    now: new Date('2026-04-26T10:00:00Z'),
+    closingDays: 7,
+  }).find(reminder => reminder.ruleKey === 'pending_receipts').conditionSignature;
+
+  const fakeDb = {
+    getAll(sql, params) {
+      if (sql.includes('FROM vat_receipts WHERE client_id = ? AND vat_period = ?')) {
+        assert.deepEqual(params, ['client-1', '2026-03']);
+        return pendingReceipts;
+      }
+      if (sql.includes('FROM vat_reminder_state WHERE client_id = ? AND vat_period = ?')) {
+        assert.deepEqual(params, ['client-1', '2026-03']);
+        return [
+          {
+            rule_key: 'pending_receipts',
+            state: 'dismissed',
+            snoozed_until: null,
+            condition_signature: pendingSignature,
+          },
+        ];
+      }
+      return [];
+    },
+    getOne(sql, params) {
+      if (sql.includes('FROM vat_schedules WHERE client_id = ? AND period = ?')) {
+        assert.deepEqual(params, ['client-1', '2026-03']);
+        return schedule;
+      }
+      return null;
+    },
+  };
+  const ipcMain = createFakeIpcMain();
+
+  registerVatHandlers(ipcMain, { database: fakeDb, keychain: {} });
+  const reminders = await ipcMain.handlers['vat:reminders:get']({}, 'client-1', '2026-03');
+
+  assert.deepEqual(reminders.map(reminder => reminder.ruleKey), ['schedule_stale']);
+});
+
+test('vat:reminder:update-state writes reminder state through the composite key', async () => {
+  const runCalls = [];
+  const getOneCalls = [];
+  const fakeDb = {
+    run(sql, params) {
+      runCalls.push({ sql, params });
+    },
+    getOne(sql, params) {
+      getOneCalls.push({ sql, params });
+      return {
+        client_id: params[0],
+        vat_period: params[1],
+        rule_key: params[2],
+        state: 'dismissed',
+        snoozed_until: null,
+        condition_signature: 'sig-1',
+      };
+    },
+  };
+  const ipcMain = createFakeIpcMain();
+
+  registerVatHandlers(ipcMain, { database: fakeDb, keychain: {} });
+  const result = await ipcMain.handlers['vat:reminder:update-state']({}, {
+    clientId: 'client-1',
+    period: '2026-03',
+    ruleKey: 'pending_receipts',
+    action: 'dismissed',
+    conditionSignature: 'sig-1',
+  });
+
+  assert.equal(result.success, true);
+  assert.match(runCalls[0].sql, /ON CONFLICT\(client_id, vat_period, rule_key\) DO UPDATE SET/);
+  assert.deepEqual(runCalls[0].params.slice(1, 4), ['client-1', '2026-03', 'pending_receipts']);
+  assert.deepEqual(getOneCalls[0].params, ['client-1', '2026-03', 'pending_receipts']);
+});
+
+test('vat:reminders:count includes clients discovered from schedules as well as receipts', async () => {
+  const queries = [];
+  const fakeDb = {
+    getAll(sql, params) {
+      queries.push({ sql, params });
+      if (sql.includes('SELECT DISTINCT client_id FROM vat_receipts WHERE vat_period = ?')) {
+        return [{ client_id: 'client-a' }];
+      }
+      if (sql.includes('SELECT DISTINCT client_id FROM vat_schedules WHERE period = ?')) {
+        return [{ client_id: 'client-b' }];
+      }
+      if (sql.includes('FROM vat_receipts WHERE client_id = ? AND vat_period = ?') && params[0] === 'client-a') {
+        return [
+          {
+            id: 'r1',
+            status: 'pending',
+            flags: '[]',
+            updated_at: '2026-04-24T08:00:00Z',
+          },
+        ];
+      }
+      if (sql.includes('FROM vat_receipts WHERE client_id = ? AND vat_period = ?') && params[0] === 'client-b') {
+        return [];
+      }
+      if (sql.includes('FROM vat_reminder_state WHERE client_id = ? AND vat_period = ?')) {
+        return [];
+      }
+      return [];
+    },
+    getOne(sql, params) {
+      if (sql.includes('FROM vat_schedules WHERE client_id = ? AND period = ?') && params[0] === 'client-a') {
+        return null;
+      }
+      if (sql.includes('FROM vat_schedules WHERE client_id = ? AND period = ?') && params[0] === 'client-b') {
+        return {
+          id: 'client-b_2026-03',
+          updated_at: '2026-04-01T08:00:00Z',
+          approved_count: 0,
+          input_vat_total: 0,
+        };
+      }
+      return null;
+    },
+  };
+  const ipcMain = createFakeIpcMain();
+
+  registerVatHandlers(ipcMain, {
+    database: fakeDb,
+    keychain: {},
+    now: new Date('2026-04-26T10:00:00Z'),
+  });
+
+  const result = await ipcMain.handlers['vat:reminders:count']();
+
+  assert.equal(result.count, 1);
+  assert.ok(queries.some(entry => entry.sql.includes('SELECT DISTINCT client_id FROM vat_schedules WHERE period = ?')));
+  assert.ok(queries.some(entry => entry.sql.includes('FROM vat_receipts WHERE client_id = ? AND vat_period = ?') && entry.params[0] === 'client-b'));
 });
 
 test('parseFlags always returns an array', () => {

@@ -143,6 +143,12 @@ function loadReminderContext(database, clientId, period) {
   return { receipts, schedule, reminderStateRows };
 }
 
+function getHandlerNow(services = {}) {
+  if (typeof services.now === 'function') return services.now();
+  if (services.now instanceof Date) return services.now;
+  return new Date();
+}
+
 export function getVatReminderClientIdsForPeriod(database, period) {
   const receiptRows = database.getAll(
     'SELECT DISTINCT client_id FROM vat_receipts WHERE vat_period = ?',
@@ -255,7 +261,7 @@ export default function registerVatHandlers(ipcMain, services) {
 
   ipcMain.handle('vat:reminders:count', async () => {
     try {
-      const period = getCurrentVatPeriod(new Date());
+      const period = getCurrentVatPeriod(getHandlerNow(services));
       if (!period) return { count: 0 };
 
       const clientIds = getVatReminderClientIdsForPeriod(database, period);
