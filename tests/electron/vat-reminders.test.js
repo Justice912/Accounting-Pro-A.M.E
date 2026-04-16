@@ -93,7 +93,28 @@ test('schedule_stale ignores pending and query edits made after the schedule', (
   );
 });
 
-test('period_closing works across December year-end rollover', () => {
+test('period_closing uses the end of April for the Mar/Apr VAT period', () => {
+  const reminders = buildReminderCandidates({
+    clientId: 'client-1',
+    period: '2026-03',
+    receipts: [
+      {
+        id: 'r1',
+        status: 'pending',
+        flags: '[]',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+    ],
+    schedule: null,
+    reminderStateRows: [],
+    now: new Date('2026-04-23T10:00:00Z'),
+    closingDays: 7,
+  });
+
+  assert.deepEqual(reminders.map(r => r.ruleKey), ['period_closing', 'pending_receipts']);
+});
+
+test('period_closing does not fire in late January for the Nov/Dec VAT period', () => {
   const reminders = buildReminderCandidates({
     clientId: 'client-1',
     period: '2025-12',
@@ -111,7 +132,7 @@ test('period_closing works across December year-end rollover', () => {
     closingDays: 7,
   });
 
-  assert.deepEqual(reminders.map(r => r.ruleKey), ['period_closing', 'pending_receipts']);
+  assert.deepEqual(reminders.map(r => r.ruleKey), ['pending_receipts']);
 });
 
 test('period_closing includes flagged-only work during closing window', () => {

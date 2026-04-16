@@ -21,10 +21,11 @@ function getPeriodDates(period) {
   const [year, month] = String(period || '').split('-').map(Number);
   if (!year || !month) return { start: null, end: null };
 
-  const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month + 1, 0);
+  const startMonth = month % 2 === 0 ? month - 1 : month;
+  const endMonth = startMonth + 1;
+  const endDate = new Date(year, endMonth, 0);
   return {
-    start: `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-01`,
+    start: `${year}-${String(startMonth).padStart(2, '0')}-01`,
     end: `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`,
   };
 }
