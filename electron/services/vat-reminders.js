@@ -21,10 +21,11 @@ function getPeriodDates(period) {
   const [year, month] = String(period || '').split('-').map(Number);
   if (!year || !month) return { start: null, end: null };
 
-  const lastDay = new Date(year, month + 1, 0).getDate();
+  const startDate = new Date(year, month - 1, 1);
+  const endDate = new Date(year, month + 1, 0);
   return {
-    start: `${year}-${String(month).padStart(2, '0')}-01`,
-    end: `${year}-${String(month + 1).padStart(2, '0')}-${lastDay}`,
+    start: `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-01`,
+    end: `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`,
   };
 }
 
@@ -93,14 +94,8 @@ export function buildReminderCandidates({
       })
       : false;
 
-    const receiptCountMismatch =
-      schedule.receipt_count != null && Number(schedule.receipt_count) !== receipts.length;
     const approvedCountMismatch =
       schedule.approved_count != null && Number(schedule.approved_count) !== approved.length;
-    const pendingCountMismatch =
-      schedule.pending_count != null && Number(schedule.pending_count) !== pending.length;
-    const flaggedCountMismatch =
-      schedule.flagged_count != null && Number(schedule.flagged_count) !== flagged.length;
 
     const approvedVatTotal = sumBy(approved, receipt => receipt.vat_amount);
     const scheduleVatTotal =
@@ -108,13 +103,7 @@ export function buildReminderCandidates({
     const vatTotalMismatch =
       scheduleVatTotal != null && Math.abs(scheduleVatTotal - approvedVatTotal) > 0.01;
 
-    scheduleStale =
-      approvedUpdatedAfterSchedule ||
-      receiptCountMismatch ||
-      approvedCountMismatch ||
-      pendingCountMismatch ||
-      flaggedCountMismatch ||
-      vatTotalMismatch;
+    scheduleStale = approvedUpdatedAfterSchedule || approvedCountMismatch || vatTotalMismatch;
 
     if (scheduleStale) {
       reminders.push(buildReminder('schedule_stale', clientId, period, approved.length || receipts.length));
@@ -130,7 +119,7 @@ export function buildReminderCandidates({
     daysToEnd != null &&
     daysToEnd <= closingDays &&
     daysToEnd >= 0 &&
-    (pending.length || queried.length || (approved.length && !schedule) || scheduleStale);
+    (pending.length || queried.length || flagged.length || (approved.length && !schedule) || scheduleStale);
 
   if (needsClosingReminder) {
     reminders.push(buildReminder('period_closing', clientId, period, daysToEnd));
