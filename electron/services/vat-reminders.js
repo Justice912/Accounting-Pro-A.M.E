@@ -50,8 +50,33 @@ function buildReminder(ruleKey, clientId, period, count, extras = {}) {
   };
 }
 
-export function makeConditionSignature(ruleKey, items = []) {
-  return `${ruleKey}:${items.length}:${items.map(item => item?.id).filter(Boolean).sort().join('|')}`;
+function stableFingerprint(value) {
+  if (value == null) return 'null';
+  if (Array.isArray(value)) return `[${value.map(stableFingerprint).join(',')}]`;
+  if (typeof value !== 'object') return JSON.stringify(value);
+
+  return `{${Object.keys(value)
+    .sort()
+    .map(key => `${JSON.stringify(key)}:${stableFingerprint(value[key])}`)
+    .join(',')}}`;
+}
+
+function fingerprintItem(item) {
+  if (item?.signature) return String(item.signature);
+
+  return stableFingerprint({
+    id: item?.id ?? null,
+    status: item?.status ?? null,
+    updated_at: item?.updated_at ?? null,
+    vat_amount: item?.vat_amount ?? null,
+    total_excl_vat: item?.total_excl_vat ?? null,
+    total_incl_vat: item?.total_incl_vat ?? null,
+    flags: parseFlags(item?.flags).slice().sort(),
+  });
+}
+
+export function makeConditionSignature(ruleKey, items = [], context = {}) {
+  return `${ruleKey}:${items.length}:${items.map(fingerprintItem).sort().join('|')}:${stableFingerprint(context)}`;
 }
 
 export function applyReminderState({ reminders = [], stateRows = [], now = new Date() }) {
@@ -76,8 +101,6 @@ export function buildReminderCandidates({
   now = new Date(),
   closingDays = 7,
 }) {
-  void reminderStateRows;
-
   const reminderDate = now instanceof Date ? now : new Date(now);
   const pending = receipts.filter(receipt => receipt.status === 'pending');
   const queried = receipts.filter(receipt => receipt.status === 'query');
@@ -133,7 +156,12 @@ export function buildReminderCandidates({
 
     if (scheduleStale) {
       reminders.push(buildReminder('schedule_stale', clientId, period, approved.length || receipts.length, {
-        conditionSignature: makeConditionSignature('schedule_stale', approved),
+        conditionSignature: makeConditionSignature('schedule_stale', approved, {
+          approvedCount: schedule.approved_count ?? null,
+          inputVatTotal: schedule.input_vat_total ?? null,
+          receiptCount: schedule.receipt_count ?? null,
+          scheduleUpdatedAt: schedule.updated_at ?? null,
+        }),
       }));
     }
   }

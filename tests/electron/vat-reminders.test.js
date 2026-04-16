@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   applyReminderState,
   buildReminderCandidates,
@@ -287,4 +288,85 @@ test('buildReminderCandidates returns schedule_stale when approved receipts chan
   });
 
   assert.equal(reminders.some(r => r.ruleKey === 'schedule_stale'), true);
+});
+
+test('dismissed schedule_stale reminder resurfaces when approved values change but ids do not', () => {
+  const staleBefore = buildReminderCandidates({
+    clientId: 'client-1',
+    period: '2026-03',
+    receipts: [
+      {
+        id: 'r3',
+        status: 'approved',
+        flags: '[]',
+        vat_amount: 150,
+        total_excl_vat: 1000,
+        total_incl_vat: 1150,
+        updated_at: '2026-04-25T09:00:00Z',
+      },
+    ],
+    schedule: {
+      id: 'client-1_2026-03',
+      updated_at: '2026-04-24T08:00:00Z',
+      approved_count: 1,
+      input_vat_total: 150,
+    },
+    reminderStateRows: [],
+    now: new Date('2026-04-26T10:00:00Z'),
+    closingDays: 7,
+  }).find(reminder => reminder.ruleKey === 'schedule_stale');
+
+  const stateRows = [
+    {
+      rule_key: 'schedule_stale',
+      state: 'dismissed',
+      condition_signature: staleBefore.conditionSignature,
+      snoozed_until: null,
+      updated_at: '2026-04-26T10:00:00Z',
+    },
+  ];
+
+  const staleAfter = buildReminderCandidates({
+    clientId: 'client-1',
+    period: '2026-03',
+    receipts: [
+      {
+        id: 'r3',
+        status: 'approved',
+        flags: '[]',
+        vat_amount: 175,
+        total_excl_vat: 1000,
+        total_incl_vat: 1175,
+        updated_at: '2026-04-25T09:00:00Z',
+      },
+    ],
+    schedule: {
+      id: 'client-1_2026-03',
+      updated_at: '2026-04-24T08:00:00Z',
+      approved_count: 1,
+      input_vat_total: 150,
+    },
+    reminderStateRows: [],
+    now: new Date('2026-04-26T10:00:00Z'),
+    closingDays: 7,
+  }).find(reminder => reminder.ruleKey === 'schedule_stale');
+
+  assert.notEqual(staleBefore.conditionSignature, staleAfter.conditionSignature);
+  assert.equal(
+    applyReminderState({
+      reminders: [staleAfter],
+      stateRows,
+      now: new Date('2026-04-26T10:00:00Z'),
+    }).length,
+    1
+  );
+});
+
+test('vat reminder state schema enforces one row per client period and rule key', () => {
+  const schema = readFileSync(new URL('../../electron/services/database.js', import.meta.url), 'utf8');
+
+  assert.match(
+    schema,
+    /CREATE UNIQUE INDEX IF NOT EXISTS idx_vat_reminder_state_period\s+ON vat_reminder_state\(client_id,\s*vat_period,\s*rule_key\)/,
+  );
 });

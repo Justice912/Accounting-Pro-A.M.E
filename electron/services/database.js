@@ -226,7 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_vat_receipts_period ON vat_receipts(vat_period);
 CREATE INDEX IF NOT EXISTS idx_vat_receipts_status ON vat_receipts(status);
 CREATE INDEX IF NOT EXISTS idx_vat_bank_client ON vat_bank_transactions(client_id);
 CREATE INDEX IF NOT EXISTS idx_vat_schedules_client ON vat_schedules(client_id);
-CREATE INDEX IF NOT EXISTS idx_vat_reminder_state_period
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vat_reminder_state_period
 ON vat_reminder_state(client_id, vat_period, rule_key);
 `;
 
