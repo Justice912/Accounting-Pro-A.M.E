@@ -6,7 +6,12 @@ import {
   ArrowLeft, AlertTriangle, Shield, ShieldCheck, ShieldOff,
   FileText, Banknote, BarChart3, X, Save, Camera,
 } from 'lucide-react';
-import { getSnoozeChoices, getVisibleReminders } from './vatReminderViewModel.js';
+import {
+  getReminderActionState,
+  getSnoozeChoices,
+  getSnoozeUntilPeriodEnd,
+  getVisibleReminders,
+} from './vatReminderViewModel.js';
 
 // ── Design tokens (matching spec) ────────────────────────────────────────────
 const STATUS = {
@@ -471,42 +476,24 @@ export default function VATCapture() {
     }
   }
 
-  const findFirstFlaggedReceipt = useCallback(() => {
-    return receipts.find(receipt => parseFlags(receipt.flags).length > 0) || null;
-  }, [receipts]);
-
   const refreshReminders = useCallback(() => {
     window.dispatchEvent(new Event('vat:reminders-changed'));
   }, []);
 
   const handleReminderAction = useCallback((reminder) => {
-    setActiveTab(reminder.actionTab || 'receipts');
+    const nextState = getReminderActionState(reminder, receipts);
+    if (!nextState) return;
 
-    if (reminder.ruleKey === 'flagged_receipts') {
-      const flaggedReceipt = findFirstFlaggedReceipt();
-      if (flaggedReceipt) {
-        setStatusFilter('all');
-        setSelectedReceiptId(flaggedReceipt.id);
-        setShowDetail(true);
-        setEditMode(false);
-      }
-      return;
+    setActiveTab(nextState.activeTab);
+    setStatusFilter(nextState.statusFilter);
+    setSelectedReceiptId(nextState.selectedReceiptId);
+    setShowDetail(nextState.showDetail);
+    setEditMode(nextState.editMode);
+    if (nextState.selectedReceiptId) {
+      const flaggedReceipt = receipts.find(receipt => receipt.id === nextState.selectedReceiptId);
+      if (flaggedReceipt) setSelectedReceipt(flaggedReceipt);
     }
-
-    if (reminder.actionTab === 'receipts') {
-      setStatusFilter(reminder.actionFilter || 'all');
-      setShowDetail(false);
-      setSelectedReceiptId(null);
-      setEditMode(false);
-      return;
-    }
-
-    if (reminder.actionTab === 'schedule') {
-      setSelectedReceiptId(null);
-      setShowDetail(false);
-      setEditMode(false);
-    }
-  }, [findFirstFlaggedReceipt]);
+  }, [receipts]);
 
   const persistReminderState = useCallback(async (reminder, action, snoozedUntil = null) => {
     if (!api?.vatUpdateReminderState) return;
@@ -540,8 +527,7 @@ export default function VATCapture() {
     } else if (choice === '3 days') {
       snoozedUntil = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 3);
     } else if (choice === 'until period end') {
-      const [year, month] = selectedPeriod.split('-').map(Number);
-      snoozedUntil = new Date(year, month + 1, 0);
+      snoozedUntil = getSnoozeUntilPeriodEnd(selectedPeriod, now) || now;
     }
 
     void persistReminderState(reminder, 'snoozed', snoozedUntil.toISOString());
@@ -645,6 +631,7 @@ export default function VATCapture() {
     const res = await api.vatGenerateSchedule(selectedClientId, selectedPeriod);
     if (res?.success) {
       showToast('VAT schedule generated', 'success');
+      refreshReminders();
       loadSchedule();
     } else {
       showToast(res?.error || 'Failed to generate schedule', 'error');
