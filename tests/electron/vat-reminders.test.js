@@ -5,6 +5,7 @@ import {
   buildReminderCandidates,
   parseFlags,
 } from '../../electron/services/vat-reminders.js';
+import { getReminderActionState } from '../../src/pages/vatReminderViewModel.js';
 import registerVatHandlers, { getVatReminderClientIdsForPeriod } from '../../electron/ipc/vat-handlers.js';
 
 function createFakeIpcMain() {
@@ -588,8 +589,22 @@ test('dismissed schedule_stale reminder resurfaces when approved values change b
   );
 });
 
+test('flagged reminder focuses the first non-approved flagged receipt', () => {
+  const result = getReminderActionState(
+    { ruleKey: 'flagged_receipts', actionTab: 'receipts' },
+    [
+      { id: 'r1', status: 'approved', flags: '["low_confidence"]' },
+      { id: 'r2', status: 'pending', flags: '["low_confidence"]' },
+    ]
+  );
+
+  assert.equal(result.selectedReceiptId, 'r2');
+  assert.equal(result.showDetail, true);
+});
+
 if (process.execArgv.includes('--test-isolation=none')) {
   const { ensureVatReminderStateIndex } = await import('../../electron/services/database.js');
+  const Database = (await import('better-sqlite3')).default;
 
   test('ensureVatReminderStateIndex rebuilds a legacy non-unique reminder index as unique', () => {
     const execCalls = [];
@@ -611,10 +626,10 @@ if (process.execArgv.includes('--test-isolation=none')) {
 
     ensureVatReminderStateIndex(fakeDb);
 
-    assert.deepEqual(execCalls, [
-      'DROP INDEX IF EXISTS idx_vat_reminder_state_period',
-      'CREATE UNIQUE INDEX IF NOT EXISTS idx_vat_reminder_state_period ON vat_reminder_state(client_id, vat_period, rule_key)',
-    ]);
+    assert.equal(execCalls.length, 3);
+    assert.equal(execCalls[0], 'DROP INDEX IF EXISTS idx_vat_reminder_state_period');
+    assert.match(execCalls[1], /DELETE FROM vat_reminder_state/);
+    assert.equal(execCalls[2], 'CREATE UNIQUE INDEX IF NOT EXISTS idx_vat_reminder_state_period ON vat_reminder_state(client_id, vat_period, rule_key)');
   });
 
   test('ensureVatReminderStateIndex leaves an already unique reminder index alone', () => {
@@ -638,5 +653,47 @@ if (process.execArgv.includes('--test-isolation=none')) {
     ensureVatReminderStateIndex(fakeDb);
 
     assert.deepEqual(execCalls, []);
+  });
+
+  test('ensureVatReminderStateIndex removes duplicate reminder-state rows before creating the unique index', () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE vat_reminder_state (
+        id TEXT PRIMARY KEY,
+        client_id TEXT,
+        vat_period TEXT NOT NULL,
+        rule_key TEXT NOT NULL,
+        state TEXT NOT NULL,
+        snoozed_until TEXT,
+        condition_signature TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO vat_reminder_state (id, client_id, vat_period, rule_key, state, updated_at)
+      VALUES
+        ('old-1', 'client-1', '2026-03', 'pending_receipts', 'dismissed', '2026-04-25T08:00:00Z'),
+        ('new-1', 'client-1', '2026-03', 'pending_receipts', 'snoozed', '2026-04-26T08:00:00Z'),
+        ('only-1', 'client-1', '2026-05', 'schedule_missing', 'dismissed', '2026-04-26T08:00:00Z');
+    `);
+
+    ensureVatReminderStateIndex(db);
+
+    const remaining = db.prepare(`
+      SELECT id, client_id, vat_period, rule_key, state, updated_at
+      FROM vat_reminder_state
+      ORDER BY client_id, vat_period, rule_key, updated_at
+    `).all();
+    const indexes = db.prepare("PRAGMA index_list('vat_reminder_state')").all();
+
+    assert.equal(remaining.length, 2);
+    assert.deepEqual(remaining.find(row => row.rule_key === 'pending_receipts'), {
+      id: 'new-1',
+      client_id: 'client-1',
+      vat_period: '2026-03',
+      rule_key: 'pending_receipts',
+      state: 'snoozed',
+      updated_at: '2026-04-26T08:00:00Z',
+    });
+    assert.ok(indexes.some(row => row.name === 'idx_vat_reminder_state_period' && row.unique === 1));
+    db.close();
   });
 }

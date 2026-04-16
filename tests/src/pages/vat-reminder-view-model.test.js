@@ -46,8 +46,8 @@ test('getReminderActionState focuses the first flagged receipt', () => {
   const result = getReminderActionState(
     { ruleKey: 'flagged_receipts', actionTab: 'receipts' },
     [
-      { id: 'r1', flags: '[]' },
-      { id: 'r2', flags: '["low_confidence"]' },
+      { id: 'r1', status: 'approved', flags: '["low_confidence"]' },
+      { id: 'r2', status: 'pending', flags: '["low_confidence"]' },
     ]
   );
 

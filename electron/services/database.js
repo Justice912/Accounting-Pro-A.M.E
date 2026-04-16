@@ -246,11 +246,41 @@ export function ensureVatReminderStateIndex(database = getDb()) {
     return;
   }
 
-  if (existing) {
-    database.exec('DROP INDEX IF EXISTS idx_vat_reminder_state_period');
-  }
+  const repairDuplicates = () => {
+    database.exec(`
+      DELETE FROM vat_reminder_state
+      WHERE rowid IN (
+        SELECT older.rowid
+        FROM vat_reminder_state AS older
+        WHERE EXISTS (
+          SELECT 1
+          FROM vat_reminder_state AS newer
+          WHERE newer.client_id = older.client_id
+            AND newer.vat_period = older.vat_period
+            AND newer.rule_key = older.rule_key
+            AND (
+              newer.updated_at > older.updated_at OR
+              (newer.updated_at = older.updated_at AND newer.rowid > older.rowid)
+            )
+        )
+      );
+    `);
+  };
 
-  database.exec(VAT_REMINDER_STATE_INDEX_SQL);
+  const migrate = () => {
+    if (existing) {
+      database.exec('DROP INDEX IF EXISTS idx_vat_reminder_state_period');
+    }
+
+    repairDuplicates();
+    database.exec(VAT_REMINDER_STATE_INDEX_SQL);
+  };
+
+  if (typeof database.transaction === 'function') {
+    database.transaction(migrate)();
+  } else {
+    migrate();
+  }
 }
 
 async function initialize() {

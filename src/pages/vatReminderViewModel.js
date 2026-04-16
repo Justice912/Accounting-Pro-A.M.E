@@ -37,7 +37,7 @@ export function getReminderActionState(reminder, receipts = []) {
   if (!reminder) return null;
 
   if (reminder.ruleKey === 'flagged_receipts') {
-    const flaggedReceipt = receipts.find(receipt => hasFlags(receipt.flags));
+    const flaggedReceipt = receipts.find(receipt => hasFlags(receipt.flags) && receipt.status !== 'approved');
     return {
       activeTab: reminder.actionTab || 'receipts',
       statusFilter: 'all',
