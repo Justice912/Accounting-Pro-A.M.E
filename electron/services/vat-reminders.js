@@ -10,7 +10,8 @@ const PRIORITY = {
 function parseFlags(flags) {
   if (Array.isArray(flags)) return flags;
   try {
-    return JSON.parse(flags || '[]');
+    const parsed = JSON.parse(flags || '[]');
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -81,10 +82,12 @@ export function buildReminderCandidates({
     reminders.push(buildReminder('schedule_missing', clientId, period, approved.length));
   }
 
+  let scheduleStale = false;
   if (schedule) {
     const scheduleUpdatedAt = toDate(schedule.updated_at);
-    const receiptUpdatedAfterSchedule = scheduleUpdatedAt
+    const approvedUpdatedAfterSchedule = scheduleUpdatedAt
       ? receipts.some(receipt => {
+        if (receipt.status !== 'approved') return false;
         const receiptUpdatedAt = toDate(receipt.updated_at);
         return receiptUpdatedAt && receiptUpdatedAt > scheduleUpdatedAt;
       })
@@ -105,14 +108,15 @@ export function buildReminderCandidates({
     const vatTotalMismatch =
       scheduleVatTotal != null && Math.abs(scheduleVatTotal - approvedVatTotal) > 0.01;
 
-    if (
-      receiptUpdatedAfterSchedule ||
+    scheduleStale =
+      approvedUpdatedAfterSchedule ||
       receiptCountMismatch ||
       approvedCountMismatch ||
       pendingCountMismatch ||
       flaggedCountMismatch ||
-      vatTotalMismatch
-    ) {
+      vatTotalMismatch;
+
+    if (scheduleStale) {
       reminders.push(buildReminder('schedule_stale', clientId, period, approved.length || receipts.length));
     }
   }
@@ -126,7 +130,7 @@ export function buildReminderCandidates({
     daysToEnd != null &&
     daysToEnd <= closingDays &&
     daysToEnd >= 0 &&
-    (pending.length || queried.length || (approved.length && !schedule));
+    (pending.length || queried.length || (approved.length && !schedule) || scheduleStale);
 
   if (needsClosingReminder) {
     reminders.push(buildReminder('period_closing', clientId, period, daysToEnd));
@@ -135,3 +139,4 @@ export function buildReminderCandidates({
   return reminders.sort((a, b) => PRIORITY[a.ruleKey] - PRIORITY[b.ruleKey]);
 }
 
+export { parseFlags };
