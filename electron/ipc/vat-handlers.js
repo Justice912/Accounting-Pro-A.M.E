@@ -143,6 +143,23 @@ function loadReminderContext(database, clientId, period) {
   return { receipts, schedule, reminderStateRows };
 }
 
+export function getVatReminderClientIdsForPeriod(database, period) {
+  const receiptRows = database.getAll(
+    'SELECT DISTINCT client_id FROM vat_receipts WHERE vat_period = ?',
+    [period]
+  );
+  const scheduleRows = database.getAll(
+    'SELECT DISTINCT client_id FROM vat_schedules WHERE period = ?',
+    [period]
+  );
+
+  return [...new Set(
+    [...receiptRows, ...scheduleRows]
+      .map(row => row?.client_id)
+      .filter(Boolean)
+  )];
+}
+
 function upsertReminderState(database, payload, now = new Date()) {
   const {
     clientId,
@@ -241,16 +258,12 @@ export default function registerVatHandlers(ipcMain, services) {
       const period = getCurrentVatPeriod(new Date());
       if (!period) return { count: 0 };
 
-      const clientRows = database.getAll(
-        'SELECT DISTINCT client_id FROM vat_receipts WHERE vat_period = ?',
-        [period]
-      );
+      const clientIds = getVatReminderClientIdsForPeriod(database, period);
 
-      const count = clientRows.reduce((total, row) => {
-        if (!row?.client_id) return total;
-        const context = loadReminderContext(database, row.client_id, period);
+      const count = clientIds.reduce((total, clientId) => {
+        const context = loadReminderContext(database, clientId, period);
         const reminders = buildReminderCandidates({
-          clientId: row.client_id,
+          clientId,
           period,
           receipts: context.receipts,
           schedule: context.schedule,

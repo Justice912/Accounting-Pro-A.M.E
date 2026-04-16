@@ -18,7 +18,7 @@ const META = {
     title: 'Flagged receipts',
     severity: 'warning',
     actionTab: 'receipts',
-    actionFilter: 'flagged',
+    actionFilter: null,
   },
   queried_receipts: {
     title: 'Queried receipts',
