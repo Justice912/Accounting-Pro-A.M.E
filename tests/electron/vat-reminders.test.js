@@ -42,6 +42,29 @@ test('buildReminderCandidates returns VAT reminder rules in priority order', () 
   );
 });
 
+test('reminder candidates include tab and filter metadata for renderer actions', () => {
+  const reminders = buildReminderCandidates({
+    clientId: 'client-1',
+    period: '2026-03',
+    receipts: [
+      {
+        id: 'r1',
+        status: 'pending',
+        flags: '[]',
+        updated_at: '2026-04-24T08:00:00Z',
+      },
+    ],
+    schedule: null,
+    reminderStateRows: [],
+    now: new Date('2026-04-26T10:00:00Z'),
+    closingDays: 7,
+  });
+
+  const pending = reminders.find(r => r.ruleKey === 'pending_receipts');
+  assert.equal(pending.actionTab, 'receipts');
+  assert.equal(pending.actionFilter, 'pending');
+});
+
 test('parseFlags always returns an array', () => {
   assert.deepEqual(parseFlags('null'), []);
   assert.deepEqual(parseFlags('{}'), []);

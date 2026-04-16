@@ -7,6 +7,45 @@ const PRIORITY = {
   schedule_stale: 5,
 };
 
+const META = {
+  pending_receipts: {
+    title: 'Pending receipts',
+    severity: 'warning',
+    actionTab: 'receipts',
+    actionFilter: 'pending',
+  },
+  flagged_receipts: {
+    title: 'Flagged receipts',
+    severity: 'warning',
+    actionTab: 'receipts',
+    actionFilter: 'flagged',
+  },
+  queried_receipts: {
+    title: 'Queried receipts',
+    severity: 'info',
+    actionTab: 'receipts',
+    actionFilter: 'query',
+  },
+  schedule_missing: {
+    title: 'VAT schedule missing',
+    severity: 'warning',
+    actionTab: 'schedule',
+    actionFilter: null,
+  },
+  schedule_stale: {
+    title: 'VAT schedule stale',
+    severity: 'warning',
+    actionTab: 'schedule',
+    actionFilter: null,
+  },
+  period_closing: {
+    title: 'Period closing soon',
+    severity: 'error',
+    actionTab: 'schedule',
+    actionFilter: null,
+  },
+};
+
 function parseFlags(flags) {
   if (Array.isArray(flags)) return flags;
   try {
@@ -40,12 +79,41 @@ function sumBy(rows, selector) {
   return rows.reduce((total, row) => total + (Number(selector(row)) || 0), 0);
 }
 
+function pluralize(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function buildReminderMessage(ruleKey, count, period, extras = {}) {
+  switch (ruleKey) {
+    case 'pending_receipts':
+      return `${pluralize(count, 'receipt')} still need review for ${period}.`;
+    case 'flagged_receipts':
+      return `${pluralize(count, 'receipt')} have flags that need attention for ${period}.`;
+    case 'queried_receipts':
+      return `${pluralize(count, 'receipt')} are marked as query for ${period}.`;
+    case 'schedule_missing':
+      return `Approved receipts are ready, but the VAT schedule has not been generated for ${period}.`;
+    case 'schedule_stale':
+      return `The VAT schedule is out of date and should be regenerated for ${period}.`;
+    case 'period_closing':
+      return `This VAT period closes in ${count} ${count === 1 ? 'day' : 'days'}.`;
+    default:
+      return extras.message || '';
+  }
+}
+
 function buildReminder(ruleKey, clientId, period, count, extras = {}) {
+  const meta = META[ruleKey] || {};
   return {
     clientId,
     period,
     ruleKey,
     count,
+    title: meta.title || ruleKey,
+    severity: meta.severity || 'info',
+    actionTab: meta.actionTab ?? null,
+    actionFilter: meta.actionFilter ?? null,
+    message: buildReminderMessage(ruleKey, count, period, extras),
     ...extras,
   };
 }

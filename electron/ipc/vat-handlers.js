@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { buildReminderCandidates } from '../services/vat-reminders.js';
 
 const VAT_RATE = 0.15;
 
@@ -120,6 +121,64 @@ function parseBankCSV(csv) {
   return transactions;
 }
 
+function getCurrentVatPeriod(now = new Date()) {
+  const period = getVatPeriod(now instanceof Date ? now : new Date(now));
+  return period;
+}
+
+function loadReminderContext(database, clientId, period) {
+  const receipts = database.getAll(
+    'SELECT * FROM vat_receipts WHERE client_id = ? AND vat_period = ? ORDER BY invoice_date DESC, created_at DESC',
+    [clientId, period]
+  );
+  const schedule = database.getOne(
+    'SELECT * FROM vat_schedules WHERE client_id = ? AND period = ?',
+    [clientId, period]
+  );
+  const reminderStateRows = database.getAll(
+    'SELECT * FROM vat_reminder_state WHERE client_id = ? AND vat_period = ?',
+    [clientId, period]
+  );
+
+  return { receipts, schedule, reminderStateRows };
+}
+
+function upsertReminderState(database, payload, now = new Date()) {
+  const {
+    clientId,
+    period,
+    ruleKey,
+    action,
+    snoozedUntil = null,
+    conditionSignature = null,
+  } = payload || {};
+
+  if (!clientId || !period || !ruleKey) {
+    throw new Error('clientId, period, and ruleKey are required');
+  }
+
+  const state = action === 'snoozed' ? 'snoozed' : 'dismissed';
+  const updatedAt = now instanceof Date ? now.toISOString() : new Date(now).toISOString();
+  const id = crypto.randomUUID();
+
+  database.run(
+    `INSERT INTO vat_reminder_state
+      (id, client_id, vat_period, rule_key, state, snoozed_until, condition_signature, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(client_id, vat_period, rule_key) DO UPDATE SET
+       state = excluded.state,
+       snoozed_until = excluded.snoozed_until,
+       condition_signature = excluded.condition_signature,
+       updated_at = excluded.updated_at`,
+    [id, clientId, period, ruleKey, state, snoozedUntil, conditionSignature, updatedAt]
+  );
+
+  return database.getOne(
+    'SELECT * FROM vat_reminder_state WHERE client_id = ? AND vat_period = ? AND rule_key = ?',
+    [clientId, period, ruleKey]
+  );
+}
+
 export default function registerVatHandlers(ipcMain, services) {
   const { database, keychain } = services;
 
@@ -146,6 +205,62 @@ export default function registerVatHandlers(ipcMain, services) {
         "SELECT COUNT(*) AS c FROM vat_receipts WHERE status = 'pending'"
       );
       return { count: row?.c || 0 };
+    } catch {
+      return { count: 0 };
+    }
+  });
+
+  ipcMain.handle('vat:reminders:get', async (event, clientId, period) => {
+    try {
+      if (!clientId || !period) return [];
+      const context = loadReminderContext(database, clientId, period);
+      return buildReminderCandidates({
+        clientId,
+        period,
+        receipts: context.receipts,
+        schedule: context.schedule,
+        reminderStateRows: context.reminderStateRows,
+        now: new Date(),
+      });
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('vat:reminder:update-state', async (event, payload) => {
+    try {
+      const reminderState = upsertReminderState(database, payload, new Date());
+      return { success: true, reminderState };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:reminders:count', async () => {
+    try {
+      const period = getCurrentVatPeriod(new Date());
+      if (!period) return { count: 0 };
+
+      const clientRows = database.getAll(
+        'SELECT DISTINCT client_id FROM vat_receipts WHERE vat_period = ?',
+        [period]
+      );
+
+      const count = clientRows.reduce((total, row) => {
+        if (!row?.client_id) return total;
+        const context = loadReminderContext(database, row.client_id, period);
+        const reminders = buildReminderCandidates({
+          clientId: row.client_id,
+          period,
+          receipts: context.receipts,
+          schedule: context.schedule,
+          reminderStateRows: context.reminderStateRows,
+          now: new Date(),
+        });
+        return total + reminders.length;
+      }, 0);
+
+      return { count };
     } catch {
       return { count: 0 };
     }
