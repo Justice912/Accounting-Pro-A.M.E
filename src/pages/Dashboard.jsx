@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, MessageSquare, Clock, Receipt } from 'lucide-react';
+import { Sparkles, MessageSquare, Clock, Receipt, BarChart3 } from 'lucide-react';
 import DomainCard from '../components/home/DomainCard';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 
@@ -34,15 +34,25 @@ export default function Dashboard() {
         </p>
       </div>
 
-      {/* Domain Cards */}
-      <div className="w-full max-w-3xl mb-4">
+      {/* VAT quick-access */}
+      <div className="w-full max-w-3xl mb-4 flex gap-3">
         <button
-          onClick={() => navigate('/vat-capture')}
-          className="w-full flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 hover:bg-emerald-100 transition-colors"
+          onClick={() => navigate('/vat-dashboard')}
+          className="flex-1 flex items-center justify-between rounded-xl border border-[#1B4F72]/20 bg-[#1B4F72]/5 px-4 py-3 hover:bg-[#1B4F72]/10 transition-colors"
         >
           <div className="text-left">
-            <p className="text-sm font-semibold text-emerald-800">New: VAT Capture Workbench</p>
-            <p className="text-xs text-emerald-700">Capture invoice lines and auto-calculate VAT totals.</p>
+            <p className="text-sm font-semibold text-[#1B4F72]">VAT Practice Dashboard</p>
+            <p className="text-xs text-[#1B4F72]/70">All clients' VAT status at a glance.</p>
+          </div>
+          <BarChart3 className="w-5 h-5 text-[#1B4F72]" />
+        </button>
+        <button
+          onClick={() => navigate('/vat-capture')}
+          className="flex-1 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 hover:bg-emerald-100 transition-colors"
+        >
+          <div className="text-left">
+            <p className="text-sm font-semibold text-emerald-800">VAT Capture Workbench</p>
+            <p className="text-xs text-emerald-700">Capture receipts and build VAT schedules.</p>
           </div>
           <Receipt className="w-5 h-5 text-emerald-700" />
         </button>

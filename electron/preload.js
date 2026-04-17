@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('api', {
   vatGetReminders: (clientId, period) => ipcRenderer.invoke('vat:reminders:get', clientId, period),
   vatUpdateReminderState: (payload) => ipcRenderer.invoke('vat:reminder:update-state', payload),
   vatReminderCount: () => ipcRenderer.invoke('vat:reminders:count'),
+  vatDashboardGet: (period) => ipcRenderer.invoke('vat:dashboard:get', period),
   vatGenerateSchedule: (clientId, period) => ipcRenderer.invoke('vat:schedule:generate', clientId, period),
   vatGetSchedule: (clientId, period) => ipcRenderer.invoke('vat:schedule:get', clientId, period),
   vatExportExcel: (clientId, period) => ipcRenderer.invoke('vat:export:excel', clientId, period),

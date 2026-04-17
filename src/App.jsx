@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import Workspace from './pages/Workspace';
 import Settings from './pages/Settings';
 import VATCapture from './pages/VATCapture';
+import VATDashboard from './pages/VATDashboard';
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
         <Route path="workspace" element={<Workspace />} />
         <Route path="workspace/:domain" element={<Workspace />} />
         <Route path="workspace/:domain/:conversationId" element={<Workspace />} />
+        <Route path="vat-dashboard" element={<VATDashboard />} />
         <Route path="vat-capture" element={<VATCapture />} />
         <Route path="settings" element={<Settings />} />
       </Route>

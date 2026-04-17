@@ -720,6 +720,167 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
     }
   });
 
+  // ── Dashboard (practice-wide overview) ──────────────────────────────────
+
+  ipcMain.handle('vat:dashboard:get', async (event, period) => {
+    try {
+      const now = getHandlerNow(services);
+      const effectivePeriod = period || getCurrentVatPeriod(now);
+      if (!effectivePeriod) return { period: null, clients: [], summary: {} };
+
+      const pd = getPeriodDates(effectivePeriod);
+      const periodEndDate = new Date(pd.end + 'T23:59:59');
+      const daysUntilClose = Math.ceil((periodEndDate - now) / (1000 * 60 * 60 * 24));
+
+      // All clients that have any VAT activity for this period
+      const clientIds = getVatReminderClientIdsForPeriod(database, effectivePeriod);
+
+      // Also include clients that have bank transactions in the period
+      const bankClientRows = database.getAll(
+        `SELECT DISTINCT client_id FROM vat_bank_transactions
+         WHERE txn_date >= ? AND txn_date <= ?`,
+        [pd.start, pd.end]
+      );
+      bankClientRows.forEach(r => {
+        if (r.client_id && !clientIds.includes(r.client_id)) clientIds.push(r.client_id);
+      });
+
+      // Fetch client details
+      const clientMap = {};
+      if (clientIds.length > 0) {
+        const placeholders = clientIds.map(() => '?').join(',');
+        const clientRows = database.getAll(
+          `SELECT id, name, vat_number FROM clients WHERE id IN (${placeholders})`,
+          clientIds
+        );
+        clientRows.forEach(c => { clientMap[c.id] = c; });
+      }
+
+      let totalReceipts = 0, totalPending = 0, totalApproved = 0, totalFlagged = 0;
+      let totalInputVat = 0, totalPurchases = 0;
+      let totalBankTxns = 0, totalBankMatched = 0;
+      let clientsWithWork = 0;
+
+      const clients = clientIds.map(cid => {
+        const client = clientMap[cid] || { id: cid, name: cid, vat_number: null };
+
+        // Receipt stats
+        const rStats = database.getOne(
+          `SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
+            SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+            SUM(CASE WHEN status = 'query' THEN 1 ELSE 0 END) AS query,
+            SUM(CASE WHEN flags != '[]' AND flags IS NOT NULL AND status != 'approved' THEN 1 ELSE 0 END) AS flagged,
+            SUM(CASE WHEN status = 'approved' THEN vat_amount ELSE 0 END) AS input_vat,
+            SUM(CASE WHEN status = 'approved' THEN total_incl_vat ELSE 0 END) AS purchases
+          FROM vat_receipts WHERE client_id = ? AND vat_period = ?`,
+          [cid, effectivePeriod]
+        ) || {};
+
+        // Schedule status
+        const schedule = database.getOne(
+          'SELECT * FROM vat_schedules WHERE client_id = ? AND period = ?',
+          [cid, effectivePeriod]
+        );
+        let scheduleStatus = 'missing';
+        if (schedule) {
+          const latestApproved = database.getOne(
+            `SELECT MAX(updated_at) AS latest FROM vat_receipts
+             WHERE client_id = ? AND vat_period = ? AND status = 'approved'`,
+            [cid, effectivePeriod]
+          );
+          scheduleStatus = (latestApproved?.latest && latestApproved.latest > schedule.updated_at)
+            ? 'stale' : 'current';
+        }
+
+        // Bank reconciliation
+        const bStats = database.getOne(
+          `SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN is_matched = 1 THEN 1 ELSE 0 END) AS matched
+          FROM vat_bank_transactions WHERE client_id = ? AND txn_date >= ? AND txn_date <= ?`,
+          [cid, pd.start, pd.end]
+        ) || {};
+
+        // Reminder count
+        let reminderCount = 0;
+        try {
+          const ctx = loadReminderContext(database, cid, effectivePeriod);
+          const reminders = buildReminderCandidates({
+            clientId: cid, period: effectivePeriod,
+            receipts: ctx.receipts, schedule: ctx.schedule,
+            reminderStateRows: ctx.reminderStateRows, now,
+          });
+          reminderCount = reminders.length;
+        } catch { /* non-fatal */ }
+
+        // Urgency
+        const pending = rStats.pending || 0;
+        const flagged = rStats.flagged || 0;
+        const hasOutstandingWork = pending > 0 || flagged > 0 || (rStats.query || 0) > 0 || scheduleStatus !== 'current';
+        let urgency = 'clear';
+        if (hasOutstandingWork && daysUntilClose <= 7) urgency = 'high';
+        else if (hasOutstandingWork && daysUntilClose <= 14) urgency = 'medium';
+        else if (hasOutstandingWork) urgency = 'low';
+
+        if (hasOutstandingWork) clientsWithWork++;
+
+        totalReceipts += rStats.total || 0;
+        totalPending += pending;
+        totalApproved += rStats.approved || 0;
+        totalFlagged += flagged;
+        totalInputVat += rStats.input_vat || 0;
+        totalPurchases += rStats.purchases || 0;
+        totalBankTxns += bStats.total || 0;
+        totalBankMatched += bStats.matched || 0;
+
+        return {
+          id: client.id,
+          name: client.name,
+          vatNumber: client.vat_number,
+          receipts: {
+            total: rStats.total || 0, pending, approved: rStats.approved || 0,
+            rejected: rStats.rejected || 0, query: rStats.query || 0, flagged,
+          },
+          schedule: { status: scheduleStatus, updatedAt: schedule?.updated_at || null },
+          bank: { total: bStats.total || 0, matched: bStats.matched || 0 },
+          reminders: reminderCount,
+          inputVat: rStats.input_vat || 0,
+          totalPurchases: rStats.purchases || 0,
+          urgency,
+        };
+      });
+
+      // Sort: high urgency first
+      const urgencyOrder = { high: 0, medium: 1, low: 2, clear: 3 };
+      clients.sort((a, b) => (urgencyOrder[a.urgency] ?? 4) - (urgencyOrder[b.urgency] ?? 4));
+
+      return {
+        period: effectivePeriod,
+        periodLabel: (() => {
+          const [y, m] = effectivePeriod.split('-').map(Number);
+          const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          return `${months[m - 1]}/${months[m]} ${y}`;
+        })(),
+        periodEnd: pd.end,
+        daysUntilClose,
+        clients,
+        summary: {
+          totalClients: clients.length,
+          clientsWithWork,
+          totalReceipts, totalPending, totalApproved, totalFlagged,
+          totalInputVat, totalPurchases,
+          reconciliationRate: totalBankTxns > 0 ? totalBankMatched / totalBankTxns : null,
+          daysUntilClose,
+        },
+      };
+    } catch (e) {
+      return { period: null, clients: [], summary: {}, error: e.message };
+    }
+  });
+
   // ── Excel Export ─────────────────────────────────────────────────────────
 
   ipcMain.handle('vat:export:excel', async (event, clientId, period) => {

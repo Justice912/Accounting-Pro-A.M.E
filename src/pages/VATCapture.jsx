@@ -238,10 +238,15 @@ function VatReminderCard({ reminder, onAction, onDismiss, onSnooze }) {
 export default function VATCapture() {
   const api = window.api;
 
+  // Read query params for dashboard drill-down
+  const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const initialClient = urlParams.get('client') || '';
+  const initialPeriod = urlParams.get('period') || currentPeriod();
+
   // ─ Global state ─
   const [clients, setClients] = useState([]);
-  const [selectedClientId, setSelectedClientId] = useState('');
-  const [selectedPeriod, setSelectedPeriod] = useState(currentPeriod());
+  const [selectedClientId, setSelectedClientId] = useState(initialClient);
+  const [selectedPeriod, setSelectedPeriod] = useState(initialPeriod);
   const [activeTab, setActiveTab] = useState('receipts');
   const [toast, setToast] = useState(null);
 
@@ -289,8 +294,11 @@ export default function VATCapture() {
     api.listClients()
       .then(list => {
         setClients(list || []);
-        if (list?.length && !selectedClientId) {
-          setSelectedClientId(list[0].id);
+        if (list?.length) {
+          setSelectedClientId(prev => {
+            if (prev && list.some(c => c.id === prev)) return prev;
+            return list[0].id;
+          });
         }
       })
       .catch(err => console.error('[VATCapture] listClients error:', err));
