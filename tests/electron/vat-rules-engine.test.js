@@ -99,3 +99,80 @@ test('evaluateVatDocument classifies brown bread as zero rated with a reason', (
     'missing hasTextTaxInvoice input should remain unknown, not become a critical finding'
   );
 });
+
+test('evaluateVatDocument blocks entertainment input tax and returns blocked amount', () => {
+  const result = evaluateVatDocument({
+    documentTable: 'vat_receipts',
+    direction: 'purchase',
+    documentType: 'tax_invoice',
+    invoiceNumber: 'ENT-1',
+    invoiceDate: '2026-04-18',
+    totalInclVat: 1150,
+    vatAmount: 150,
+    totalExclVat: 1000,
+    lineItems: [
+      {
+        description: 'Client dinner entertainment',
+        quantity: 1,
+        totalExcl: 1000,
+        vatAmount: 150,
+        totalIncl: 1150,
+      },
+    ],
+  });
+
+  assert.equal(result.summary.blockedInputAmount, 150);
+  assert.ok(result.findings.some(finding => finding.ruleKey === 'section17_entertainment_block'));
+});
+
+test('evaluateVatDocument applies apportionment for mixed-supply clients', () => {
+  const result = evaluateVatDocument({
+    documentTable: 'vat_receipts',
+    direction: 'purchase',
+    documentType: 'tax_invoice',
+    invoiceNumber: 'MIX-1',
+    invoiceDate: '2026-04-18',
+    totalInclVat: 1150,
+    vatAmount: 150,
+    totalExclVat: 1000,
+    clientSettings: { hasMixedSupplies: true, apportionmentRatio: 60 },
+    lineItems: [
+      {
+        description: 'Shared admin costs',
+        quantity: 1,
+        totalExcl: 1000,
+        vatAmount: 150,
+        totalIncl: 1150,
+      },
+    ],
+  });
+
+  assert.equal(result.summary.apportionedInputAmount, 60);
+  assert.equal(result.summary.nonClaimableApportionmentAmount, 90);
+});
+
+test('evaluateVatDocument flags time-of-supply conflicts when payment predates invoice period', () => {
+  const result = evaluateVatDocument({
+    documentTable: 'vat_sales_invoices',
+    direction: 'sale',
+    documentType: 'tax_invoice',
+    invoiceNumber: 'SALE-1',
+    invoiceDate: '2026-04-12',
+    paymentDate: '2026-03-30',
+    totalInclVat: 2300,
+    vatAmount: 300,
+    totalExclVat: 2000,
+    lineItems: [
+      {
+        description: 'Consulting fee',
+        quantity: 1,
+        totalExcl: 2000,
+        vatAmount: 300,
+        totalIncl: 2300,
+      },
+    ],
+  });
+
+  assert.ok(result.findings.some(finding => finding.ruleKey === 'time_of_supply_period_conflict'));
+  assert.equal(result.summary.timeOfSupplyDate, '2026-03-30');
+});
