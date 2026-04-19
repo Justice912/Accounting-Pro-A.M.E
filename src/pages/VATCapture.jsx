@@ -12,6 +12,10 @@ import {
   getSnoozeUntilPeriodEnd,
   getVisibleReminders,
 } from './vatReminderViewModel.js';
+import {
+  getComplianceTone,
+  groupFindingsBySeverity,
+} from './vatComplianceViewModel.js';
 
 // ── Design tokens (matching spec) ────────────────────────────────────────────
 const STATUS = {
@@ -257,6 +261,7 @@ export default function VATCapture() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedReceiptId, setSelectedReceiptId] = useState(null);
   const [selectedReceipt, setSelectedReceipt] = useState(null);
+  const [selectedReceiptFindings, setSelectedReceiptFindings] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [showDetail, setShowDetail] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -346,29 +351,55 @@ export default function VATCapture() {
 
   // ── Load receipt detail ───────────────────────────────────────────────────
   useEffect(() => {
-    if (!selectedReceiptId) { setSelectedReceipt(null); return; }
-    if (!api?.vatGetReceipt) return;
-    api.vatGetReceipt(selectedReceiptId)
-      .then(r => {
-        if (r) {
-          setSelectedReceipt(r);
-          setEditDraft({
-            supplier_name: r.supplier_name || '',
-            supplier_vat_number: r.supplier_vat_number || '',
-            supplier_address: r.supplier_address || '',
-            invoice_number: r.invoice_number || '',
-            invoice_date: r.invoice_date || '',
-            total_incl_vat: r.total_incl_vat,
-            vat_amount: r.vat_amount,
-            total_excl_vat: r.total_excl_vat,
-            expense_category: r.expense_category || 'General',
-            vat_type: r.vat_type || 'standard',
-            review_notes: r.review_notes || '',
-          });
+    if (!selectedReceiptId) {
+      setSelectedReceipt(null);
+      setSelectedReceiptFindings([]);
+      return;
+    }
+
+    const hydrateDraft = (receipt) => {
+      if (!receipt) return;
+      setEditDraft({
+        supplier_name: receipt.supplier_name || '',
+        supplier_vat_number: receipt.supplier_vat_number || '',
+        supplier_address: receipt.supplier_address || '',
+        invoice_number: receipt.invoice_number || '',
+        invoice_date: receipt.invoice_date || '',
+        total_incl_vat: receipt.total_incl_vat,
+        vat_amount: receipt.vat_amount,
+        total_excl_vat: receipt.total_excl_vat,
+        expense_category: receipt.expense_category || 'General',
+        vat_type: receipt.vat_type || 'standard',
+        review_notes: receipt.review_notes || '',
+      });
+    };
+
+    const loadReceiptDetail = async () => {
+      try {
+        if (api?.vatGetReceiptCompliance) {
+          const result = await api.vatGetReceiptCompliance(selectedReceiptId);
+          if (result?.receipt) {
+            setSelectedReceipt(result.receipt);
+            setSelectedReceiptFindings(result.findings || []);
+            hydrateDraft(result.receipt);
+            return;
+          }
         }
-      })
-      .catch(err => console.error('[VATCapture] vatGetReceipt error:', err));
-  }, [selectedReceiptId]);
+
+        if (!api?.vatGetReceipt) return;
+        const receipt = await api.vatGetReceipt(selectedReceiptId);
+        if (receipt) {
+          setSelectedReceipt(receipt);
+          setSelectedReceiptFindings([]);
+          hydrateDraft(receipt);
+        }
+      } catch (err) {
+        console.error('[VATCapture] loadReceiptDetail error:', err);
+      }
+    };
+
+    loadReceiptDetail();
+  }, [api, selectedReceiptId]);
 
   // ── Load VAT schedule ─────────────────────────────────────────────────────
   const loadSchedule = useCallback(async () => {
@@ -477,6 +508,21 @@ export default function VATCapture() {
     if (res?.success) {
       showToast('Receipt saved', 'success');
       setEditMode(false);
+      if (res.compliance) {
+        setSelectedReceipt(prev => prev ? ({
+          ...prev,
+          compliance_score: res.compliance.summary?.complianceScore ?? prev.compliance_score,
+          supply_type: res.compliance.summary?.supplyType ?? prev.supply_type,
+          supply_type_reason: res.compliance.summary?.supplyTypeReason ?? prev.supply_type_reason,
+          blocked_input_amount: res.compliance.summary?.blockedInputAmount ?? prev.blocked_input_amount,
+          apportioned_input_amount: res.compliance.summary?.apportionedInputAmount ?? prev.apportioned_input_amount,
+          non_claimable_apportionment_amount:
+            res.compliance.summary?.nonClaimableApportionmentAmount ?? prev.non_claimable_apportionment_amount,
+          time_of_supply_date: res.compliance.summary?.timeOfSupplyDate ?? prev.time_of_supply_date,
+          duplicate_status: res.compliance.summary?.duplicateStatus ?? prev.duplicate_status,
+        }) : prev);
+        setSelectedReceiptFindings(res.compliance.findings || []);
+      }
       setSelectedReceiptId(res.id || selectedReceiptId);
       loadReceipts();
     } else {
@@ -1066,6 +1112,11 @@ function ReceiptsTab({
                 </div>
               )}
 
+              <CompliancePanel
+                receipt={selectedReceipt}
+                findings={selectedReceiptFindings}
+              />
+
               {/* Fields */}
               <DetailFields
                 receipt={selectedReceipt}
@@ -1077,6 +1128,78 @@ function ReceiptsTab({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CompliancePanel({ receipt, findings }) {
+  if (!receipt) return null;
+
+  const grouped = groupFindingsBySeverity(findings || []);
+  const tone = getComplianceTone(receipt.compliance_score || 0, grouped.critical.length);
+  const statItems = [
+    { label: 'Blocked input', value: toZAR(receipt.blocked_input_amount || 0) },
+    { label: 'Apportioned input', value: toZAR(receipt.apportioned_input_amount || 0) },
+    { label: 'Duplicate status', value: receipt.duplicate_status || 'clear' },
+    { label: 'Time of supply', value: receipt.time_of_supply_date || '—' },
+  ];
+
+  return (
+    <div className={`rounded-xl border p-3 ${tone.panelClass}`}>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Compliance</div>
+          <div className="mt-1 flex items-center gap-2">
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone.badgeClass}`}>
+              Score {Math.round(Number(receipt.compliance_score) || 0)}
+            </span>
+            <span className="text-xs text-slate-600">{tone.label}</span>
+          </div>
+        </div>
+        <div className="text-right text-xs text-slate-500">
+          <div>{receipt.supply_type ? `Supply: ${receipt.supply_type}` : 'Supply: pending'}</div>
+          <div>{receipt.supply_type_reason || 'No supply reason captured yet.'}</div>
+        </div>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        {statItems.map(item => (
+          <div key={item.label} className="rounded-lg bg-white/80 px-3 py-2">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{item.label}</div>
+            <div className="mt-1 text-sm font-semibold text-slate-800">{item.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {[
+          ['Critical', grouped.critical, 'bg-rose-100 text-rose-700'],
+          ['Warning', grouped.warning, 'bg-amber-100 text-amber-700'],
+          ['Advisory', grouped.advisory, 'bg-sky-100 text-sky-700'],
+        ].map(([label, items, badgeClass]) => (
+          items.length > 0 ? (
+            <div key={label} className="rounded-lg bg-white/80 p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${badgeClass}`}>{label}</span>
+                <span className="text-[11px] text-slate-500">{items.length} finding{items.length === 1 ? '' : 's'}</span>
+              </div>
+              <div className="space-y-1">
+                {items.map(item => (
+                  <div key={item.id || item.rule_key || item.ruleKey} className="text-xs text-slate-700">
+                    <span className="font-medium">{item.rule_name || item.ruleKey || item.rule_key}</span>
+                    {item.message ? ` — ${item.message}` : ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null
+        ))}
+        {!grouped.critical.length && !grouped.warning.length && !grouped.advisory.length && (
+          <div className="rounded-lg bg-white/80 px-3 py-2 text-xs text-slate-600">
+            No active rule findings are stored for this receipt yet.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
