@@ -313,6 +313,26 @@ export function ensureVatComplianceSchema(database = getDb()) {
       database.exec(`ALTER TABLE clients ADD COLUMN ${columnName} ${columnType}`);
     }
   }
+
+  const receiptColumns = database.prepare("PRAGMA table_info('vat_receipts')").all().map(row => row.name);
+  const receiptComplianceColumns = [
+    ['document_kind', 'TEXT'],
+    ['compliance_score', 'REAL DEFAULT 0'],
+    ['supply_type', 'TEXT'],
+    ['supply_type_reason', 'TEXT'],
+    ['blocked_input_amount', 'REAL DEFAULT 0'],
+    ['apportioned_input_amount', 'REAL DEFAULT 0'],
+    ['non_claimable_apportionment_amount', 'REAL DEFAULT 0'],
+    ['time_of_supply_date', 'TEXT'],
+    ['duplicate_status', "TEXT DEFAULT 'clear'"],
+    ['rules_evaluated_at', 'TEXT'],
+  ];
+
+  for (const [columnName, columnType] of receiptComplianceColumns) {
+    if (!receiptColumns.includes(columnName)) {
+      database.exec(`ALTER TABLE vat_receipts ADD COLUMN ${columnName} ${columnType}`);
+    }
+  }
 }
 
 export function ensureVatReminderStateIndex(database = getDb()) {

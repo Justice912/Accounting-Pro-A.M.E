@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { buildReminderCandidates } from '../services/vat-reminders.js';
+import { evaluateVatDocument } from '../services/vat-rules-engine.js';
 
 const VAT_RATE = 0.15;
 
@@ -56,6 +57,145 @@ function computeFlags(data) {
     if (d < fiveYearsAgo) flags.push('old_date');
   }
   return flags;
+}
+
+function parseLineItems(lineItems) {
+  if (Array.isArray(lineItems)) return lineItems;
+  if (typeof lineItems === 'string') {
+    try {
+      const parsed = JSON.parse(lineItems);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function serializeLineItems(lineItems) {
+  if (lineItems == null) return null;
+  return typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems);
+}
+
+function getClientVatSettings(database, clientId) {
+  if (!clientId || typeof database?.getOne !== 'function') return null;
+
+  try {
+    const client = database.getOne(
+      `SELECT has_mixed_supplies, apportionment_ratio, penalty_interest_rate
+       FROM clients WHERE id = ?`,
+      [clientId]
+    );
+    if (!client) return null;
+
+    return {
+      hasMixedSupplies: Boolean(client.has_mixed_supplies),
+      apportionmentRatio: Number(client.apportionment_ratio) || 0,
+      penaltyInterestRate: Number(client.penalty_interest_rate) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function evaluatePurchaseReceiptCompliance(database, data) {
+  const clientSettings = data.clientSettings || getClientVatSettings(database, data.client_id) || undefined;
+  return evaluateVatDocument({
+    documentTable: 'vat_receipts',
+    direction: 'purchase',
+    documentType: data.document_type || 'tax_invoice',
+    totalInclVat: data.total_incl_vat,
+    totalExclVat: data.total_excl_vat,
+    vatAmount: data.vat_amount,
+    hasTextTaxInvoice: data.has_text_tax_invoice ?? data.hasTextTaxInvoice ?? null,
+    supplierName: data.supplier_name,
+    supplierVatNumber: data.supplier_vat_number,
+    supplierAddress: data.supplier_address,
+    recipientName: data.recipient_name,
+    recipientVatNumber: data.recipient_vat_number,
+    invoiceNumber: data.invoice_number,
+    invoiceDate: data.invoice_date,
+    paymentDate: data.payment_date,
+    vatType: data.vat_type,
+    lineItems: parseLineItems(data.line_items),
+    clientSettings,
+  });
+}
+
+function buildReceiptComplianceFields(compliance, evaluatedAt) {
+  return {
+    document_kind: compliance.summary.documentKind || null,
+    compliance_score: Number(compliance.summary.complianceScore) || 0,
+    supply_type: compliance.summary.supplyType || null,
+    supply_type_reason: compliance.summary.supplyTypeReason || null,
+    blocked_input_amount: Number(compliance.summary.blockedInputAmount) || 0,
+    apportioned_input_amount: Number(compliance.summary.apportionedInputAmount) || 0,
+    non_claimable_apportionment_amount:
+      Number(compliance.summary.nonClaimableApportionmentAmount) || 0,
+    time_of_supply_date: compliance.summary.timeOfSupplyDate || null,
+    duplicate_status: compliance.summary.duplicateStatus || 'clear',
+    rules_evaluated_at: evaluatedAt,
+  };
+}
+
+function persistRuleResults(database, {
+  sourceType,
+  sourceId,
+  clientId,
+  vatPeriod,
+  findings = [],
+  evaluatedAt,
+  complianceScore = 0,
+}) {
+  if (!database) return;
+
+  if (typeof database.run === 'function') {
+    database.run('DELETE FROM vat_rule_results WHERE source_type = ? AND source_id = ?', [
+      sourceType,
+      sourceId,
+    ]);
+  }
+
+  if (typeof database.insert !== 'function') return;
+
+  const severityScore = { critical: 25, warning: 10, info: 5 };
+  findings.forEach(finding => {
+    database.insert('vat_rule_results', {
+      id: crypto.randomUUID(),
+      source_type: sourceType,
+      source_id: sourceId,
+      client_id: clientId,
+      vat_period: vatPeriod,
+      rule_key: finding.ruleKey,
+      rule_name: finding.ruleKey,
+      status: 'active',
+      severity: finding.severity || 'info',
+      message: finding.message || null,
+      details: JSON.stringify({ finding }),
+      score: severityScore[finding.severity] || 0,
+      created_at: evaluatedAt,
+      updated_at: evaluatedAt,
+    });
+  });
+
+  if (!findings.length && typeof database.insert === 'function') {
+    database.insert('vat_rule_results', {
+      id: crypto.randomUUID(),
+      source_type: sourceType,
+      source_id: sourceId,
+      client_id: clientId,
+      vat_period: vatPeriod,
+      rule_key: 'compliance_score',
+      rule_name: 'compliance_score',
+      status: 'calculated',
+      severity: 'info',
+      message: 'Compliance score calculated with no active findings.',
+      details: JSON.stringify({ complianceScore }),
+      score: complianceScore,
+      created_at: evaluatedAt,
+      updated_at: evaluatedAt,
+    });
+  }
 }
 
 /**
@@ -294,6 +434,23 @@ export default function registerVatHandlers(ipcMain, services) {
     }
   });
 
+  ipcMain.handle('vat:receipt:compliance:get', async (event, id) => {
+    try {
+      const receipt = database.getOne('SELECT * FROM vat_receipts WHERE id = ?', [id]);
+      if (!receipt) return { receipt: null, findings: [] };
+
+      const findings = database.getAll(
+        `SELECT * FROM vat_rule_results
+         WHERE source_type = ? AND source_id = ?
+         ORDER BY created_at ASC`,
+        ['purchase_receipt', id]
+      );
+      return { receipt, findings };
+    } catch {
+      return { receipt: null, findings: [] };
+    }
+  });
+
   /** Create or update a receipt (upsert) */
   ipcMain.handle('vat:receipt:save', async (event, data) => {
     try {
@@ -301,6 +458,11 @@ export default function registerVatHandlers(ipcMain, services) {
       const id = data.id || crypto.randomUUID();
       const now = new Date().toISOString();
       const vatPeriod = data.vat_period || getVatPeriod(data.invoice_date);
+      const compliance = evaluatePurchaseReceiptCompliance(database, {
+        ...data,
+        id,
+      });
+      const complianceFields = buildReceiptComplianceFields(compliance, now);
       const mathsValid = (() => {
         const n = Number(data.total_excl_vat) || 0;
         const v = Number(data.vat_amount) || 0;
@@ -325,7 +487,7 @@ export default function registerVatHandlers(ipcMain, services) {
         total_incl_vat: Number(data.total_incl_vat) || 0,
         vat_amount: Number(data.vat_amount) || 0,
         total_excl_vat: Number(data.total_excl_vat) || 0,
-        line_items: data.line_items ? JSON.stringify(data.line_items) : null,
+        line_items: serializeLineItems(data.line_items),
         vat_number_valid: vatNumberValid,
         maths_valid: mathsValid,
         ai_confidence: data.ai_confidence != null ? Number(data.ai_confidence) : null,
@@ -338,6 +500,7 @@ export default function registerVatHandlers(ipcMain, services) {
         bank_transaction_id: data.bank_transaction_id || null,
         is_reconciled: data.is_reconciled ? 1 : 0,
         updated_at: now,
+        ...complianceFields,
       };
 
       if (!isNew) {
@@ -353,7 +516,18 @@ export default function registerVatHandlers(ipcMain, services) {
         record.created_at = now;
         database.insert('vat_receipts', record);
       }
-      return { success: true, id };
+
+      persistRuleResults(database, {
+        sourceType: 'purchase_receipt',
+        sourceId: id,
+        clientId: data.client_id,
+        vatPeriod,
+        findings: compliance.findings,
+        evaluatedAt: now,
+        complianceScore: compliance.summary.complianceScore,
+      });
+
+      return { success: true, id, compliance };
     } catch (e) {
       return { success: false, error: e.message };
     }
@@ -525,7 +699,20 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
         if (dup) flags.push('duplicate_suspected');
       }
 
-      return { success: true, extracted: { ...extracted, flags } };
+      const compliance = evaluatePurchaseReceiptCompliance(database, {
+        ...extracted,
+        flags,
+      });
+
+      return {
+        success: true,
+        extracted: {
+          ...extracted,
+          flags,
+          compliance_score: compliance.summary.complianceScore,
+          compliance,
+        },
+      };
     } catch (e) {
       return { success: false, error: e.message };
     }
