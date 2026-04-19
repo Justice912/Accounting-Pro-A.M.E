@@ -122,6 +122,28 @@ function evaluatePurchaseReceiptCompliance(database, data) {
   });
 }
 
+function evaluateSalesInvoiceCompliance(database, data) {
+  const clientSettings = data.clientSettings || getClientVatSettings(database, data.client_id) || undefined;
+  return evaluateVatDocument({
+    documentTable: 'vat_sales_invoices',
+    direction: 'sale',
+    documentType: data.document_type || 'tax_invoice',
+    totalInclVat: data.total_incl_vat,
+    totalExclVat: data.total_excl_vat,
+    vatAmount: data.vat_amount,
+    invoiceNumber: data.invoice_number,
+    invoiceDate: data.invoice_date,
+    paymentDate: data.payment_date,
+    recipientName: data.customer_name,
+    recipientVatNumber: data.customer_vat_number,
+    supplierName: data.customer_name,
+    supplierVatNumber: data.customer_vat_number,
+    supplierAddress: data.customer_address,
+    lineItems: parseLineItems(data.line_items),
+    clientSettings,
+  });
+}
+
 function buildReceiptComplianceFields(compliance, evaluatedAt) {
   return {
     document_kind: compliance.summary.documentKind || null,
@@ -196,6 +218,14 @@ function persistRuleResults(database, {
       updated_at: evaluatedAt,
     });
   }
+}
+
+function invalidateVatPeriodSummary(database, clientId, vatPeriod) {
+  if (!clientId || !vatPeriod || typeof database?.run !== 'function') return;
+  database.run('DELETE FROM vat_period_summaries WHERE client_id = ? AND vat_period = ?', [
+    clientId,
+    vatPeriod,
+  ]);
 }
 
 /**
@@ -715,6 +745,130 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
       };
     } catch (e) {
       return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('vat:sales:list', async (event, clientId, filters = {}) => {
+    try {
+      let sql = 'SELECT * FROM vat_sales_invoices WHERE client_id = ?';
+      const params = [clientId];
+      if (filters.period) {
+        sql += ' AND vat_period = ?';
+        params.push(filters.period);
+      }
+      if (filters.status && filters.status !== 'all') {
+        sql += ' AND status = ?';
+        params.push(filters.status);
+      }
+      sql += ' ORDER BY invoice_date DESC, created_at DESC';
+      return database.getAll(sql, params);
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('vat:sales:get', async (event, id) => {
+    try {
+      return database.getOne('SELECT * FROM vat_sales_invoices WHERE id = ?', [id]);
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.handle('vat:sales:save', async (event, data) => {
+    try {
+      const isNew = !data.id;
+      const id = data.id || crypto.randomUUID();
+      const now = new Date().toISOString();
+      const vatPeriod = data.vat_period || getVatPeriod(data.invoice_date);
+      const compliance = evaluateSalesInvoiceCompliance(database, {
+        ...data,
+        id,
+      });
+
+      const record = {
+        id,
+        client_id: data.client_id,
+        document_type: data.document_type || 'tax_invoice',
+        customer_name: data.customer_name || null,
+        customer_vat_number: data.customer_vat_number || null,
+        customer_address: data.customer_address || null,
+        invoice_number: data.invoice_number || null,
+        invoice_date: data.invoice_date || null,
+        payment_date: data.payment_date || null,
+        total_incl_vat: Number(data.total_incl_vat) || 0,
+        vat_amount: Number(data.vat_amount) || 0,
+        total_excl_vat: Number(data.total_excl_vat) || 0,
+        line_items: serializeLineItems(data.line_items),
+        vat_period: vatPeriod,
+        document_kind: compliance.summary.documentKind || null,
+        supply_type: compliance.summary.supplyType || null,
+        supply_type_reason: compliance.summary.supplyTypeReason || null,
+        time_of_supply_date: compliance.summary.timeOfSupplyDate || null,
+        duplicate_status: compliance.summary.duplicateStatus || 'clear',
+        compliance_score: Number(compliance.summary.complianceScore) || 0,
+        status: data.status || 'pending',
+        review_notes: data.review_notes || null,
+        rules_evaluated_at: now,
+        updated_at: now,
+      };
+
+      if (!isNew) {
+        const setClauses = Object.keys(record)
+          .filter(key => key !== 'id' && key !== 'client_id' && key !== 'created_at')
+          .map(key => `${key} = ?`)
+          .join(', ');
+        const values = Object.keys(record)
+          .filter(key => key !== 'id' && key !== 'client_id' && key !== 'created_at')
+          .map(key => record[key]);
+        values.push(id);
+        database.run(`UPDATE vat_sales_invoices SET ${setClauses} WHERE id = ?`, values);
+      } else {
+        record.created_at = now;
+        database.insert('vat_sales_invoices', record);
+      }
+
+      persistRuleResults(database, {
+        sourceType: 'sales_invoice',
+        sourceId: id,
+        clientId: data.client_id,
+        vatPeriod,
+        findings: compliance.findings,
+        evaluatedAt: now,
+        complianceScore: compliance.summary.complianceScore,
+      });
+      invalidateVatPeriodSummary(database, data.client_id, vatPeriod);
+
+      return { success: true, id, compliance };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:sales:delete', async (event, id) => {
+    try {
+      const existing = database.getOne('SELECT * FROM vat_sales_invoices WHERE id = ?', [id]);
+      database.run('DELETE FROM vat_sales_invoices WHERE id = ?', [id]);
+      database.run('DELETE FROM vat_rule_results WHERE source_type = ? AND source_id = ?', ['sales_invoice', id]);
+      invalidateVatPeriodSummary(database, existing?.client_id, existing?.vat_period);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:sales:update-status', async (event, id, status, notes) => {
+    try {
+      const now = new Date().toISOString();
+      const existing = database.getOne('SELECT * FROM vat_sales_invoices WHERE id = ?', [id]);
+      database.run(
+        'UPDATE vat_sales_invoices SET status = ?, review_notes = ?, reviewed_at = ?, updated_at = ? WHERE id = ?',
+        [status, notes || null, now, now, id]
+      );
+      invalidateVatPeriodSummary(database, existing?.client_id, existing?.vat_period);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   });
 

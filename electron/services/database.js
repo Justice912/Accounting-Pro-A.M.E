@@ -333,6 +333,20 @@ export function ensureVatComplianceSchema(database = getDb()) {
       database.exec(`ALTER TABLE vat_receipts ADD COLUMN ${columnName} ${columnType}`);
     }
   }
+
+  const salesColumns = database.prepare("PRAGMA table_info('vat_sales_invoices')").all().map(row => row.name);
+  const salesWorkflowColumns = [
+    ['vat_period', 'TEXT'],
+    ['line_items', 'TEXT'],
+    ['document_kind', 'TEXT'],
+    ['reviewed_at', 'DATETIME'],
+  ];
+
+  for (const [columnName, columnType] of salesWorkflowColumns) {
+    if (!salesColumns.includes(columnName)) {
+      database.exec(`ALTER TABLE vat_sales_invoices ADD COLUMN ${columnName} ${columnType}`);
+    }
+  }
 }
 
 export function ensureVatReminderStateIndex(database = getDb()) {
