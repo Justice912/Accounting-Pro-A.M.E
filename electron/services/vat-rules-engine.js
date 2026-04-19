@@ -86,6 +86,7 @@ export function normalizeVatDocument(input = {}) {
     totalInclVat: normalizeNumber(input.totalInclVat),
     totalExclVat: normalizeNumber(input.totalExclVat),
     vatAmount: normalizeNumber(input.vatAmount),
+    vatType: normalizeString(input.vatType ?? input.vat_type),
     hasTextTaxInvoice: normalizeOptionalBoolean(input.hasTextTaxInvoice),
     supplierName: normalizeString(input.supplierName),
     supplierVatNumber: normalizeString(input.supplierVatNumber),
@@ -322,6 +323,39 @@ export function scoreCompliance(findings) {
   return Math.max(0, score);
 }
 
+function buildVat201Contribution(document, classification, apportionment) {
+  const contribution = {
+    standardRatedSuppliesExclVat: 0,
+    zeroRatedSuppliesExclVat: 0,
+    exemptSuppliesExclVat: 0,
+    outputTax: 0,
+    inputTax: 0,
+    capitalInputTax: 0,
+  };
+
+  if (document.direction === 'sale') {
+    if (classification.supplyType === 'zero') {
+      contribution.zeroRatedSuppliesExclVat = document.totalExclVat;
+    } else if (classification.supplyType === 'exempt') {
+      contribution.exemptSuppliesExclVat = document.totalExclVat;
+    } else {
+      contribution.standardRatedSuppliesExclVat = document.totalExclVat;
+      contribution.outputTax = document.vatAmount;
+    }
+    return contribution;
+  }
+
+  if (document.direction === 'purchase') {
+    if (document.vatType === 'capital') {
+      contribution.capitalInputTax = apportionment.apportionedInputAmount;
+    } else {
+      contribution.inputTax = apportionment.apportionedInputAmount;
+    }
+  }
+
+  return contribution;
+}
+
 export function classifySupply(document) {
   const zeroRatedReason = findZeroRatedReason(document.lineItems);
   if (zeroRatedReason) {
@@ -360,6 +394,7 @@ export function evaluateVatDocument(input) {
   const complianceScore = scoreCompliance(findings);
   const penaltyRisk = calculatePenaltyRisk(document.periodContext);
   const advisories = penaltyRisk ? [penaltyRisk] : [];
+  const vat201 = buildVat201Contribution(document, classification, apportionment);
 
   return {
     summary: {
@@ -377,6 +412,7 @@ export function evaluateVatDocument(input) {
     computed: {
       supplyType: classification.supplyType,
       supplyTypeReason: classification.reason,
+      vat201,
       timeOfSupplyDate: timeOfSupply.timeOfSupplyDate,
       blockedInputAmount: blockResult.blockedInputAmount,
       apportionedInputAmount: apportionment.apportionedInputAmount,
