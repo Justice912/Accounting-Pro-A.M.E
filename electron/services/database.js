@@ -347,6 +347,20 @@ export function ensureVatComplianceSchema(database = getDb()) {
       database.exec(`ALTER TABLE vat_sales_invoices ADD COLUMN ${columnName} ${columnType}`);
     }
   }
+
+  const periodSummaryColumns = database.prepare("PRAGMA table_info('vat_period_summaries')").all().map(row => row.name);
+  const periodSummaryExtras = [
+    ['compliance_score', 'REAL DEFAULT 0'],
+    ['penalty_risk_amount', 'REAL DEFAULT 0'],
+    ['blocked_input_vat', 'REAL DEFAULT 0'],
+    ['apportioned_input_vat', 'REAL DEFAULT 0'],
+  ];
+
+  for (const [columnName, columnType] of periodSummaryExtras) {
+    if (!periodSummaryColumns.includes(columnName)) {
+      database.exec(`ALTER TABLE vat_period_summaries ADD COLUMN ${columnName} ${columnType}`);
+    }
+  }
 }
 
 export function ensureVatReminderStateIndex(database = getDb()) {

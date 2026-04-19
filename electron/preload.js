@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('api', {
   vatUpdateReminderState: (payload) => ipcRenderer.invoke('vat:reminder:update-state', payload),
   vatReminderCount: () => ipcRenderer.invoke('vat:reminders:count'),
   vatDashboardGet: (period) => ipcRenderer.invoke('vat:dashboard:get', period),
+  vatGetPeriodSummary: (clientId, period) => ipcRenderer.invoke('vat:period-summary:get', clientId, period),
   vatListSales: (clientId, filters) => ipcRenderer.invoke('vat:sales:list', clientId, filters),
   vatGetSalesInvoice: (id) => ipcRenderer.invoke('vat:sales:get', id),
   vatSaveSalesInvoice: (data) => ipcRenderer.invoke('vat:sales:save', data),

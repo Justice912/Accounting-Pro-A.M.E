@@ -67,7 +67,7 @@ function SummaryCard({ icon: Icon, label, value, sub, color = 'text-slate-800' }
   );
 }
 
-function ClientCard({ client, onOpen }) {
+function ClientCard({ client, onOpen, onPreview }) {
   const u = URGENCY[client.urgency] || URGENCY.clear;
   const sched = SCHEDULE_STATUS[client.schedule.status] || SCHEDULE_STATUS.missing;
   const SchedIcon = sched.icon;
@@ -76,10 +76,7 @@ function ClientCard({ client, onOpen }) {
     : null;
 
   return (
-    <button
-      onClick={() => onOpen(client.id)}
-      className={`w-full text-left rounded-xl border ${u.border} ${u.bg} p-4 hover:shadow-md transition-shadow group`}
-    >
+    <div className={`rounded-xl border ${u.border} ${u.bg} p-4 transition-shadow hover:shadow-md`}>
       <div className="flex items-start justify-between mb-3">
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-slate-800 truncate">{client.name}</h3>
@@ -144,10 +141,33 @@ function ClientCard({ client, onOpen }) {
         </div>
       )}
 
-      <div className="flex items-center justify-end gap-1 mt-2 text-xs text-slate-400 group-hover:text-[#1B4F72] transition-colors">
-        Open <ArrowRight className="w-3 h-3" />
+      <div className="mt-2 rounded-lg bg-white/70 px-3 py-2 text-xs text-slate-600">
+        <div className="flex items-center justify-between">
+          <span>Compliance score</span>
+          <span className="font-semibold text-slate-800">{Math.round(client.complianceScore || 0)}</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between">
+          <span>Penalty risk</span>
+          <span className="font-semibold text-slate-800">{toZAR(client.penaltyRisk)}</span>
+        </div>
       </div>
-    </button>
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          onClick={() => onOpen(client.id)}
+          className="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
+        >
+          Open
+          <ArrowRight className="w-3 h-3" />
+        </button>
+        <button
+          onClick={() => onPreview(client.id)}
+          className="inline-flex items-center gap-1 rounded-lg bg-[#1B4F72] px-3 py-2 text-xs font-medium text-white hover:bg-[#2E75B6]"
+        >
+          <FileSpreadsheet className="w-3.5 h-3.5" />
+          VAT201
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -178,6 +198,10 @@ export default function VATDashboard() {
 
   const handleOpenClient = (clientId) => {
     navigate(`/vat-capture?client=${clientId}&period=${period || data?.period || ''}`);
+  };
+
+  const handlePreviewClient = (clientId) => {
+    navigate(`/vat201-preview?client=${clientId}&period=${period || data?.period || ''}`);
   };
 
   const filteredClients = useMemo(() => {
@@ -250,7 +274,7 @@ export default function VATDashboard() {
 
         {/* Summary cards */}
         {!loading && data?.clients?.length > 0 && (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
             <SummaryCard icon={Users} label="Clients" value={s.totalClients || 0}
               sub={s.clientsWithWork > 0 ? `${s.clientsWithWork} need attention` : 'All clear'} />
             <SummaryCard icon={Receipt} label="Receipts" value={s.totalReceipts || 0}
@@ -264,6 +288,12 @@ export default function VATDashboard() {
             <SummaryCard icon={Banknote} label="Reconciliation"
               value={s.reconciliationRate != null ? `${Math.round(s.reconciliationRate * 100)}%` : '—'}
               sub={s.reconciliationRate != null ? 'Bank match rate' : 'No bank data'} />
+            <SummaryCard icon={ShieldCheck} label="Compliance"
+              value={Math.round(s.averageComplianceScore || 0)}
+              sub="Average score" />
+            <SummaryCard icon={AlertCircle} label="Penalty Risk"
+              value={toZAR(s.totalPenaltyRisk || 0)}
+              sub={toZAR(s.totalBlockedInputVat || 0)} />
           </div>
         )}
 
@@ -311,7 +341,12 @@ export default function VATDashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredClients.map(client => (
-              <ClientCard key={client.id} client={client} onOpen={handleOpenClient} />
+              <ClientCard
+                key={client.id}
+                client={client}
+                onOpen={handleOpenClient}
+                onPreview={handlePreviewClient}
+              />
             ))}
           </div>
         )}

@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { buildReminderCandidates } from '../services/vat-reminders.js';
 import { evaluateVatDocument } from '../services/vat-rules-engine.js';
+import { buildVatPeriodSummary } from '../services/vat-period-summary.js';
 
 const VAT_RATE = 0.15;
 
@@ -226,6 +227,157 @@ function invalidateVatPeriodSummary(database, clientId, vatPeriod) {
     clientId,
     vatPeriod,
   ]);
+}
+
+function mapReceiptToPeriodSummaryInput(receipt) {
+  const apportioned = Number(receipt.apportioned_input_amount) || Number(receipt.vat_amount) || 0;
+  return {
+    id: receipt.id,
+    status: receipt.status,
+    summary: {
+      blockedInputAmount: Number(receipt.blocked_input_amount) || 0,
+      apportionedInputAmount: apportioned,
+      duplicateStatus: receipt.duplicate_status || 'clear',
+      complianceScore: Number(receipt.compliance_score) || 0,
+    },
+    computed: {
+      vat201: {
+        inputTax: receipt.vat_type === 'capital' ? 0 : apportioned,
+        capitalInputTax: receipt.vat_type === 'capital' ? apportioned : 0,
+      },
+    },
+  };
+}
+
+function mapSalesInvoiceToPeriodSummaryInput(invoice) {
+  const supplyType = invoice.supply_type || 'standard';
+  const totalExclVat = Number(invoice.total_excl_vat) || 0;
+  const vatAmount = Number(invoice.vat_amount) || 0;
+  return {
+    id: invoice.id,
+    status: invoice.status,
+    summary: {
+      duplicateStatus: invoice.duplicate_status || 'clear',
+      complianceScore: Number(invoice.compliance_score) || 0,
+    },
+    computed: {
+      vat201: {
+        standardRatedSuppliesExclVat: supplyType === 'standard' ? totalExclVat : 0,
+        zeroRatedSuppliesExclVat: supplyType === 'zero' ? totalExclVat : 0,
+        exemptSuppliesExclVat: supplyType === 'exempt' ? totalExclVat : 0,
+        outputTax: supplyType === 'standard' ? vatAmount : 0,
+      },
+    },
+  };
+}
+
+function toPersistedPeriodSummary(summary, now) {
+  return {
+    id: `${summary.clientId}_${summary.period}`,
+    client_id: summary.clientId,
+    vat_period: summary.period,
+    output_vat: Number(summary.totals?.outputVat) || 0,
+    input_vat: Number(summary.totals?.inputVat) || 0,
+    net_vat: Number(summary.netVat) || 0,
+    filing_status: 'draft',
+    summary_data: JSON.stringify({
+      vat201: summary.vat201,
+      totals: summary.totals,
+      penaltyRisk: summary.penaltyRisk,
+    }),
+    compliance_score: Number(summary.complianceScore) || 0,
+    penalty_risk_amount: Number(summary.penaltyRisk?.latePenalty) || 0,
+    blocked_input_vat: Number(summary.totals?.blockedInputVat) || 0,
+    apportioned_input_vat: Number(summary.totals?.apportionedInputVat) || 0,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function normalizeStoredPeriodSummary(row) {
+  if (!row) return null;
+  let summaryData = {};
+  try {
+    summaryData = JSON.parse(row.summary_data || '{}');
+  } catch {
+    summaryData = {};
+  }
+
+  return {
+    clientId: row.client_id,
+    period: row.vat_period,
+    vat201: summaryData.vat201 || {},
+    totals: summaryData.totals || {
+      outputVat: Number(row.output_vat) || 0,
+      inputVat: Number(row.input_vat) || 0,
+      blockedInputVat: Number(row.blocked_input_vat) || 0,
+      apportionedInputVat: Number(row.apportioned_input_vat) || 0,
+    },
+    netVat: Number(row.net_vat) || 0,
+    complianceScore: Number(row.compliance_score) || 0,
+    penaltyRisk: summaryData.penaltyRisk || {
+      latePenalty: Number(row.penalty_risk_amount) || 0,
+    },
+  };
+}
+
+function buildAndPersistPeriodSummary(database, clientId, period, now) {
+  const purchases = database.getAll(
+    'SELECT * FROM vat_receipts WHERE client_id = ? AND vat_period = ?',
+    [clientId, period]
+  ).map(mapReceiptToPeriodSummaryInput);
+  const sales = database.getAll(
+    'SELECT * FROM vat_sales_invoices WHERE client_id = ? AND vat_period = ?',
+    [clientId, period]
+  ).map(mapSalesInvoiceToPeriodSummaryInput);
+
+  const client = typeof database?.getOne === 'function'
+    ? database.getOne(
+      `SELECT penalty_interest_rate
+       FROM clients WHERE id = ?`,
+      [clientId]
+    )
+    : null;
+
+  const summary = buildVatPeriodSummary({
+    clientId,
+    period,
+    purchases,
+    sales,
+    clientSettings: client
+      ? { penaltyInterestRate: Number(client.penalty_interest_rate) || 0 }
+      : null,
+    now: now.toISOString().slice(0, 10),
+  });
+
+  if (typeof database?.run === 'function') {
+    const persisted = toPersistedPeriodSummary(summary, now.toISOString());
+    database.run(
+      `INSERT OR REPLACE INTO vat_period_summaries
+       (id, client_id, vat_period, output_vat, input_vat, net_vat, filing_status,
+        summary_data, compliance_score, penalty_risk_amount, blocked_input_vat,
+        apportioned_input_vat, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        persisted.id,
+        persisted.client_id,
+        persisted.vat_period,
+        persisted.output_vat,
+        persisted.input_vat,
+        persisted.net_vat,
+        persisted.filing_status,
+        persisted.summary_data,
+        persisted.compliance_score,
+        persisted.penalty_risk_amount,
+        persisted.blocked_input_vat,
+        persisted.apportioned_input_vat,
+        persisted.created_at,
+        persisted.updated_at,
+      ]
+    );
+  }
+
+  return summary;
 }
 
 /**
@@ -556,6 +708,7 @@ export default function registerVatHandlers(ipcMain, services) {
         evaluatedAt: now,
         complianceScore: compliance.summary.complianceScore,
       });
+      invalidateVatPeriodSummary(database, data.client_id, vatPeriod);
 
       return { success: true, id, compliance };
     } catch (e) {
@@ -566,7 +719,10 @@ export default function registerVatHandlers(ipcMain, services) {
   /** Delete a receipt */
   ipcMain.handle('vat:receipt:delete', async (event, id) => {
     try {
+      const existing = database.getOne('SELECT client_id, vat_period FROM vat_receipts WHERE id = ?', [id]);
       database.run('DELETE FROM vat_receipts WHERE id = ?', [id]);
+      database.run('DELETE FROM vat_rule_results WHERE source_type = ? AND source_id = ?', ['purchase_receipt', id]);
+      invalidateVatPeriodSummary(database, existing?.client_id, existing?.vat_period);
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };
@@ -577,10 +733,12 @@ export default function registerVatHandlers(ipcMain, services) {
   ipcMain.handle('vat:receipt:update-status', async (event, id, status, notes) => {
     try {
       const now = new Date().toISOString();
+      const existing = database.getOne('SELECT client_id, vat_period FROM vat_receipts WHERE id = ?', [id]);
       database.run(
         'UPDATE vat_receipts SET status = ?, review_notes = ?, reviewed_at = ?, updated_at = ? WHERE id = ?',
         [status, notes || null, now, now, id]
       );
+      invalidateVatPeriodSummary(database, existing?.client_id, existing?.vat_period);
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };
@@ -591,11 +749,17 @@ export default function registerVatHandlers(ipcMain, services) {
   ipcMain.handle('vat:receipt:bulk-status', async (event, ids, status) => {
     try {
       const now = new Date().toISOString();
+      const receipts = database.getAll(
+        `SELECT id, client_id, vat_period FROM vat_receipts
+         WHERE id IN (${ids.map(() => '?').join(', ')})`,
+        ids
+      );
       const placeholders = ids.map(() => '?').join(', ');
       database.run(
         `UPDATE vat_receipts SET status = ?, reviewed_at = ?, updated_at = ? WHERE id IN (${placeholders})`,
         [status, now, now, ...ids]
       );
+      receipts.forEach(receipt => invalidateVatPeriodSummary(database, receipt.client_id, receipt.vat_period));
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };
@@ -1061,6 +1225,20 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
     }
   });
 
+  ipcMain.handle('vat:period-summary:get', async (event, clientId, period) => {
+    try {
+      if (!clientId || !period) return null;
+      const existing = database.getOne(
+        'SELECT * FROM vat_period_summaries WHERE client_id = ? AND vat_period = ?',
+        [clientId, period]
+      );
+      if (existing) return normalizeStoredPeriodSummary(existing);
+      return buildAndPersistPeriodSummary(database, clientId, period, getHandlerNow(services));
+    } catch {
+      return null;
+    }
+  });
+
   // ── Dashboard (practice-wide overview) ──────────────────────────────────
 
   ipcMain.handle('vat:dashboard:get', async (event, period) => {
@@ -1097,6 +1275,17 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
         clientRows.forEach(c => { clientMap[c.id] = c; });
       }
 
+      const complianceSummary = database.getOne(
+        `SELECT
+          AVG(compliance_score) AS average_compliance_score,
+          SUM(penalty_risk_amount) AS total_penalty_risk,
+          SUM(blocked_input_vat) AS blocked_input_vat,
+          SUM(apportioned_input_vat) AS apportioned_input_vat
+         FROM vat_period_summaries
+         WHERE vat_period = ?`,
+        [effectivePeriod]
+      ) || {};
+
       let totalReceipts = 0, totalPending = 0, totalApproved = 0, totalFlagged = 0;
       let totalInputVat = 0, totalPurchases = 0;
       let totalBankTxns = 0, totalBankMatched = 0;
@@ -1104,6 +1293,13 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
 
       const clients = clientIds.map(cid => {
         const client = clientMap[cid] || { id: cid, name: cid, vat_number: null };
+        const periodSummaryRow = database.getOne(
+          'SELECT * FROM vat_period_summaries WHERE client_id = ? AND vat_period = ?',
+          [cid, effectivePeriod]
+        );
+        const periodSummary = periodSummaryRow
+          ? normalizeStoredPeriodSummary(periodSummaryRow)
+          : buildAndPersistPeriodSummary(database, cid, effectivePeriod, now);
 
         // Receipt stats
         const rStats = database.getOne(
@@ -1190,6 +1386,10 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
           reminders: reminderCount,
           inputVat: rStats.input_vat || 0,
           totalPurchases: rStats.purchases || 0,
+          complianceScore: periodSummary?.complianceScore || 0,
+          penaltyRisk: Number(periodSummary?.penaltyRisk?.latePenalty) || 0,
+          blockedInputVat: Number(periodSummary?.totals?.blockedInputVat) || 0,
+          apportionedInputVat: Number(periodSummary?.totals?.apportionedInputVat) || 0,
           urgency,
         };
       });
@@ -1213,6 +1413,12 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
           clientsWithWork,
           totalReceipts, totalPending, totalApproved, totalFlagged,
           totalInputVat, totalPurchases,
+          averageComplianceScore:
+            Number(complianceSummary.average_compliance_score ?? complianceSummary.compliance_score) || 0,
+          totalPenaltyRisk:
+            Number(complianceSummary.total_penalty_risk ?? complianceSummary.penalty_risk_amount) || 0,
+          totalBlockedInputVat: Number(complianceSummary.blocked_input_vat) || 0,
+          totalApportionedInputVat: Number(complianceSummary.apportioned_input_vat) || 0,
           reconciliationRate: totalBankTxns > 0 ? totalBankMatched / totalBankTxns : null,
           daysUntilClose,
         },
