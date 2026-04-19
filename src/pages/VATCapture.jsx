@@ -178,6 +178,10 @@ function VatReminderCard({ reminder, onAction, onDismiss, onSnooze }) {
   const message = reminder.message || '';
   const actionLabel = reminder.ruleKey === 'flagged_receipts'
     ? 'Focus receipt'
+    : reminder.ruleKey === 'critical_compliance_findings'
+      ? 'Review compliance'
+      : reminder.ruleKey === 'duplicate_documents'
+        ? 'Review duplicates'
     : reminder.ruleKey === 'period_closing'
       ? 'Review period'
       : reminder.actionTab === 'schedule' || reminder.ruleKey === 'schedule_missing' || reminder.ruleKey === 'schedule_stale'

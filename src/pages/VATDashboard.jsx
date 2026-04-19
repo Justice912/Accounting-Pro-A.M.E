@@ -151,6 +151,11 @@ function ClientCard({ client, onOpen, onPreview }) {
           <span className="font-semibold text-slate-800">{toZAR(client.penaltyRisk)}</span>
         </div>
       </div>
+      {client.complianceScore < 50 && (
+        <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          Critical compliance work is still unresolved for this VAT period.
+        </div>
+      )}
       <div className="mt-3 flex items-center gap-2">
         <button
           onClick={() => onOpen(client.id)}

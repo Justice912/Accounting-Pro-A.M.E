@@ -1,10 +1,13 @@
 const PRIORITY = {
   period_closing: 0,
-  pending_receipts: 1,
-  flagged_receipts: 2,
-  queried_receipts: 3,
-  schedule_missing: 4,
-  schedule_stale: 5,
+  critical_compliance_findings: 1,
+  pending_receipts: 2,
+  flagged_receipts: 3,
+  queried_receipts: 4,
+  duplicate_documents: 5,
+  schedule_missing: 6,
+  schedule_stale: 7,
+  high_penalty_risk: 8,
 };
 
 const META = {
@@ -13,6 +16,12 @@ const META = {
     severity: 'warning',
     actionTab: 'receipts',
     actionFilter: 'pending',
+  },
+  critical_compliance_findings: {
+    title: 'Critical compliance findings',
+    severity: 'error',
+    actionTab: 'receipts',
+    actionFilter: null,
   },
   flagged_receipts: {
     title: 'Flagged receipts',
@@ -35,6 +44,18 @@ const META = {
   schedule_stale: {
     title: 'VAT schedule stale',
     severity: 'warning',
+    actionTab: 'schedule',
+    actionFilter: null,
+  },
+  duplicate_documents: {
+    title: 'Duplicate documents',
+    severity: 'warning',
+    actionTab: 'receipts',
+    actionFilter: null,
+  },
+  high_penalty_risk: {
+    title: 'High penalty risk',
+    severity: 'error',
     actionTab: 'schedule',
     actionFilter: null,
   },
@@ -85,16 +106,22 @@ function pluralize(count, singular, plural = `${singular}s`) {
 
 function buildReminderMessage(ruleKey, count, period, extras = {}) {
   switch (ruleKey) {
+    case 'critical_compliance_findings':
+      return `${pluralize(count, 'receipt')} have unresolved critical VAT compliance findings for ${period}.`;
     case 'pending_receipts':
       return `${pluralize(count, 'receipt')} still need review for ${period}.`;
     case 'flagged_receipts':
       return `${pluralize(count, 'receipt')} have flags that need attention for ${period}.`;
     case 'queried_receipts':
       return `${pluralize(count, 'receipt')} are marked as query for ${period}.`;
+    case 'duplicate_documents':
+      return `${pluralize(count, 'document')} are marked as duplicates or likely duplicates for ${period}.`;
     case 'schedule_missing':
       return `Approved receipts are ready, but the VAT schedule has not been generated for ${period}.`;
     case 'schedule_stale':
       return `The VAT schedule is out of date and should be regenerated for ${period}.`;
+    case 'high_penalty_risk':
+      return `Penalty risk is elevated for ${period} and needs review before filing.`;
     case 'period_closing':
       return `This VAT period closes in ${count} ${count === 1 ? 'day' : 'days'}.`;
     default:
@@ -139,6 +166,9 @@ function fingerprintItem(item) {
     vat_amount: item?.vat_amount ?? null,
     total_excl_vat: item?.total_excl_vat ?? null,
     total_incl_vat: item?.total_incl_vat ?? null,
+    compliance_score: item?.compliance_score ?? null,
+    critical_finding_count: item?.critical_finding_count ?? null,
+    duplicate_status: item?.duplicate_status ?? null,
     flags: parseFlags(item?.flags).slice().sort(),
   });
 }
@@ -173,8 +203,25 @@ export function buildReminderCandidates({
   const pending = receipts.filter(receipt => receipt.status === 'pending');
   const queried = receipts.filter(receipt => receipt.status === 'query');
   const flagged = receipts.filter(receipt => receipt.status !== 'approved' && parseFlags(receipt.flags).length > 0);
+  const criticalCompliance = receipts.filter(receipt => (
+    receipt.status !== 'approved' &&
+    (
+      (Number(receipt.critical_finding_count) || 0) > 0 ||
+      (receipt.compliance_score != null && Number(receipt.compliance_score) < 50)
+    )
+  ));
+  const duplicates = receipts.filter(receipt => (
+    receipt.status !== 'approved' &&
+    ['duplicate', 'probable', 'suspected'].includes(String(receipt.duplicate_status || '').toLowerCase())
+  ));
   const approved = receipts.filter(receipt => receipt.status === 'approved');
   const reminders = [];
+
+  if (criticalCompliance.length) {
+    reminders.push(buildReminder('critical_compliance_findings', clientId, period, criticalCompliance.length, {
+      conditionSignature: makeConditionSignature('critical_compliance_findings', criticalCompliance),
+    }));
+  }
 
   if (pending.length) {
     reminders.push(buildReminder('pending_receipts', clientId, period, pending.length, {
@@ -191,6 +238,12 @@ export function buildReminderCandidates({
   if (queried.length) {
     reminders.push(buildReminder('queried_receipts', clientId, period, queried.length, {
       conditionSignature: makeConditionSignature('queried_receipts', queried),
+    }));
+  }
+
+  if (duplicates.length) {
+    reminders.push(buildReminder('duplicate_documents', clientId, period, duplicates.length, {
+      conditionSignature: makeConditionSignature('duplicate_documents', duplicates),
     }));
   }
 
@@ -229,6 +282,14 @@ export function buildReminderCandidates({
           inputVatTotal: schedule.input_vat_total ?? null,
           receiptCount: schedule.receipt_count ?? null,
           scheduleUpdatedAt: schedule.updated_at ?? null,
+        }),
+      }));
+    }
+
+    if (Number(schedule.penalty_risk_amount) > 0) {
+      reminders.push(buildReminder('high_penalty_risk', clientId, period, 1, {
+        conditionSignature: makeConditionSignature('high_penalty_risk', [schedule], {
+          penaltyRiskAmount: schedule.penalty_risk_amount,
         }),
       }));
     }
