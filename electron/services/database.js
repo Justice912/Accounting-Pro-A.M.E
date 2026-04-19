@@ -238,6 +238,83 @@ function getDbPath() {
 
 const VAT_REMINDER_STATE_INDEX_SQL = 'CREATE UNIQUE INDEX IF NOT EXISTS idx_vat_reminder_state_period ON vat_reminder_state(client_id, vat_period, rule_key)';
 
+export function ensureVatComplianceSchema(database = getDb()) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS vat_sales_invoices (
+      id TEXT PRIMARY KEY,
+      client_id TEXT REFERENCES clients(id),
+      document_type TEXT DEFAULT 'tax_invoice',
+      customer_name TEXT,
+      customer_vat_number TEXT,
+      customer_address TEXT,
+      invoice_number TEXT,
+      invoice_date TEXT,
+      payment_date TEXT,
+      total_incl_vat REAL DEFAULT 0,
+      vat_amount REAL DEFAULT 0,
+      total_excl_vat REAL DEFAULT 0,
+      supply_type TEXT,
+      supply_type_reason TEXT,
+      time_of_supply_date TEXT,
+      time_of_supply_reason TEXT,
+      duplicate_status TEXT DEFAULT 'clear',
+      compliance_score REAL DEFAULT 0,
+      status TEXT DEFAULT 'pending',
+      review_notes TEXT,
+      rules_version TEXT,
+      rules_evaluated_at TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS vat_rule_results (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      client_id TEXT REFERENCES clients(id),
+      vat_period TEXT,
+      rule_key TEXT NOT NULL,
+      rule_name TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      severity TEXT DEFAULT 'info',
+      message TEXT,
+      details TEXT,
+      score REAL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS vat_period_summaries (
+      id TEXT PRIMARY KEY,
+      client_id TEXT REFERENCES clients(id),
+      vat_period TEXT NOT NULL,
+      output_vat REAL DEFAULT 0,
+      input_vat REAL DEFAULT 0,
+      net_vat REAL DEFAULT 0,
+      filing_status TEXT DEFAULT 'draft',
+      submission_reference TEXT,
+      summary_data TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  const clientColumns = database.prepare("PRAGMA table_info('clients')").all().map(row => row.name);
+  const clientVatColumns = [
+    ['vat_category', 'TEXT'],
+    ['vat_registered', 'INTEGER DEFAULT 0'],
+    ['has_mixed_supplies', 'INTEGER DEFAULT 0'],
+    ['apportionment_ratio', 'REAL'],
+    ['penalty_interest_rate', 'REAL DEFAULT 0'],
+  ];
+
+  for (const [columnName, columnType] of clientVatColumns) {
+    if (!clientColumns.includes(columnName)) {
+      database.exec(`ALTER TABLE clients ADD COLUMN ${columnName} ${columnType}`);
+    }
+  }
+}
+
 export function ensureVatReminderStateIndex(database = getDb()) {
   const indexRows = database.prepare("PRAGMA index_list('vat_reminder_state')").all();
   const existing = indexRows.find(row => row.name === 'idx_vat_reminder_state_period');
@@ -295,6 +372,7 @@ async function initialize() {
 
   // Run migrations / create tables
   db.exec(SCHEMA);
+  ensureVatComplianceSchema(db);
   ensureVatReminderStateIndex(db);
 
   // Migration: add workflow_type column to conversations if missing
