@@ -297,6 +297,42 @@ export function ensureVatComplianceSchema(database = getDb()) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS vat_document_overrides (
+      id TEXT PRIMARY KEY,
+      document_type TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      override_type TEXT NOT NULL,
+      override_value_json TEXT,
+      reason TEXT,
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      cleared_at DATETIME,
+      cleared_by TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS vat_document_override_history (
+      id TEXT PRIMARY KEY,
+      document_type TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      override_type TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      previous_value_json TEXT,
+      next_value_json TEXT,
+      reason TEXT,
+      actor TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_vat_document_overrides_document
+    ON vat_document_overrides(document_type, document_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_vat_document_overrides_active_unique
+    ON vat_document_overrides(document_type, document_id, override_type)
+    WHERE cleared_at IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_vat_document_override_history_document_created
+    ON vat_document_override_history(document_type, document_id, created_at);
   `);
 
   const clientColumns = database.prepare("PRAGMA table_info('clients')").all().map(row => row.name);
