@@ -152,6 +152,43 @@ test('clearDocumentOverride clears the active row and preserves override history
   assert.equal(history[1].actor, 'reviewer.user');
 });
 
+test('saveDocumentOverride updates an existing override and appends update history', () => {
+  const db = createTestDatabase();
+
+  const created = saveDocumentOverride(db, {
+    documentType: 'sales_invoice',
+    documentId: 'sale-1',
+    overrideType: 'supply_type',
+    value: 'zero',
+    reason: 'Initial export treatment.',
+    createdBy: 'qa.user',
+  });
+
+  const updated = saveDocumentOverride(db, {
+    documentType: 'sales_invoice',
+    documentId: 'sale-1',
+    overrideType: 'supply_type',
+    value: 'exempt',
+    reason: 'Reclassified after final review.',
+    createdBy: 'reviewer.user',
+  });
+
+  const activeOverrides = getActiveDocumentOverrides(db, 'sales_invoice', 'sale-1');
+  const history = getDocumentOverrideHistory(db, 'sales_invoice', 'sale-1');
+
+  assert.equal(activeOverrides.length, 1);
+  assert.equal(updated.id, created.id);
+  assert.equal(updated.override_value, 'exempt');
+  assert.equal(updated.reason, 'Reclassified after final review.');
+  assert.equal(updated.created_by, 'reviewer.user');
+  assert.equal(history.length, 2);
+  assert.equal(history[0].event_type, 'create');
+  assert.equal(history[1].event_type, 'update');
+  assert.equal(history[1].previous_value, 'zero');
+  assert.equal(history[1].next_value, 'exempt');
+  assert.equal(history[1].actor, 'reviewer.user');
+});
+
 test('saveDocumentOverride requires a reason and rejects unknown override types', () => {
   const db = createTestDatabase();
 
