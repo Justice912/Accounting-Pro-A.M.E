@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Users, Plus, Pencil, Trash2, X, Save, Search, Building2, User } from 'lucide-react';
+import {
+  getClientVatSettingsDraft,
+  normalizeClientVatSettingsInput,
+  VAT_CATEGORY_OPTIONS,
+} from './clientVatSettingsViewModel.js';
 
 const FIELD_DEFS = [
   { key: 'name', label: 'Client Name', required: true },
@@ -19,11 +24,19 @@ const FIELD_DEFS = [
 
 const emptyClient = Object.fromEntries(FIELD_DEFS.map(f => [f.key, '']));
 
+function createEmptyClientForm() {
+  return {
+    ...emptyClient,
+    ...getClientVatSettingsDraft(),
+    type: 'individual',
+  };
+}
+
 export default function ClientManager({ onClose }) {
   const [clients, setClients] = useState([]);
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState(null); // null = list view, 'new' = create, id = edit
-  const [form, setForm] = useState({ ...emptyClient, type: 'individual' });
+  const [form, setForm] = useState(createEmptyClientForm());
   const [saving, setSaving] = useState(false);
 
   const loadClients = useCallback(async () => {
@@ -47,13 +60,17 @@ export default function ClientManager({ onClose }) {
     if (!form.name?.trim()) return;
     setSaving(true);
     try {
+      const payload = {
+        ...form,
+        ...normalizeClientVatSettingsInput(form),
+      };
       if (editing === 'new') {
-        await window.api.createClient(form);
+        await window.api.createClient(payload);
       } else {
-        await window.api.updateClient(editing, form);
+        await window.api.updateClient(editing, payload);
       }
       setEditing(null);
-      setForm({ ...emptyClient, type: 'individual' });
+      setForm(createEmptyClientForm());
       await loadClients();
     } catch (e) {
       console.error('Save client error:', e);
@@ -65,7 +82,11 @@ export default function ClientManager({ onClose }) {
     setEditing(client.id);
     const f = {};
     FIELD_DEFS.forEach(d => { f[d.key] = client[d.key] || ''; });
-    setForm(f);
+    setForm({
+      ...createEmptyClientForm(),
+      ...f,
+      ...getClientVatSettingsDraft(client),
+    });
   };
 
   const handleDelete = async (id) => {
@@ -75,7 +96,7 @@ export default function ClientManager({ onClose }) {
 
   const handleNew = () => {
     setEditing('new');
-    setForm({ ...emptyClient, type: 'individual' });
+    setForm(createEmptyClientForm());
   };
 
   // Edit / Create form
@@ -124,6 +145,103 @@ export default function ClientManager({ onClose }) {
                 )}
               </div>
             ))}
+
+            <div className="sm:col-span-2 mt-2 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
+              <div className="mb-3">
+                <h3 className="text-sm font-semibold text-slate-800">VAT Settings</h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Practitioner-maintained VAT assumptions used by compliance review and period summaries.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="flex items-start gap-3 rounded-lg border border-emerald-100 bg-white px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={!!form.vat_registered}
+                    onChange={e => setForm(prev => ({ ...prev, vat_registered: e.target.checked }))}
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-400"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-700">VAT registered</span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Use this to reflect whether the client is currently registered as a VAT vendor.
+                    </span>
+                  </span>
+                </label>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    VAT category
+                  </label>
+                  <select
+                    value={form.vat_category}
+                    onChange={e => setForm(prev => ({ ...prev, vat_category: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-emerald-400 focus:outline-none"
+                  >
+                    <option value="">-- Select category --</option>
+                    {VAT_CATEGORY_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Filing category helps frame the client&apos;s normal VAT submission cadence.
+                  </p>
+                </div>
+
+                <label className="flex items-start gap-3 rounded-lg border border-emerald-100 bg-white px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={!!form.has_mixed_supplies}
+                    onChange={e => setForm(prev => ({ ...prev, has_mixed_supplies: e.target.checked }))}
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-400"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-700">Has mixed supplies</span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Enable this when the client makes both taxable and exempt supplies for apportionment reviews.
+                    </span>
+                  </span>
+                </label>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Apportionment ratio
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={form.apportionment_ratio}
+                    onChange={e => setForm(prev => ({ ...prev, apportionment_ratio: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm text-slate-800 focus:ring-2 focus:ring-emerald-400 focus:outline-none"
+                    placeholder="0.00"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Capture the taxable-use percentage applied when mixed supplies affect input VAT recovery.
+                  </p>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Penalty interest rate
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.penalty_interest_rate}
+                    onChange={e => setForm(prev => ({ ...prev, penalty_interest_rate: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm text-slate-800 focus:ring-2 focus:ring-emerald-400 focus:outline-none"
+                    placeholder="0.00"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Store the annual percentage rate used for late-payment penalty and interest estimates.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
           <div className="flex justify-end gap-2 p-4 border-t bg-slate-50 rounded-b-xl sticky bottom-0">
             <button onClick={() => setEditing(null)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>

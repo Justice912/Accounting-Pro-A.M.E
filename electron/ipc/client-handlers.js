@@ -1,5 +1,27 @@
 import crypto from 'crypto';
 
+function normalizeBooleanFlag(value) {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on'
+      ? 1
+      : 0;
+  }
+  return value ? 1 : 0;
+}
+
+function normalizeOptionalString(value) {
+  if (value == null) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
+function normalizeOptionalNumber(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
 /**
  * Register IPC handlers for client management operations
  */
@@ -25,6 +47,11 @@ export default function registerClientHandlers(ipcMain, services) {
         financial_year_end: data.financial_year_end || null,
         tax_history: data.tax_history || null,
         notes: data.notes || null,
+        vat_registered: normalizeBooleanFlag(data.vat_registered),
+        vat_category: normalizeOptionalString(data.vat_category),
+        has_mixed_supplies: normalizeBooleanFlag(data.has_mixed_supplies),
+        apportionment_ratio: normalizeOptionalNumber(data.apportionment_ratio),
+        penalty_interest_rate: normalizeOptionalNumber(data.penalty_interest_rate),
       });
       return { success: true, id };
     } catch (error) {
@@ -50,6 +77,26 @@ export default function registerClientHandlers(ipcMain, services) {
       if (data.contact_details !== undefined) {
         fields.push('contact_details = ?');
         values.push(JSON.stringify(data.contact_details));
+      }
+      if (data.vat_registered !== undefined) {
+        fields.push('vat_registered = ?');
+        values.push(normalizeBooleanFlag(data.vat_registered));
+      }
+      if (data.vat_category !== undefined) {
+        fields.push('vat_category = ?');
+        values.push(normalizeOptionalString(data.vat_category));
+      }
+      if (data.has_mixed_supplies !== undefined) {
+        fields.push('has_mixed_supplies = ?');
+        values.push(normalizeBooleanFlag(data.has_mixed_supplies));
+      }
+      if (data.apportionment_ratio !== undefined) {
+        fields.push('apportionment_ratio = ?');
+        values.push(normalizeOptionalNumber(data.apportionment_ratio));
+      }
+      if (data.penalty_interest_rate !== undefined) {
+        fields.push('penalty_interest_rate = ?');
+        values.push(normalizeOptionalNumber(data.penalty_interest_rate));
       }
       if (!fields.length) return { success: false, error: 'No fields to update' };
       fields.push('updated_at = CURRENT_TIMESTAMP');
