@@ -4,12 +4,28 @@ import path from 'path';
 import { buildReminderCandidates } from '../services/vat-reminders.js';
 import { evaluateVatDocument } from '../services/vat-rules-engine.js';
 import { buildVatPeriodSummary } from '../services/vat-period-summary.js';
+import {
+  applyDocumentOverrides,
+  clearDocumentOverride,
+  getActiveDocumentOverrides,
+  getDocumentOverrideHistory,
+  saveDocumentOverride,
+} from '../services/vat-document-overrides.js';
 
 const VAT_RATE = 0.15;
+const VAT_OVERRIDE_DOCUMENT_TYPES = new Set(['purchase_receipt', 'sales_invoice']);
 
 /** SARS VAT number: 10 digits starting with 4 */
 function validateVatNumberFormat(vatNum) {
   return /^4\d{9}$/.test((vatNum || '').replace(/\s/g, ''));
+}
+
+function normalizeVatOverrideDocumentType(documentType) {
+  const normalized = String(documentType || '').trim();
+  if (!VAT_OVERRIDE_DOCUMENT_TYPES.has(normalized)) {
+    throw new Error(`Unsupported VAT override document type: ${normalized || '<empty>'}`);
+  }
+  return normalized;
 }
 
 /**
@@ -268,6 +284,165 @@ function mapSalesInvoiceToPeriodSummaryInput(invoice) {
         outputTax: supplyType === 'standard' ? vatAmount : 0,
       },
     },
+  };
+}
+
+function getVatDocumentFindings(database, sourceType, documentId) {
+  if (typeof database?.getAll !== 'function') {
+    return [];
+  }
+
+  try {
+    return database.getAll(
+      `SELECT * FROM vat_rule_results
+       WHERE source_type = ? AND source_id = ?
+       ORDER BY created_at ASC`,
+      [sourceType, documentId]
+    );
+  } catch {
+    return [];
+  }
+}
+
+function buildReceiptBaseCompliance(receipt, findings = []) {
+  const apportionedInputAmount =
+    Number(receipt.apportioned_input_amount) || Number(receipt.vat_amount) || 0;
+  const blockedInputAmount = Number(receipt.blocked_input_amount) || 0;
+  const nonClaimableApportionmentAmount =
+    Number(receipt.non_claimable_apportionment_amount) || 0;
+  const vatType = receipt.vat_type || 'standard';
+
+  return {
+    summary: {
+      documentKind: receipt.document_kind || null,
+      complianceScore: Number(receipt.compliance_score) || 0,
+      supplyType: receipt.supply_type || null,
+      supplyTypeReason: receipt.supply_type_reason || null,
+      blockedInputAmount,
+      apportionedInputAmount,
+      nonClaimableApportionmentAmount,
+      timeOfSupplyDate: receipt.time_of_supply_date || null,
+      duplicateStatus: receipt.duplicate_status || 'clear',
+    },
+    findings,
+    computed: {
+      supplyType: receipt.supply_type || null,
+      supplyTypeReason: receipt.supply_type_reason || null,
+      blockedInputAmount,
+      apportionedInputAmount,
+      duplicateStatus: receipt.duplicate_status || 'clear',
+      timeOfSupplyDate: receipt.time_of_supply_date || null,
+      vat201: {
+        standardRatedSuppliesExclVat: 0,
+        zeroRatedSuppliesExclVat: 0,
+        exemptSuppliesExclVat: 0,
+        outputTax: 0,
+        inputTax: vatType === 'capital' ? 0 : apportionedInputAmount,
+        capitalInputTax: vatType === 'capital' ? apportionedInputAmount : 0,
+      },
+    },
+    document: {
+      direction: 'purchase',
+      totalExclVat: Number(receipt.total_excl_vat) || 0,
+      vatAmount: Number(receipt.vat_amount) || 0,
+      vatType,
+    },
+  };
+}
+
+function buildSalesBaseCompliance(invoice, findings = []) {
+  const supplyType = invoice.supply_type || 'standard';
+  const totalExclVat = Number(invoice.total_excl_vat) || 0;
+  const vatAmount = Number(invoice.vat_amount) || 0;
+
+  return {
+    summary: {
+      documentKind: invoice.document_kind || null,
+      complianceScore: Number(invoice.compliance_score) || 0,
+      supplyType,
+      supplyTypeReason: invoice.supply_type_reason || null,
+      timeOfSupplyDate: invoice.time_of_supply_date || null,
+      duplicateStatus: invoice.duplicate_status || 'clear',
+    },
+    findings,
+    computed: {
+      supplyType,
+      supplyTypeReason: invoice.supply_type_reason || null,
+      duplicateStatus: invoice.duplicate_status || 'clear',
+      timeOfSupplyDate: invoice.time_of_supply_date || null,
+      vat201: {
+        standardRatedSuppliesExclVat: supplyType === 'standard' ? totalExclVat : 0,
+        zeroRatedSuppliesExclVat: supplyType === 'zero' ? totalExclVat : 0,
+        exemptSuppliesExclVat: supplyType === 'exempt' ? totalExclVat : 0,
+        outputTax: supplyType === 'standard' ? vatAmount : 0,
+        inputTax: 0,
+        capitalInputTax: 0,
+      },
+    },
+    document: {
+      direction: 'sale',
+      totalExclVat,
+      vatAmount,
+    },
+  };
+}
+
+function buildEffectiveComplianceDetail(database, documentType, documentId, baseCompliance) {
+  const activeOverrides = getActiveDocumentOverrides(database, documentType, documentId);
+  const overrideHistory = getDocumentOverrideHistory(database, documentType, documentId);
+  const effectiveCompliance = applyDocumentOverrides(baseCompliance, activeOverrides);
+
+  return {
+    activeOverrides,
+    overrideHistory,
+    effectiveCompliance,
+  };
+}
+
+function buildReceiptDetail(database, receipt) {
+  const findings = getVatDocumentFindings(database, 'purchase_receipt', receipt.id);
+  const baseCompliance = buildReceiptBaseCompliance(receipt, findings);
+  const {
+    activeOverrides,
+    overrideHistory,
+    effectiveCompliance,
+  } = buildEffectiveComplianceDetail(database, 'purchase_receipt', receipt.id, baseCompliance);
+
+  const detailReceipt = {
+    ...receipt,
+    findings,
+    baseCompliance,
+    effectiveCompliance,
+    activeOverrides,
+    overrideHistory,
+  };
+
+  return {
+    receipt: detailReceipt,
+    findings,
+    baseCompliance,
+    effectiveCompliance,
+    activeOverrides,
+    overrideHistory,
+  };
+}
+
+function buildSalesDetail(database, invoice) {
+  const findings = getVatDocumentFindings(database, 'sales_invoice', invoice.id);
+  const baseCompliance = buildSalesBaseCompliance(invoice, findings);
+  const {
+    activeOverrides,
+    overrideHistory,
+    effectiveCompliance,
+  } = buildEffectiveComplianceDetail(database, 'sales_invoice', invoice.id, baseCompliance);
+
+  return {
+    ...invoice,
+    findings,
+    baseCompliance,
+    effectiveCompliance,
+    activeOverrides,
+    overrideHistory,
   };
 }
 
@@ -610,26 +785,95 @@ export default function registerVatHandlers(ipcMain, services) {
   /** Get a single receipt by ID */
   ipcMain.handle('vat:receipt:get', async (event, id) => {
     try {
-      return database.getOne('SELECT * FROM vat_receipts WHERE id = ?', [id]);
+      const receipt = database.getOne('SELECT * FROM vat_receipts WHERE id = ?', [id]);
+      if (!receipt) return null;
+      return buildReceiptDetail(database, receipt).receipt;
     } catch {
       return null;
+    }
+  });
+
+  ipcMain.handle('vat:document:overrides:get', async (event, documentType, documentId) => {
+    try {
+      const normalizedDocumentType = normalizeVatOverrideDocumentType(documentType);
+      return {
+        success: true,
+        overrides: getActiveDocumentOverrides(database, normalizedDocumentType, documentId),
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:document:override:save', async (event, payload) => {
+    try {
+      const normalizedDocumentType = normalizeVatOverrideDocumentType(
+        payload?.documentType ?? payload?.document_type
+      );
+      const override = saveDocumentOverride(database, {
+        ...payload,
+        documentType: normalizedDocumentType,
+      });
+      return { success: true, override };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:document:override:clear', async (event, payload) => {
+    try {
+      const normalizedDocumentType = normalizeVatOverrideDocumentType(
+        payload?.documentType ?? payload?.document_type
+      );
+      const override = clearDocumentOverride(database, {
+        ...payload,
+        documentType: normalizedDocumentType,
+      });
+      if (!override) {
+        return { success: false, error: 'No active override found for the document.' };
+      }
+      return { success: true, override };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:document:override:history', async (event, documentType, documentId) => {
+    try {
+      const normalizedDocumentType = normalizeVatOverrideDocumentType(documentType);
+      return {
+        success: true,
+        history: getDocumentOverrideHistory(database, normalizedDocumentType, documentId),
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   });
 
   ipcMain.handle('vat:receipt:compliance:get', async (event, id) => {
     try {
       const receipt = database.getOne('SELECT * FROM vat_receipts WHERE id = ?', [id]);
-      if (!receipt) return { receipt: null, findings: [] };
+      if (!receipt) {
+        return {
+          receipt: null,
+          findings: [],
+          baseCompliance: null,
+          effectiveCompliance: null,
+          activeOverrides: [],
+          overrideHistory: [],
+        };
+      }
 
-      const findings = database.getAll(
-        `SELECT * FROM vat_rule_results
-         WHERE source_type = ? AND source_id = ?
-         ORDER BY created_at ASC`,
-        ['purchase_receipt', id]
-      );
-      return { receipt, findings };
+      return buildReceiptDetail(database, receipt);
     } catch {
-      return { receipt: null, findings: [] };
+      return {
+        receipt: null,
+        findings: [],
+        baseCompliance: null,
+        effectiveCompliance: null,
+        activeOverrides: [],
+        overrideHistory: [],
+      };
     }
   });
 
@@ -933,7 +1177,9 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
 
   ipcMain.handle('vat:sales:get', async (event, id) => {
     try {
-      return database.getOne('SELECT * FROM vat_sales_invoices WHERE id = ?', [id]);
+      const invoice = database.getOne('SELECT * FROM vat_sales_invoices WHERE id = ?', [id]);
+      if (!invoice) return null;
+      return buildSalesDetail(database, invoice);
     } catch {
       return null;
     }
