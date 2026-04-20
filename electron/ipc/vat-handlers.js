@@ -28,6 +28,21 @@ function normalizeVatOverrideDocumentType(documentType) {
   return normalized;
 }
 
+function getVatOverrideDocumentScope(database, documentType, documentId) {
+  if (!documentId || typeof database?.getOne !== 'function') {
+    return null;
+  }
+
+  const normalizedDocumentType = normalizeVatOverrideDocumentType(documentType);
+  const tableName = normalizedDocumentType === 'purchase_receipt'
+    ? 'vat_receipts'
+    : 'vat_sales_invoices';
+  return database.getOne(
+    `SELECT client_id, vat_period FROM ${tableName} WHERE id = ?`,
+    [documentId]
+  );
+}
+
 /**
  * Derive VAT period string (YYYY-MM) from a date string.
  * Category B bi-monthly: Jan/Feb→01, Mar/Apr→03, May/Jun→05, Jul/Aug→07, Sep/Oct→09, Nov/Dec→11
@@ -245,48 +260,6 @@ function invalidateVatPeriodSummary(database, clientId, vatPeriod) {
   ]);
 }
 
-function mapReceiptToPeriodSummaryInput(receipt) {
-  const apportioned = Number(receipt.apportioned_input_amount) || Number(receipt.vat_amount) || 0;
-  return {
-    id: receipt.id,
-    status: receipt.status,
-    summary: {
-      blockedInputAmount: Number(receipt.blocked_input_amount) || 0,
-      apportionedInputAmount: apportioned,
-      duplicateStatus: receipt.duplicate_status || 'clear',
-      complianceScore: Number(receipt.compliance_score) || 0,
-    },
-    computed: {
-      vat201: {
-        inputTax: receipt.vat_type === 'capital' ? 0 : apportioned,
-        capitalInputTax: receipt.vat_type === 'capital' ? apportioned : 0,
-      },
-    },
-  };
-}
-
-function mapSalesInvoiceToPeriodSummaryInput(invoice) {
-  const supplyType = invoice.supply_type || 'standard';
-  const totalExclVat = Number(invoice.total_excl_vat) || 0;
-  const vatAmount = Number(invoice.vat_amount) || 0;
-  return {
-    id: invoice.id,
-    status: invoice.status,
-    summary: {
-      duplicateStatus: invoice.duplicate_status || 'clear',
-      complianceScore: Number(invoice.compliance_score) || 0,
-    },
-    computed: {
-      vat201: {
-        standardRatedSuppliesExclVat: supplyType === 'standard' ? totalExclVat : 0,
-        zeroRatedSuppliesExclVat: supplyType === 'zero' ? totalExclVat : 0,
-        exemptSuppliesExclVat: supplyType === 'exempt' ? totalExclVat : 0,
-        outputTax: supplyType === 'standard' ? vatAmount : 0,
-      },
-    },
-  };
-}
-
 function getVatDocumentFindings(database, sourceType, documentId) {
   if (typeof database?.getAll !== 'function') {
     return [];
@@ -387,10 +360,22 @@ function buildSalesBaseCompliance(invoice, findings = []) {
   };
 }
 
-function buildEffectiveComplianceDetail(database, documentType, documentId, baseCompliance) {
+function buildEffectiveCompliance(database, documentType, documentId, baseCompliance) {
   const activeOverrides = getActiveDocumentOverrides(database, documentType, documentId);
+  return {
+    activeOverrides,
+    effectiveCompliance: applyDocumentOverrides(baseCompliance, activeOverrides),
+  };
+}
+
+function buildEffectiveComplianceDetail(database, documentType, documentId, baseCompliance) {
+  const { activeOverrides, effectiveCompliance } = buildEffectiveCompliance(
+    database,
+    documentType,
+    documentId,
+    baseCompliance
+  );
   const overrideHistory = getDocumentOverrideHistory(database, documentType, documentId);
-  const effectiveCompliance = applyDocumentOverrides(baseCompliance, activeOverrides);
 
   return {
     activeOverrides,
@@ -443,6 +428,46 @@ function buildSalesDetail(database, invoice) {
     effectiveCompliance,
     activeOverrides,
     overrideHistory,
+  };
+}
+
+function mapReceiptToPeriodSummaryInput(database, receipt) {
+  const baseCompliance = buildReceiptBaseCompliance(receipt);
+  const { effectiveCompliance } = buildEffectiveCompliance(
+    database,
+    'purchase_receipt',
+    receipt.id,
+    baseCompliance
+  );
+
+  return {
+    id: receipt.id,
+    status: receipt.status,
+    summary: baseCompliance.summary,
+    computed: baseCompliance.computed,
+    effectiveSummary: effectiveCompliance.summary,
+    effectiveComputed: effectiveCompliance.computed,
+    effectiveVat201: effectiveCompliance.effectiveVat201,
+  };
+}
+
+function mapSalesInvoiceToPeriodSummaryInput(database, invoice) {
+  const baseCompliance = buildSalesBaseCompliance(invoice);
+  const { effectiveCompliance } = buildEffectiveCompliance(
+    database,
+    'sales_invoice',
+    invoice.id,
+    baseCompliance
+  );
+
+  return {
+    id: invoice.id,
+    status: invoice.status,
+    summary: baseCompliance.summary,
+    computed: baseCompliance.computed,
+    effectiveSummary: effectiveCompliance.summary,
+    effectiveComputed: effectiveCompliance.computed,
+    effectiveVat201: effectiveCompliance.effectiveVat201,
   };
 }
 
@@ -500,11 +525,11 @@ function buildAndPersistPeriodSummary(database, clientId, period, now) {
   const purchases = database.getAll(
     'SELECT * FROM vat_receipts WHERE client_id = ? AND vat_period = ?',
     [clientId, period]
-  ).map(mapReceiptToPeriodSummaryInput);
+  ).map(receipt => mapReceiptToPeriodSummaryInput(database, receipt));
   const sales = database.getAll(
     'SELECT * FROM vat_sales_invoices WHERE client_id = ? AND vat_period = ?',
     [clientId, period]
-  ).map(mapSalesInvoiceToPeriodSummaryInput);
+  ).map(invoice => mapSalesInvoiceToPeriodSummaryInput(database, invoice));
 
   const client = typeof database?.getOne === 'function'
     ? database.getOne(
@@ -814,6 +839,12 @@ export default function registerVatHandlers(ipcMain, services) {
         ...payload,
         documentType: normalizedDocumentType,
       });
+      const documentScope = getVatOverrideDocumentScope(
+        database,
+        normalizedDocumentType,
+        payload?.documentId ?? payload?.document_id
+      );
+      invalidateVatPeriodSummary(database, documentScope?.client_id, documentScope?.vat_period);
       return { success: true, override };
     } catch (error) {
       return { success: false, error: error.message };
@@ -832,6 +863,12 @@ export default function registerVatHandlers(ipcMain, services) {
       if (!override) {
         return { success: false, error: 'No active override found for the document.' };
       }
+      const documentScope = getVatOverrideDocumentScope(
+        database,
+        normalizedDocumentType,
+        payload?.documentId ?? payload?.document_id
+      );
+      invalidateVatPeriodSummary(database, documentScope?.client_id, documentScope?.vat_period);
       return { success: true, override };
     } catch (error) {
       return { success: false, error: error.message };
@@ -1521,17 +1558,6 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
         clientRows.forEach(c => { clientMap[c.id] = c; });
       }
 
-      const complianceSummary = database.getOne(
-        `SELECT
-          AVG(compliance_score) AS average_compliance_score,
-          SUM(penalty_risk_amount) AS total_penalty_risk,
-          SUM(blocked_input_vat) AS blocked_input_vat,
-          SUM(apportioned_input_vat) AS apportioned_input_vat
-         FROM vat_period_summaries
-         WHERE vat_period = ?`,
-        [effectivePeriod]
-      ) || {};
-
       let totalReceipts = 0, totalPending = 0, totalApproved = 0, totalFlagged = 0;
       let totalInputVat = 0, totalPurchases = 0;
       let totalBankTxns = 0, totalBankMatched = 0;
@@ -1610,11 +1636,12 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
 
         if (hasOutstandingWork) clientsWithWork++;
 
+        const clientInputVat = Number(periodSummary?.totals?.inputVat) || 0;
         totalReceipts += rStats.total || 0;
         totalPending += pending;
         totalApproved += rStats.approved || 0;
         totalFlagged += flagged;
-        totalInputVat += rStats.input_vat || 0;
+        totalInputVat += clientInputVat;
         totalPurchases += rStats.purchases || 0;
         totalBankTxns += bStats.total || 0;
         totalBankMatched += bStats.matched || 0;
@@ -1630,7 +1657,7 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
           schedule: { status: scheduleStatus, updatedAt: schedule?.updated_at || null },
           bank: { total: bStats.total || 0, matched: bStats.matched || 0 },
           reminders: reminderCount,
-          inputVat: rStats.input_vat || 0,
+          inputVat: clientInputVat,
           totalPurchases: rStats.purchases || 0,
           complianceScore: periodSummary?.complianceScore || 0,
           penaltyRisk: Number(periodSummary?.penaltyRisk?.latePenalty) || 0,
@@ -1643,6 +1670,17 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
       // Sort: high urgency first
       const urgencyOrder = { high: 0, medium: 1, low: 2, clear: 3 };
       clients.sort((a, b) => (urgencyOrder[a.urgency] ?? 4) - (urgencyOrder[b.urgency] ?? 4));
+
+      const complianceSummary = database.getOne(
+        `SELECT
+          AVG(compliance_score) AS average_compliance_score,
+          SUM(penalty_risk_amount) AS total_penalty_risk,
+          SUM(blocked_input_vat) AS blocked_input_vat,
+          SUM(apportioned_input_vat) AS apportioned_input_vat
+         FROM vat_period_summaries
+         WHERE vat_period = ?`,
+        [effectivePeriod]
+      ) || {};
 
       return {
         period: effectivePeriod,

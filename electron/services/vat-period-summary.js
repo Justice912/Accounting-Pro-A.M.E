@@ -6,8 +6,37 @@ function sumBy(items, selector) {
   return roundAmount(items.reduce((sum, item) => sum + (Number(selector(item)) || 0), 0));
 }
 
+function getDocumentState(document = {}) {
+  const useEffectiveValues = document?.status === 'approved';
+  const baseSummary = document?.summary || {};
+  const baseComputed = document?.computed || {};
+  const effectiveSummary = document?.effectiveSummary || document?.effectiveCompliance?.summary;
+  const effectiveComputed = document?.effectiveComputed || document?.effectiveCompliance?.computed;
+  const effectiveVat201 =
+    document?.effectiveVat201
+    || effectiveComputed?.vat201
+    || document?.effectiveCompliance?.effectiveVat201;
+
+  if (!useEffectiveValues) {
+    return {
+      summary: baseSummary,
+      computed: baseComputed,
+    };
+  }
+
+  return {
+    summary: effectiveSummary || baseSummary,
+    computed: {
+      ...baseComputed,
+      ...(effectiveComputed || {}),
+      vat201: effectiveVat201 || effectiveComputed?.vat201 || baseComputed?.vat201 || {},
+    },
+  };
+}
+
 function isIncludedDocument(document) {
-  return document?.status === 'approved' && (document?.summary?.duplicateStatus || 'clear') === 'clear';
+  const state = getDocumentState(document);
+  return document?.status === 'approved' && (state.summary?.duplicateStatus || 'clear') === 'clear';
 }
 
 function averageComplianceScore(documents) {
@@ -56,8 +85,8 @@ export function buildVatPeriodSummary({
   clientSettings = null,
   now = null,
 }) {
-  const includedPurchases = purchases.filter(isIncludedDocument);
-  const includedSales = sales.filter(isIncludedDocument);
+  const includedPurchases = purchases.filter(isIncludedDocument).map(getDocumentState);
+  const includedSales = sales.filter(isIncludedDocument).map(getDocumentState);
   const includedDocuments = [...includedPurchases, ...includedSales];
 
   const standardRatedSuppliesExclVat = sumBy(
