@@ -16,6 +16,7 @@ import {
   getComplianceTone,
   groupFindingsBySeverity,
 } from './vatComplianceViewModel.js';
+import PractitionerOverridePanel from '../components/vat/PractitionerOverridePanel.jsx';
 
 // ── Design tokens (matching spec) ────────────────────────────────────────────
 const STATUS = {
@@ -270,6 +271,7 @@ export default function VATCapture() {
   const [showDetail, setShowDetail] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editDraft, setEditDraft] = useState({});
+  const [overrideBusy, setOverrideBusy] = useState(false);
 
   // ─ Capture tab ─
   const [captureStep, setCaptureStep] = useState('idle'); // idle | selected | extracting | review | saving
@@ -354,56 +356,59 @@ export default function VATCapture() {
   }, [loadReminders, receipts, schedule, scheduleReceipts]);
 
   // ── Load receipt detail ───────────────────────────────────────────────────
-  useEffect(() => {
-    if (!selectedReceiptId) {
+  const hydrateEditDraft = useCallback((receipt) => {
+    if (!receipt) return;
+    setEditDraft({
+      supplier_name: receipt.supplier_name || '',
+      supplier_vat_number: receipt.supplier_vat_number || '',
+      supplier_address: receipt.supplier_address || '',
+      invoice_number: receipt.invoice_number || '',
+      invoice_date: receipt.invoice_date || '',
+      total_incl_vat: receipt.total_incl_vat,
+      vat_amount: receipt.vat_amount,
+      total_excl_vat: receipt.total_excl_vat,
+      expense_category: receipt.expense_category || 'General',
+      vat_type: receipt.vat_type || 'standard',
+      review_notes: receipt.review_notes || '',
+    });
+  }, []);
+
+  const loadReceiptDetail = useCallback(async (receiptId) => {
+    if (!receiptId) {
       setSelectedReceipt(null);
       setSelectedReceiptFindings([]);
-      return;
+      return null;
     }
 
-    const hydrateDraft = (receipt) => {
-      if (!receipt) return;
-      setEditDraft({
-        supplier_name: receipt.supplier_name || '',
-        supplier_vat_number: receipt.supplier_vat_number || '',
-        supplier_address: receipt.supplier_address || '',
-        invoice_number: receipt.invoice_number || '',
-        invoice_date: receipt.invoice_date || '',
-        total_incl_vat: receipt.total_incl_vat,
-        vat_amount: receipt.vat_amount,
-        total_excl_vat: receipt.total_excl_vat,
-        expense_category: receipt.expense_category || 'General',
-        vat_type: receipt.vat_type || 'standard',
-        review_notes: receipt.review_notes || '',
-      });
-    };
-
-    const loadReceiptDetail = async () => {
-      try {
-        if (api?.vatGetReceiptCompliance) {
-          const result = await api.vatGetReceiptCompliance(selectedReceiptId);
-          if (result?.receipt) {
-            setSelectedReceipt(result.receipt);
-            setSelectedReceiptFindings(result.findings || []);
-            hydrateDraft(result.receipt);
-            return;
-          }
+    try {
+      if (api?.vatGetReceiptCompliance) {
+        const result = await api.vatGetReceiptCompliance(receiptId);
+        if (result?.receipt) {
+          setSelectedReceipt(result.receipt);
+          setSelectedReceiptFindings(result.findings || []);
+          hydrateEditDraft(result.receipt);
+          return result.receipt;
         }
-
-        if (!api?.vatGetReceipt) return;
-        const receipt = await api.vatGetReceipt(selectedReceiptId);
-        if (receipt) {
-          setSelectedReceipt(receipt);
-          setSelectedReceiptFindings([]);
-          hydrateDraft(receipt);
-        }
-      } catch (err) {
-        console.error('[VATCapture] loadReceiptDetail error:', err);
       }
-    };
 
-    loadReceiptDetail();
-  }, [api, selectedReceiptId]);
+      if (!api?.vatGetReceipt) return null;
+      const receipt = await api.vatGetReceipt(receiptId);
+      if (receipt) {
+        setSelectedReceipt(receipt);
+        setSelectedReceiptFindings([]);
+        hydrateEditDraft(receipt);
+        return receipt;
+      }
+      return null;
+    } catch (err) {
+      console.error('[VATCapture] loadReceiptDetail error:', err);
+      return null;
+    }
+  }, [api, hydrateEditDraft]);
+
+  useEffect(() => {
+    void loadReceiptDetail(selectedReceiptId);
+  }, [loadReceiptDetail, selectedReceiptId]);
 
   // ── Load VAT schedule ─────────────────────────────────────────────────────
   const loadSchedule = useCallback(async () => {
@@ -479,9 +484,9 @@ export default function VATCapture() {
     const res = await api.vatUpdateReceiptStatus(id, status, notes);
     if (res?.success) {
       showToast(`Receipt ${status}`, status === 'approved' ? 'success' : status === 'rejected' ? 'error' : 'info');
-      loadReceipts();
+      await loadReceipts();
       if (selectedReceiptId === id) {
-        setSelectedReceipt(prev => prev ? { ...prev, status, review_notes: notes || prev.review_notes } : prev);
+        await loadReceiptDetail(id);
       }
     } else {
       showToast(res?.error || 'Failed to update status', 'error');
@@ -512,27 +517,73 @@ export default function VATCapture() {
     if (res?.success) {
       showToast('Receipt saved', 'success');
       setEditMode(false);
-      if (res.compliance) {
-        setSelectedReceipt(prev => prev ? ({
-          ...prev,
-          compliance_score: res.compliance.summary?.complianceScore ?? prev.compliance_score,
-          supply_type: res.compliance.summary?.supplyType ?? prev.supply_type,
-          supply_type_reason: res.compliance.summary?.supplyTypeReason ?? prev.supply_type_reason,
-          blocked_input_amount: res.compliance.summary?.blockedInputAmount ?? prev.blocked_input_amount,
-          apportioned_input_amount: res.compliance.summary?.apportionedInputAmount ?? prev.apportioned_input_amount,
-          non_claimable_apportionment_amount:
-            res.compliance.summary?.nonClaimableApportionmentAmount ?? prev.non_claimable_apportionment_amount,
-          time_of_supply_date: res.compliance.summary?.timeOfSupplyDate ?? prev.time_of_supply_date,
-          duplicate_status: res.compliance.summary?.duplicateStatus ?? prev.duplicate_status,
-        }) : prev);
-        setSelectedReceiptFindings(res.compliance.findings || []);
-      }
-      setSelectedReceiptId(res.id || selectedReceiptId);
-      loadReceipts();
+      const nextReceiptId = res.id || selectedReceiptId;
+      setSelectedReceiptId(nextReceiptId);
+      await loadReceipts();
+      await loadReceiptDetail(nextReceiptId);
     } else {
       showToast(res?.error || 'Save failed', 'error');
     }
   }
+
+  const saveReceiptOverride = useCallback(async ({ overrideType, value, reason }) => {
+    if (!selectedReceiptId || !api?.vatSaveDocumentOverride) {
+      return { success: false, error: 'Select a receipt before saving an override.' };
+    }
+
+    setOverrideBusy(true);
+    try {
+      const result = await api.vatSaveDocumentOverride({
+        documentType: 'purchase_receipt',
+        documentId: selectedReceiptId,
+        overrideType,
+        value,
+        reason,
+      });
+
+      if (!result?.success) {
+        return { success: false, error: result?.error || 'Could not save override.' };
+      }
+
+      await loadReceipts();
+      await loadReceiptDetail(selectedReceiptId);
+      showToast('Override saved', 'success');
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message || 'Could not save override.' };
+    } finally {
+      setOverrideBusy(false);
+    }
+  }, [api, loadReceiptDetail, loadReceipts, selectedReceiptId, showToast]);
+
+  const clearReceiptOverride = useCallback(async ({ overrideType, reason }) => {
+    if (!selectedReceiptId || !api?.vatClearDocumentOverride) {
+      return { success: false, error: 'Select a receipt before clearing an override.' };
+    }
+
+    setOverrideBusy(true);
+    try {
+      const result = await api.vatClearDocumentOverride({
+        documentType: 'purchase_receipt',
+        documentId: selectedReceiptId,
+        overrideType,
+        reason,
+      });
+
+      if (!result?.success) {
+        return { success: false, error: result?.error || 'Could not clear override.' };
+      }
+
+      await loadReceipts();
+      await loadReceiptDetail(selectedReceiptId);
+      showToast('Override cleared', 'success');
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message || 'Could not clear override.' };
+    } finally {
+      setOverrideBusy(false);
+    }
+  }, [api, loadReceiptDetail, loadReceipts, selectedReceiptId, showToast]);
 
   const refreshReminders = useCallback(() => {
     window.dispatchEvent(new Event('vat:reminders-changed'));
@@ -839,6 +890,7 @@ export default function VATCapture() {
             showDetail={showDetail}
             setShowDetail={setShowDetail}
             selectedReceipt={selectedReceipt}
+            selectedReceiptFindings={selectedReceiptFindings}
             editMode={editMode}
             setEditMode={setEditMode}
             editDraft={editDraft}
@@ -846,6 +898,9 @@ export default function VATCapture() {
             onUpdateStatus={updateStatus}
             onDelete={deleteReceipt}
             onSaveEdit={saveEdit}
+            onSaveOverride={saveReceiptOverride}
+            onClearOverride={clearReceiptOverride}
+            overrideBusy={overrideBusy}
             onBulkApprove={bulkApprove}
             onAddManual={handleAddManual}
             onRefresh={loadReceipts}
@@ -906,9 +961,9 @@ export default function VATCapture() {
 function ReceiptsTab({
   receipts, loading, searchQuery, setSearchQuery, statusFilter, setStatusFilter,
   selectedIds, setSelectedIds, selectedReceiptId, setSelectedReceiptId,
-  showDetail, setShowDetail, selectedReceipt, editMode, setEditMode,
+  showDetail, setShowDetail, selectedReceipt, selectedReceiptFindings, editMode, setEditMode,
   editDraft, setEditDraft, onUpdateStatus, onDelete, onSaveEdit,
-  onBulkApprove, onAddManual, onRefresh,
+  onSaveOverride, onClearOverride, overrideBusy, onBulkApprove, onAddManual, onRefresh,
 }) {
   const toggleSelect = (id) => {
     setSelectedIds(prev => {
@@ -1121,6 +1176,16 @@ function ReceiptsTab({
                 findings={selectedReceiptFindings}
               />
 
+              <PractitionerOverridePanel
+                documentType="purchase_receipt"
+                status={selectedReceipt.status}
+                activeOverrides={selectedReceipt.activeOverrides || []}
+                overrideHistory={selectedReceipt.overrideHistory || []}
+                onSaveOverride={onSaveOverride}
+                onClearOverride={onClearOverride}
+                busy={overrideBusy}
+              />
+
               {/* Fields */}
               <DetailFields
                 receipt={selectedReceipt}
@@ -1140,12 +1205,18 @@ function CompliancePanel({ receipt, findings }) {
   if (!receipt) return null;
 
   const grouped = groupFindingsBySeverity(findings || []);
-  const tone = getComplianceTone(receipt.compliance_score || 0, grouped.critical.length);
+  const summary = receipt.effectiveCompliance?.summary || receipt.baseCompliance?.summary || {};
+  const complianceScore = summary.complianceScore ?? receipt.compliance_score ?? 0;
+  const blockedInputAmount = summary.blockedInputAmount ?? receipt.blocked_input_amount ?? 0;
+  const apportionedInputAmount = summary.apportionedInputAmount ?? receipt.apportioned_input_amount ?? 0;
+  const duplicateStatus = summary.duplicateStatus || receipt.duplicate_status || 'clear';
+  const timeOfSupplyDate = summary.timeOfSupplyDate || receipt.time_of_supply_date || '—';
+  const tone = getComplianceTone(complianceScore, grouped.critical.length);
   const statItems = [
-    { label: 'Blocked input', value: toZAR(receipt.blocked_input_amount || 0) },
-    { label: 'Apportioned input', value: toZAR(receipt.apportioned_input_amount || 0) },
-    { label: 'Duplicate status', value: receipt.duplicate_status || 'clear' },
-    { label: 'Time of supply', value: receipt.time_of_supply_date || '—' },
+    { label: 'Blocked input', value: toZAR(blockedInputAmount) },
+    { label: 'Apportioned input', value: toZAR(apportionedInputAmount) },
+    { label: 'Duplicate status', value: duplicateStatus },
+    { label: 'Time of supply', value: timeOfSupplyDate },
   ];
 
   return (
@@ -1155,14 +1226,14 @@ function CompliancePanel({ receipt, findings }) {
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Compliance</div>
           <div className="mt-1 flex items-center gap-2">
             <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone.badgeClass}`}>
-              Score {Math.round(Number(receipt.compliance_score) || 0)}
+              Score {Math.round(Number(complianceScore) || 0)}
             </span>
             <span className="text-xs text-slate-600">{tone.label}</span>
           </div>
         </div>
         <div className="text-right text-xs text-slate-500">
-          <div>{receipt.supply_type ? `Supply: ${receipt.supply_type}` : 'Supply: pending'}</div>
-          <div>{receipt.supply_type_reason || 'No supply reason captured yet.'}</div>
+          <div>{summary.supplyType ? `Supply: ${summary.supplyType}` : 'Supply: pending'}</div>
+          <div>{summary.supplyTypeReason || receipt.supply_type_reason || 'No supply reason captured yet.'}</div>
         </div>
       </div>
 

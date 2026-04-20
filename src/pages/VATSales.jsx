@@ -18,6 +18,7 @@ import {
   getComplianceTone,
   getSalesInvoiceDraft,
 } from './vatComplianceViewModel.js';
+import PractitionerOverridePanel from '../components/vat/PractitionerOverridePanel.jsx';
 
 const STATUS = {
   pending: { label: 'Pending', icon: Clock, badge: 'bg-amber-100 text-amber-800' },
@@ -151,6 +152,7 @@ export default function VATSales() {
   const [draft, setDraft] = useState(getSalesInvoiceDraft(''));
   const [searchQuery, setSearchQuery] = useState('');
   const [toast, setToast] = useState(null);
+  const [overrideBusy, setOverrideBusy] = useState(false);
   const periodOptions = useMemo(() => buildPeriodOptions(), []);
 
   const showToast = useCallback((message, type = 'info') => {
@@ -174,18 +176,37 @@ export default function VATSales() {
     loadClients();
   }, [loadClients]);
 
-  const openInvoice = useCallback(async (invoice) => {
-    if (!invoice) return;
+  const refreshSelectedInvoice = useCallback(async (invoiceId, fallbackInvoice = null) => {
+    const nextInvoiceId = invoiceId || fallbackInvoice?.id || null;
+    if (!nextInvoiceId && !fallbackInvoice) return null;
+
     try {
-      const detailed = api?.vatGetSalesInvoice ? await api.vatGetSalesInvoice(invoice.id) : invoice;
-      const nextInvoice = detailed || invoice;
-      setSelectedInvoiceId(nextInvoice.id || null);
+      const detailed = nextInvoiceId && api?.vatGetSalesInvoice
+        ? await api.vatGetSalesInvoice(nextInvoiceId)
+        : fallbackInvoice;
+      const nextInvoice = detailed || fallbackInvoice;
+      if (!nextInvoice) return null;
+
+      setSelectedInvoiceId(nextInvoice.id || nextInvoiceId || null);
       setSelectedInvoice(nextInvoice);
       setDraft(hydrateDraft(nextInvoice, selectedClientId));
+      return nextInvoice;
     } catch (error) {
-      console.error('[VATSales] openInvoice error:', error);
+      console.error('[VATSales] refreshSelectedInvoice error:', error);
+      if (fallbackInvoice) {
+        setSelectedInvoiceId(fallbackInvoice.id || nextInvoiceId || null);
+        setSelectedInvoice(fallbackInvoice);
+        setDraft(hydrateDraft(fallbackInvoice, selectedClientId));
+        return fallbackInvoice;
+      }
+      return null;
     }
   }, [api, selectedClientId]);
+
+  const openInvoice = useCallback(async (invoice) => {
+    if (!invoice) return;
+    await refreshSelectedInvoice(invoice.id, invoice);
+  }, [refreshSelectedInvoice]);
 
   const loadSales = useCallback(async () => {
     if (!selectedClientId || !api?.vatListSales) {
@@ -275,8 +296,7 @@ export default function VATSales() {
 
     showToast('Sales invoice saved', 'success');
     await loadSales();
-    const detailed = api?.vatGetSalesInvoice ? await api.vatGetSalesInvoice(result.id) : null;
-    const nextInvoice = detailed || {
+    const fallbackInvoice = {
       ...payload,
       id: result.id,
       compliance_score: result.compliance?.summary?.complianceScore || 0,
@@ -285,10 +305,8 @@ export default function VATSales() {
       duplicate_status: result.compliance?.summary?.duplicateStatus || 'clear',
       time_of_supply_date: result.compliance?.summary?.timeOfSupplyDate || payload.invoice_date,
     };
-    setSelectedInvoiceId(result.id);
-    setSelectedInvoice(nextInvoice);
-    setDraft(hydrateDraft(nextInvoice, selectedClientId));
-  }, [api, draft, loadSales, selectedClientId, selectedPeriod, showToast]);
+    await refreshSelectedInvoice(result.id, fallbackInvoice);
+  }, [api, draft, loadSales, refreshSelectedInvoice, selectedClientId, selectedPeriod, showToast]);
 
   const deleteInvoice = useCallback(async () => {
     if (!selectedInvoiceId || !api?.vatDeleteSalesInvoice) return;
@@ -320,17 +338,90 @@ export default function VATSales() {
 
     showToast(`Sales invoice marked ${status}`, 'success');
     await loadSales();
-    if (selectedInvoiceId && api?.vatGetSalesInvoice) {
-      const refreshed = await api.vatGetSalesInvoice(selectedInvoiceId);
-      if (refreshed) {
-        setSelectedInvoice(refreshed);
-        setDraft(hydrateDraft(refreshed, selectedClientId));
-      }
-    }
-  }, [api, draft.review_notes, loadSales, selectedClientId, selectedInvoice, selectedInvoiceId, showToast]);
+    await refreshSelectedInvoice(selectedInvoiceId, selectedInvoice);
+  }, [api, draft.review_notes, loadSales, refreshSelectedInvoice, selectedInvoice, selectedInvoiceId, showToast]);
 
+  const saveInvoiceOverride = useCallback(async ({ overrideType, value, reason }) => {
+    if (!selectedInvoiceId || !api?.vatSaveDocumentOverride) {
+      return { success: false, error: 'Save the sales invoice before applying overrides.' };
+    }
+
+    setOverrideBusy(true);
+    try {
+      const result = await api.vatSaveDocumentOverride({
+        documentType: 'sales_invoice',
+        documentId: selectedInvoiceId,
+        overrideType,
+        value,
+        reason,
+      });
+
+      if (!result?.success) {
+        return { success: false, error: result?.error || 'Could not save override.' };
+      }
+
+      await loadSales();
+      await refreshSelectedInvoice(selectedInvoiceId, selectedInvoice);
+      showToast('Override saved', 'success');
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message || 'Could not save override.' };
+    } finally {
+      setOverrideBusy(false);
+    }
+  }, [api, loadSales, refreshSelectedInvoice, selectedInvoice, selectedInvoiceId, showToast]);
+
+  const clearInvoiceOverride = useCallback(async ({ overrideType, reason }) => {
+    if (!selectedInvoiceId || !api?.vatClearDocumentOverride) {
+      return { success: false, error: 'Save the sales invoice before clearing overrides.' };
+    }
+
+    setOverrideBusy(true);
+    try {
+      const result = await api.vatClearDocumentOverride({
+        documentType: 'sales_invoice',
+        documentId: selectedInvoiceId,
+        overrideType,
+        reason,
+      });
+
+      if (!result?.success) {
+        return { success: false, error: result?.error || 'Could not clear override.' };
+      }
+
+      await loadSales();
+      await refreshSelectedInvoice(selectedInvoiceId, selectedInvoice);
+      showToast('Override cleared', 'success');
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message || 'Could not clear override.' };
+    } finally {
+      setOverrideBusy(false);
+    }
+  }, [api, loadSales, refreshSelectedInvoice, selectedInvoice, selectedInvoiceId, showToast]);
+
+  const complianceSummary = selectedInvoice?.effectiveCompliance?.summary
+    || selectedInvoice?.baseCompliance?.summary
+    || {};
+  const complianceScore = complianceSummary.complianceScore
+    ?? selectedInvoice?.compliance_score
+    ?? draft.compliance_score
+    ?? 0;
+  const complianceSupplyType = complianceSummary.supplyType
+    || selectedInvoice?.supply_type
+    || draft.supply_type
+    || 'pending';
+  const complianceDuplicateStatus = complianceSummary.duplicateStatus
+    || selectedInvoice?.duplicate_status
+    || draft.duplicate_status
+    || 'clear';
+  const complianceTimeOfSupply = complianceSummary.timeOfSupplyDate
+    || selectedInvoice?.time_of_supply_date
+    || draft.time_of_supply_date
+    || draft.invoice_date
+    || '—';
   const complianceTone = getComplianceTone(
-    selectedInvoice?.compliance_score || draft.compliance_score || 0,
+    complianceScore,
     0
   );
 
@@ -500,18 +591,30 @@ export default function VATSales() {
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Compliance summary</div>
                       <div className="mt-2 flex items-center gap-2">
                         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${complianceTone.badgeClass}`}>
-                          Score {Math.round(Number(selectedInvoice?.compliance_score || draft.compliance_score) || 0)}
+                          Score {Math.round(Number(complianceScore) || 0)}
                         </span>
                         <span className="text-xs text-slate-600">{complianceTone.label}</span>
                       </div>
                     </div>
                     <div className="text-right text-xs text-slate-600">
-                      <div>Supply type: {selectedInvoice?.supply_type || draft.supply_type || 'pending'}</div>
-                      <div>Duplicate: {selectedInvoice?.duplicate_status || draft.duplicate_status || 'clear'}</div>
+                      <div>Supply type: {complianceSupplyType}</div>
+                      <div>Duplicate: {complianceDuplicateStatus}</div>
                       <div>Time of supply: {selectedInvoice?.time_of_supply_date || draft.time_of_supply_date || draft.invoice_date || '—'}</div>
                     </div>
                   </div>
                 </div>
+
+                {selectedInvoiceId ? (
+                  <PractitionerOverridePanel
+                    documentType="sales_invoice"
+                    status={selectedInvoice?.status || draft.status}
+                    activeOverrides={selectedInvoice?.activeOverrides || []}
+                    overrideHistory={selectedInvoice?.overrideHistory || []}
+                    onSaveOverride={saveInvoiceOverride}
+                    onClearOverride={clearInvoiceOverride}
+                    busy={overrideBusy}
+                  />
+                ) : null}
 
                 <div className="grid gap-3 md:grid-cols-2">
                   <DraftField
