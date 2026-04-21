@@ -89,6 +89,7 @@ contextBridge.exposeInMainWorld('api', {
   vatImportBank: (clientId) => ipcRenderer.invoke('vat:bank:import', clientId),
   vatListBankTxns: (clientId, filters) => ipcRenderer.invoke('vat:bank:list', clientId, filters),
   vatMatchBankTxn: (txnId, receiptId) => ipcRenderer.invoke('vat:bank:match', txnId, receiptId),
+  vatDeleteBankTxns: (ids) => ipcRenderer.invoke('vat:bank:delete', ids),
   vatDeleteUndatedBankTxns: (clientId) => ipcRenderer.invoke('vat:bank:delete-undated', clientId),
   vatGetReminders: (clientId, period) => ipcRenderer.invoke('vat:reminders:get', clientId, period),
   vatUpdateReminderState: (payload) => ipcRenderer.invoke('vat:reminder:update-state', payload),

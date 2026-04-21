@@ -848,6 +848,16 @@ export default function VATCapture() {
                 showToast(res?.error || 'Failed to clear undated transactions', 'error');
               }
             }}
+            onDeleteSelected={async (ids) => {
+              const res = await api.vatDeleteBankTxns(ids);
+              if (res?.success) {
+                showToast(`Deleted ${res.deleted} transaction${res.deleted !== 1 ? 's' : ''}`, 'success');
+                loadBankTxns();
+                loadReceipts();
+              } else {
+                showToast(res?.error || 'Failed to delete transactions', 'error');
+              }
+            }}
           />
         )}
       </div>
@@ -1486,12 +1496,33 @@ function ScheduleTab({ schedule, receipts, period, loading, onGenerate, onExport
 // BANK RECONCILIATION TAB
 // ─────────────────────────────────────────────────────────────────────────────
 
-function BankTab({ txns, receipts, loading, bankFilter, setBankFilter, matchingTxnId, setMatchingTxnId, onImport, onMatch, onRefresh, onClearUndated }) {
+function BankTab({ txns, receipts, loading, bankFilter, setBankFilter, matchingTxnId, setMatchingTxnId, onImport, onMatch, onRefresh, onClearUndated, onDeleteSelected }) {
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
   const filtered = useMemo(() => {
     if (bankFilter === 'matched') return txns.filter(t => t.is_matched);
     if (bankFilter === 'unmatched') return txns.filter(t => !t.is_matched);
     return txns;
   }, [txns, bankFilter]);
+
+  // Clear selection when filter or txn list changes
+  useEffect(() => { setSelectedIds(new Set()); }, [bankFilter, txns]);
+
+  const allSelected = filtered.length > 0 && filtered.every(t => selectedIds.has(t.id));
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map(t => t.id)));
+    }
+  };
+  const toggleOne = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
 
   const unmatchedReceipts = receipts.filter(r => !r.is_reconciled && r.status !== 'rejected');
 
@@ -1510,6 +1541,14 @@ function BankTab({ txns, receipts, loading, bankFilter, setBankFilter, matchingT
             </p>
           </div>
           <div className="flex gap-2">
+            {selectedIds.size > 0 && (
+              <button
+                onClick={() => { onDeleteSelected([...selectedIds]); setSelectedIds(new Set()); }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm"
+              >
+                Delete selected ({selectedIds.size})
+              </button>
+            )}
             {txns.some(t => !t.txn_date) && (
               <button onClick={onClearUndated} className="flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm">
                 Clear undated
@@ -1570,6 +1609,10 @@ function BankTab({ txns, receipts, loading, bankFilter, setBankFilter, matchingT
             <table className="w-full text-sm">
               <thead className="bg-[#1B4F72] text-white">
                 <tr>
+                  <th className="pl-4 pr-2 py-2.5 w-8">
+                    <input type="checkbox" checked={allSelected} onChange={toggleAll}
+                      className="rounded border-slate-300 cursor-pointer" />
+                  </th>
                   <th className="px-4 py-2.5 text-left font-medium">Date</th>
                   <th className="px-4 py-2.5 text-left font-medium">Description</th>
                   <th className="px-4 py-2.5 text-left font-medium hidden md:table-cell">Bank</th>
@@ -1582,8 +1625,13 @@ function BankTab({ txns, receipts, loading, bankFilter, setBankFilter, matchingT
               <tbody className="divide-y divide-slate-100">
                 {filtered.map((txn, idx) => {
                   const matchedReceipt = txn.matched_receipt_id ? receipts.find(r => r.id === txn.matched_receipt_id) : null;
+                  const isSelected = selectedIds.has(txn.id);
                   return (
-                    <tr key={txn.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                    <tr key={txn.id} className={isSelected ? 'bg-red-50' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                      <td className="pl-4 pr-2 py-2.5">
+                        <input type="checkbox" checked={isSelected} onChange={() => toggleOne(txn.id)}
+                          className="rounded border-slate-300 cursor-pointer" />
+                      </td>
                       <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{txn.txn_date}</td>
                       <td className="px-4 py-2.5 text-slate-700 max-w-[220px] truncate">{txn.description}</td>
                       <td className="px-4 py-2.5 text-slate-500 hidden md:table-cell">{txn.bank_name}</td>

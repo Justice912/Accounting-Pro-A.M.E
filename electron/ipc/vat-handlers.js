@@ -659,6 +659,31 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
     }
   });
 
+  ipcMain.handle('vat:bank:delete', async (event, ids) => {
+    try {
+      if (!Array.isArray(ids) || ids.length === 0) return { success: true, deleted: 0 };
+      const placeholders = ids.map(() => '?').join(',');
+      // Unlink any receipts that were matched to these transactions
+      const matched = database.getAll(
+        `SELECT matched_receipt_id FROM vat_bank_transactions WHERE id IN (${placeholders}) AND matched_receipt_id IS NOT NULL`,
+        ids
+      );
+      for (const row of matched) {
+        database.run(
+          'UPDATE vat_receipts SET bank_transaction_id = NULL, is_reconciled = 0 WHERE id = ?',
+          [row.matched_receipt_id]
+        );
+      }
+      const result = database.run(
+        `DELETE FROM vat_bank_transactions WHERE id IN (${placeholders})`,
+        ids
+      );
+      return { success: true, deleted: result.changes ?? 0 };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
   ipcMain.handle('vat:bank:delete-undated', async (event, clientId) => {
     try {
       const result = database.run(
