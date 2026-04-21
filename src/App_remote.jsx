@@ -4751,6 +4751,15 @@ Rules:
     setSelectedIds(selectedIds.filter(sid => sid !== id));
   };
 
+  const handleDeleteSelected = () => {
+    if (selectedIds.length === 0) return;
+    const count = selectedIds.length;
+    saveBankStatements(bankStatements.filter(s => !selectedIds.includes(s.id)));
+    setSelectedIds([]);
+    setSaveMessage(`${count} transaction(s) deleted.`);
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
   const exportCSV = () => {
     const headers = ['Date', 'Payee', 'Description', 'Type', 'Selection', 'Reference', 'VAT Rate', 'Spent', 'Received', 'Reconciled', 'Linked Invoice'];
     const rows = bankStatements.map(s => [s.date, s.payee, s.description, s.type, s.selection, s.reference, s.vatRate, s.spent, s.received, s.reconciled, s.linkedInvoice || '']);
@@ -5549,6 +5558,14 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
             >
               Save Changes
             </button>
+            {selectedIds.length > 0 && (
+              <button
+                onClick={handleDeleteSelected}
+                className="px-6 py-2 bg-red-600 text-white rounded font-medium text-sm hover:bg-red-700"
+              >
+                Delete Selected ({selectedIds.length})
+              </button>
+            )}
             {activeBankSubTab !== 'reviewed' && (
               <>
                 <button
