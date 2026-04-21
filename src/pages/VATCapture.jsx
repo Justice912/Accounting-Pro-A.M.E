@@ -839,6 +839,15 @@ export default function VATCapture() {
               loadReceipts();
             }}
             onRefresh={loadBankTxns}
+            onClearUndated={async () => {
+              const res = await api.vatDeleteUndatedBankTxns(selectedClientId);
+              if (res?.success) {
+                showToast(`Cleared ${res.deleted} undated transaction${res.deleted !== 1 ? 's' : ''}`, 'success');
+                loadBankTxns();
+              } else {
+                showToast(res?.error || 'Failed to clear undated transactions', 'error');
+              }
+            }}
           />
         )}
       </div>
@@ -1477,7 +1486,7 @@ function ScheduleTab({ schedule, receipts, period, loading, onGenerate, onExport
 // BANK RECONCILIATION TAB
 // ─────────────────────────────────────────────────────────────────────────────
 
-function BankTab({ txns, receipts, loading, bankFilter, setBankFilter, matchingTxnId, setMatchingTxnId, onImport, onMatch, onRefresh }) {
+function BankTab({ txns, receipts, loading, bankFilter, setBankFilter, matchingTxnId, setMatchingTxnId, onImport, onMatch, onRefresh, onClearUndated }) {
   const filtered = useMemo(() => {
     if (bankFilter === 'matched') return txns.filter(t => t.is_matched);
     if (bankFilter === 'unmatched') return txns.filter(t => !t.is_matched);
@@ -1501,6 +1510,11 @@ function BankTab({ txns, receipts, loading, bankFilter, setBankFilter, matchingT
             </p>
           </div>
           <div className="flex gap-2">
+            {txns.some(t => !t.txn_date) && (
+              <button onClick={onClearUndated} className="flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm">
+                Clear undated
+              </button>
+            )}
             <button onClick={onImport} className="flex items-center gap-1.5 px-3 py-2 bg-[#1B4F72] hover:bg-[#2E75B6] text-white rounded-lg text-sm">
               <Upload className="w-4 h-4" /> Import CSV
             </button>
