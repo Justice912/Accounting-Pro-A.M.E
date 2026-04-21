@@ -659,6 +659,19 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
     }
   });
 
+  ipcMain.handle('vat:bank:delete-undated', async (event, clientId) => {
+    try {
+      const result = database.run(
+        `DELETE FROM vat_bank_transactions
+         WHERE client_id = ? AND (txn_date IS NULL OR txn_date = '')`,
+        [clientId]
+      );
+      return { success: true, deleted: result.changes ?? 0 };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
   // ── VAT Schedule ─────────────────────────────────────────────────────────
 
   ipcMain.handle('vat:schedule:generate', async (event, clientId, period) => {
