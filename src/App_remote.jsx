@@ -4814,27 +4814,70 @@ Rules:
     const file = event.target.files[0];
     if (!file) return;
 
+    // Proper CSV line parser — handles quoted fields containing commas
+    const parseCSVLine = (line) => {
+      const fields = [];
+      let cur = '', inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+          else inQuotes = !inQuotes;
+        } else if (ch === ',' && !inQuotes) {
+          fields.push(cur.trim()); cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      fields.push(cur.trim());
+      return fields;
+    };
+
+    // Normalise any recognisable date string to yyyy-mm-dd
+    const parseDate = (raw) => {
+      if (!raw) return new Date().toISOString().split('T')[0];
+      // Strip time component (e.g. "2024-01-15 00:00:00" or "2024-01-15T08:30:00")
+      const s = String(raw).trim().split(/[\sT]/)[0];
+      // yyyy-mm-dd or yyyy/mm/dd (ISO / year-first)
+      const iso = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+      if (iso) return `${iso[1]}-${iso[2].padStart(2,'0')}-${iso[3].padStart(2,'0')}`;
+      // dd/mm/yyyy or dd-mm-yyyy (day-first — most SA banks)
+      const dmy4 = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+      if (dmy4) return `${dmy4[3]}-${dmy4[2].padStart(2,'0')}-${dmy4[1].padStart(2,'0')}`;
+      // dd/mm/yy (two-digit year)
+      const dmy2 = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2})$/);
+      if (dmy2) return `20${dmy2[3]}-${dmy2[2].padStart(2,'0')}-${dmy2[1].padStart(2,'0')}`;
+      return s; // already correct or unrecognised — pass through
+    };
+
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target.result;
       const lines = text.split('\n').filter(line => line.trim());
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-      
+      const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, ' '));
+
       const newStatements = lines.slice(1).map((line, idx) => {
-        const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
+        const values = parseCSVLine(line);
         const row = {};
         headers.forEach((h, i) => row[h] = values[i] || '');
-        
-        const amount = parseFloat(row.amount || row.debit || row.credit || 0);
-        
+
+        // Accept any common date column name used by SA banks
+        const rawDate = row['date'] || row['transaction date'] || row['txn_date'] ||
+          row['txn date'] || row['posting date'] || row['value date'] ||
+          row['book date'] || row['trn_date'] || row['trn date'] || '';
+
+        const amount = parseFloat(
+          (row['amount'] || row['debit'] || row['credit'] || '0').replace(/,/g, '')
+        );
+
         return {
           id: Date.now() + idx,
-          date: row.date || new Date().toISOString().split('T')[0],
-          payee: row.payee || row.name || '',
-          description: row.description || row.memo || row.reference || '',
+          date: parseDate(rawDate),
+          payee: row['payee'] || row['name'] || '',
+          description: row['description'] || row['memo'] || row['narrative'] || row['reference'] || '',
           type: 'Account',
           selection: 'Unallocated Expen',
-          reference: row.reference || row.ref || `REF-${Date.now() + idx}`,
+          reference: row['reference'] || row['ref'] || `REF-${Date.now() + idx}`,
           vatRate: 'No VAT',
           spent: amount < 0 ? Math.abs(amount) : 0,
           received: amount > 0 ? amount : 0,
@@ -4844,9 +4887,11 @@ Rules:
           linkedType: null,
           companyId: company?.id
         };
-      });
-      
+      }).filter(s => s.description || s.payee || s.spent > 0 || s.received > 0);
+
       saveBankStatements([...bankStatements, ...newStatements]);
+      setSaveMessage(`${newStatements.length} transactions imported successfully.`);
+      setTimeout(() => setSaveMessage(''), 3000);
     };
     reader.readAsText(file);
     event.target.value = '';
