@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield, Filter, SortAsc, TrendingUp, DollarSign, Clock, Settings, Receipt } from 'lucide-react';
 import AuditModule from './AuditModule';
@@ -3948,6 +3948,136 @@ const AccountsView = ({ accounts, saveAccounts, showAccountForm, setShowAccountF
   );
 };
 
+// ==================== BANKING TRANSACTION ROW (memoized) ====================
+const TransactionRow = React.memo(function TransactionRow({
+  stmt, isSelected, isExpanded, isAllocating, activeBankSubTab, selectionOptions,
+  onToggleSelect, onToggleExpand, onUpdate, onDelete, onSmartAllocate,
+  onRecall, onUnlink, onOpenLink, onOpenConvert,
+}) {
+  const rowClass = `border-t hover:bg-slate-50 ${stmt.reconciled ? 'bg-green-50' : ''} ${isSelected ? 'bg-blue-50' : ''} ${
+    stmt.allocationTier === 'auto' ? 'ring-1 ring-inset ring-emerald-300' :
+    stmt.allocationTier === 'ai-suggested' ? 'ring-1 ring-inset ring-blue-200' :
+    stmt.allocationTier === 'needs-review' ? 'ring-1 ring-inset ring-amber-200' :
+    stmt.aiAllocated ? 'ring-1 ring-inset ring-emerald-200' : ''}`;
+  return (
+    <React.Fragment>
+      <tr className={rowClass}>
+        <td className="px-2 py-2 text-center">
+          <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(stmt.id)} className="w-4 h-4" />
+        </td>
+        <td className="px-3 py-2">
+          <input type="date" value={stmt.date} onChange={(e) => onUpdate(stmt.id, 'date', e.target.value)} className="border rounded px-2 py-1 text-sm w-full" />
+        </td>
+        <td className="px-3 py-2">
+          <div className="flex items-center gap-1">
+            <button onClick={() => onToggleExpand(stmt.id)} className="p-0.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded flex-shrink-0" title="Show details">
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+            </button>
+            <input type="text" value={stmt.description || ''} onChange={(e) => onUpdate(stmt.id, 'description', e.target.value)} className="border rounded px-2 py-1 text-sm w-full" placeholder="Description" />
+          </div>
+        </td>
+        <td className="px-3 py-2">
+          <select value={stmt.type} onChange={(e) => onUpdate(stmt.id, 'type', e.target.value)} className="border rounded px-2 py-1 text-sm w-full">
+            <option>Account</option><option>Customer</option><option>Supplier</option><option>Transfer</option><option>VAT</option>
+          </select>
+        </td>
+        <td className="px-3 py-2">
+          <select value={stmt.selection} onChange={(e) => onUpdate(stmt.id, 'selection', e.target.value)} className="border rounded px-2 py-1 text-sm w-full">
+            {selectionOptions.map(opt => <option key={opt}>{opt}</option>)}
+          </select>
+        </td>
+        <td className="px-3 py-2">
+          <select value={stmt.vatRate} onChange={(e) => onUpdate(stmt.id, 'vatRate', e.target.value)} className="border rounded px-2 py-1 text-sm w-full">
+            {VAT_RATES.map(vat => <option key={vat.value} value={vat.value}>{vat.label}</option>)}
+          </select>
+        </td>
+        <td className="px-3 py-2">
+          <input type="text"
+            value={stmt.spent ? `R ${stmt.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+            onChange={(e) => onUpdate(stmt.id, 'spent', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+            onFocus={(e) => { e.target.value = stmt.spent || ''; }}
+            onBlur={(e) => onUpdate(stmt.id, 'spent', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+            className="border rounded px-3 py-1 text-sm w-full text-right min-w-[140px]" placeholder="R 0.00" />
+        </td>
+        <td className="px-3 py-2">
+          <input type="text"
+            value={stmt.received ? `R ${stmt.received.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+            onChange={(e) => onUpdate(stmt.id, 'received', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+            onFocus={(e) => { e.target.value = stmt.received || ''; }}
+            onBlur={(e) => onUpdate(stmt.id, 'received', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+            className="border rounded px-3 py-1 text-sm w-full text-right min-w-[120px]" placeholder="R 0.00" />
+        </td>
+        <td className="px-3 py-2">
+          {stmt.linkedInvoice ? (
+            <div className="flex items-center gap-1">
+              <span className={`px-2 py-1 rounded text-xs font-medium ${stmt.linkedType === 'client' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                {stmt.linkedInvoiceNo || 'Linked'}
+              </span>
+              <button onClick={() => onUnlink(stmt.id)} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Unlink invoice">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-1">
+              <button onClick={() => onOpenLink(stmt)} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100 border border-blue-200" title="Link to existing invoice">Link</button>
+              <button onClick={() => onOpenConvert(stmt)} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100 border border-emerald-200" title="Convert to invoice">Convert</button>
+            </div>
+          )}
+        </td>
+        <td className="px-3 py-2 text-center">
+          <input type="checkbox" checked={stmt.reconciled} onChange={(e) => onUpdate(stmt.id, 'reconciled', e.target.checked)} className="w-4 h-4" />
+        </td>
+        <td className="px-3 py-2">
+          <div className="flex items-center gap-1">
+            {activeBankSubTab === 'reviewed' && (
+              <button onClick={() => onRecall(stmt.id)} className="px-2 py-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100" title="Move back to New Transactions">Recall</button>
+            )}
+            <button onClick={() => onSmartAllocate([stmt.id])} disabled={isAllocating} className="p-1 text-purple-500 hover:bg-purple-50 rounded disabled:opacity-50" title="Smart Allocate">
+              {isAllocating ? <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" /> : <Calculator className="w-4 h-4" />}
+            </button>
+            <button onClick={() => onDelete(stmt.id)} className="p-1 text-red-500 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4" /></button>
+          </div>
+        </td>
+      </tr>
+      {isExpanded && (
+        <tr className="bg-slate-50 border-t border-dashed">
+          <td colSpan={11} className="px-4 py-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div><span className="font-medium text-slate-500 block">Full Description</span><span className="text-slate-800">{stmt.description || '—'}</span></div>
+              <div><span className="font-medium text-slate-500 block">Payee</span><span className="text-slate-800">{stmt.payee || '—'}</span></div>
+              <div><span className="font-medium text-slate-500 block">Reference</span><span className="text-slate-800">{stmt.reference || '—'}</span></div>
+              <div><span className="font-medium text-slate-500 block">Category</span><span className="text-slate-800">{stmt.selection || '—'}</span></div>
+              <div><span className="font-medium text-slate-500 block">VAT Rate</span><span className="text-slate-800">{stmt.vatRate || '—'}</span></div>
+              <div><span className="font-medium text-slate-500 block">Spent</span><span className="text-red-600 font-medium">{stmt.spent ? `R ${stmt.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}</span></div>
+              <div><span className="font-medium text-slate-500 block">Received</span><span className="text-emerald-600 font-medium">{stmt.received ? `R ${stmt.received.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}</span></div>
+              <div>
+                <span className="font-medium text-slate-500 block">Status</span>
+                <div className="flex gap-1 mt-0.5 flex-wrap">
+                  {stmt.reconciled && <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px]">Reconciled</span>}
+                  {stmt.reviewed && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px]">Reviewed</span>}
+                  {stmt.linkedInvoice && <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px]">Linked: {stmt.linkedInvoiceNo}</span>}
+                  {stmt.allocationTier === 'auto' && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">Auto-matched ({stmt.allocationConfidence}%)</span>}
+                  {stmt.allocationTier === 'ai-suggested' && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px]">AI-suggested ({stmt.allocationConfidence}%)</span>}
+                  {stmt.allocationTier === 'needs-review' && <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px]">Needs review</span>}
+                  {stmt.aiAllocated && !stmt.allocationTier && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">AI Allocated</span>}
+                  {!stmt.reconciled && !stmt.reviewed && !stmt.linkedInvoice && <span className="text-slate-400">Unprocessed</span>}
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </React.Fragment>
+  );
+}, (prev, next) =>
+  prev.stmt === next.stmt &&
+  prev.isSelected === next.isSelected &&
+  prev.isExpanded === next.isExpanded &&
+  prev.isAllocating === next.isAllocating &&
+  prev.activeBankSubTab === next.activeBankSubTab &&
+  prev.selectionOptions === next.selectionOptions
+);
+
 // ==================== BANKING VIEW ====================
 const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoices, clients, suppliers, accounts = [], company, apiKey }) => {
   const fileInputRef = React.useRef(null);
@@ -3971,20 +4101,22 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
   const [trainingInProgress, setTrainingInProgress] = useState(false);
 
   // Build selection options from accounts
-  const selectionOptions = [
+  const selectionOptions = useMemo(() => [
     'Unallocated Expen',
     ...accounts.filter(a => a.active !== false).map(a => a.name)
-  ];
+  ], [accounts]);
 
-  const companyStatements = company?.id ? bankStatements.filter(s => s.companyId === company.id) : bankStatements;
+  const companyStatements = useMemo(
+    () => company?.id ? bankStatements.filter(s => s.companyId === company.id) : bankStatements,
+    [bankStatements, company?.id]
+  );
   const attachedTransactions = companyStatements;
-  const newTransactions = companyStatements.filter(stmt => !stmt.reviewed);
-  const reviewedTransactions = companyStatements.filter(stmt => stmt.reviewed);
-  const displayedTransactions = activeBankSubTab === 'attached'
-    ? attachedTransactions
-    : activeBankSubTab === 'reviewed'
-      ? reviewedTransactions
-      : newTransactions;
+  const newTransactions = useMemo(() => companyStatements.filter(s => !s.reviewed), [companyStatements]);
+  const reviewedTransactions = useMemo(() => companyStatements.filter(s => s.reviewed), [companyStatements]);
+  const displayedTransactions = useMemo(() => (
+    activeBankSubTab === 'attached' ? companyStatements :
+    activeBankSubTab === 'reviewed' ? reviewedTransactions : newTransactions
+  ), [activeBankSubTab, companyStatements, newTransactions, reviewedTransactions]);
 
   useEffect(() => {
     const visibleIds = new Set(displayedTransactions.map(stmt => stmt.id));
@@ -4011,6 +4143,11 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
 
     setAllocationRules(currentRules);
   }, [company?.id]);
+
+  const companyAllocationRules = useMemo(
+    () => allocationRules.filter(r => r.companyId === company?.id),
+    [allocationRules, company?.id]
+  );
 
   const saveAllocationRules = (rules) => {
     setAllocationRules(rules);
@@ -4075,10 +4212,13 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
       source: 'historical'
     }));
 
-    // Keep manually created and default rules, replace all historical ones
-    const manualRules = allocationRules.filter(r => r.source === 'manual' && r.companyId === companyId);
-    const defaultRules = allocationRules.filter(r => r.source === 'default' && r.companyId === companyId);
-    const otherCompanyRules = allocationRules.filter(r => r.companyId !== companyId);
+    // Keep manually created and default rules, replace all historical ones (single pass)
+    const manualRules = [], defaultRules = [], otherCompanyRules = [];
+    for (const r of allocationRules) {
+      if (r.companyId !== companyId) otherCompanyRules.push(r);
+      else if (r.source === 'manual') manualRules.push(r);
+      else if (r.source === 'default') defaultRules.push(r);
+    }
     const merged = [...otherCompanyRules, ...defaultRules, ...manualRules, ...newRules];
 
     saveAllocationRules(merged);
@@ -4089,8 +4229,7 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
 
   // Build historical examples string for the AI prompt
   const getHistoricalExamples = (rules) => {
-    const companyRules = rules
-      .filter(r => r.companyId === company?.id)
+    const companyRules = [...rules]
       .sort((a, b) => b.confidenceScore - a.confidenceScore)
       .slice(0, 25);
 
@@ -4138,7 +4277,7 @@ const BankingView = ({ bankStatements, saveBankStatements, invoices, saveInvoice
     setAiAllocating(true);
     setAiAllocatingIds(stmtIds);
 
-    const rules = allocationRules.filter(r => r.companyId === company?.id);
+    const rules = companyAllocationRules;
     const results = [];
     const aiNeeded = [];
 
@@ -4733,23 +4872,25 @@ Rules:
     }]);
   };
 
-  const updateStatement = (id, field, value) => {
-    const stmt = bankStatements.find(s => s.id === id);
-    // Learning feedback: when user manually changes the account allocation, update rules
+  const bankStatementsRef = useRef(bankStatements);
+  useEffect(() => { bankStatementsRef.current = bankStatements; }, [bankStatements]);
+
+  const updateStatement = useCallback((id, field, value) => {
+    const stmts = bankStatementsRef.current;
+    const stmt = stmts.find(s => s.id === id);
     if (stmt && field === 'selection' && value !== stmt.selection) {
       updateRuleFromAllocation(stmt, value, stmt.vatRate);
     }
-    // Learning feedback: when user changes VAT rate on an already-allocated transaction
     if (stmt && field === 'vatRate' && value !== stmt.vatRate && stmt.selection && stmt.selection !== 'Unallocated Expen') {
       updateRuleFromAllocation(stmt, stmt.selection, value);
     }
-    saveBankStatements(bankStatements.map(s => s.id === id ? { ...s, [field]: value } : s));
-  };
+    saveBankStatements(stmts.map(s => s.id === id ? { ...s, [field]: value } : s));
+  }, [saveBankStatements, updateRuleFromAllocation]);
 
-  const deleteStatement = (id) => {
-    saveBankStatements(bankStatements.filter(s => s.id !== id));
-    setSelectedIds(selectedIds.filter(sid => sid !== id));
-  };
+  const deleteStatement = useCallback((id) => {
+    saveBankStatements(bankStatementsRef.current.filter(s => s.id !== id));
+    setSelectedIds(prev => prev.filter(sid => sid !== id));
+  }, [saveBankStatements]);
 
   const handleDeleteSelected = () => {
     if (selectedIds.length === 0) return;
@@ -4772,21 +4913,13 @@ Rules:
     a.click();
   };
 
-  const toggleSelectAll = (checked) => {
-    if (checked) {
-      setSelectedIds(displayedTransactions.map(s => s.id));
-    } else {
-      setSelectedIds([]);
-    }
-  };
+  const toggleSelectAll = useCallback((checked) => {
+    setSelectedIds(checked ? displayedTransactions.map(s => s.id) : []);
+  }, [displayedTransactions]);
 
-  const toggleSelect = (id) => {
-    if (selectedIds.includes(id)) {
-      setSelectedIds(selectedIds.filter(sid => sid !== id));
-    } else {
-      setSelectedIds([...selectedIds, id]);
-    }
-  };
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(sid => sid !== id) : [...prev, id]);
+  }, []);
 
   // Reinforce allocation rules when user confirms (reviews) AI-allocated transactions
   const reinforceConfirmedAllocations = (stmts) => {
@@ -4930,9 +5063,9 @@ Rules:
 
   const expenseCategories = ['Unallocated Expen', 'Travelling', 'Purchases', 'Office Supplies', 'Marketing', 'Utilities', 'Salaries', 'Rent', 'Insurance', 'Maintenance', 'Professional Fees', 'Bank Charges', 'Other'];
 
-  const toggleExpand = (id) => {
+  const toggleExpand = useCallback((id) => {
     setExpandedIds(prev => prev.includes(id) ? prev.filter(eid => eid !== id) : [...prev, id]);
-  };
+  }, []);
 
   // SA VAT categorization rules for AI allocation
   const SA_VAT_RULES = {
@@ -5247,7 +5380,7 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
             { id: 'attached', label: 'Attached', count: attachedTransactions.length },
             { id: 'new', label: 'New Transactions', count: newTransactions.length },
             { id: 'reviewed', label: 'Reviewed Transactions', count: reviewedTransactions.length },
-            { id: 'rules', label: 'Allocation Rules', count: allocationRules.filter(r => r.companyId === company?.id).length },
+            { id: 'rules', label: 'Allocation Rules', count: companyAllocationRules.length },
           ].map(tab => (
             <button
               key={tab.id}
@@ -5300,233 +5433,24 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
             </thead>
             <tbody>
               {displayedTransactions.length > 0 ? displayedTransactions.map(stmt => (
-                <React.Fragment key={stmt.id}>
-                <tr className={`border-t hover:bg-slate-50 ${stmt.reconciled ? 'bg-green-50' : ''} ${selectedIds.includes(stmt.id) ? 'bg-blue-50' : ''} ${stmt.allocationTier === 'auto' ? 'ring-1 ring-inset ring-emerald-300' : stmt.allocationTier === 'ai-suggested' ? 'ring-1 ring-inset ring-blue-200' : stmt.allocationTier === 'needs-review' ? 'ring-1 ring-inset ring-amber-200' : stmt.aiAllocated ? 'ring-1 ring-inset ring-emerald-200' : ''}`}>
-                  <td className="px-2 py-2 text-center">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(stmt.id)}
-                      onChange={() => toggleSelect(stmt.id)}
-                      className="w-4 h-4"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <input
-                      type="date"
-                      value={stmt.date}
-                      onChange={(e) => updateStatement(stmt.id, 'date', e.target.value)}
-                      className="border rounded px-2 py-1 text-sm w-full"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => toggleExpand(stmt.id)}
-                        className="p-0.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded flex-shrink-0"
-                        title="Show details"
-                      >
-                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expandedIds.includes(stmt.id) ? 'rotate-180' : ''}`} />
-                      </button>
-                      <input
-                        type="text"
-                        value={stmt.description || ''}
-                        onChange={(e) => updateStatement(stmt.id, 'description', e.target.value)}
-                        className="border rounded px-2 py-1 text-sm w-full"
-                        placeholder="Description"
-                      />
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={stmt.type}
-                      onChange={(e) => updateStatement(stmt.id, 'type', e.target.value)}
-                      className="border rounded px-2 py-1 text-sm w-full"
-                    >
-                      <option>Account</option>
-                      <option>Customer</option>
-                      <option>Supplier</option>
-                      <option>Transfer</option>
-                      <option>VAT</option>
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={stmt.selection}
-                      onChange={(e) => updateStatement(stmt.id, 'selection', e.target.value)}
-                      className="border rounded px-2 py-1 text-sm w-full"
-                    >
-                      {selectionOptions.map(opt => <option key={opt}>{opt}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={stmt.vatRate}
-                      onChange={(e) => updateStatement(stmt.id, 'vatRate', e.target.value)}
-                      className="border rounded px-2 py-1 text-sm w-full"
-                    >
-                      {VAT_RATES.map(vat => <option key={vat.value} value={vat.value}>{vat.label}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    <input
-                      type="text"
-                      value={stmt.spent ? `R ${stmt.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
-                      onChange={(e) => {
-                        const value = e.target.value.replace(/[^0-9.]/g, '');
-                        updateStatement(stmt.id, 'spent', parseFloat(value) || 0);
-                      }}
-                      onFocus={(e) => {
-                        e.target.value = stmt.spent || '';
-                      }}
-                      onBlur={(e) => {
-                        const value = parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0;
-                        updateStatement(stmt.id, 'spent', value);
-                      }}
-                      className="border rounded px-3 py-1 text-sm w-full text-right min-w-[140px]"
-                      placeholder="R 0.00"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <input
-                      type="text"
-                      value={stmt.received ? `R ${stmt.received.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
-                      onChange={(e) => {
-                        const value = e.target.value.replace(/[^0-9.]/g, '');
-                        updateStatement(stmt.id, 'received', parseFloat(value) || 0);
-                      }}
-                      onFocus={(e) => {
-                        e.target.value = stmt.received || '';
-                      }}
-                      onBlur={(e) => {
-                        const value = parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0;
-                        updateStatement(stmt.id, 'received', value);
-                      }}
-                      className="border rounded px-3 py-1 text-sm w-full text-right min-w-[120px]"
-                      placeholder="R 0.00"
-                    />
-                  </td>
-                  {/* Link Invoice Column */}
-                  <td className="px-3 py-2">
-                    {stmt.linkedInvoice ? (
-                      <div className="flex items-center gap-1">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${stmt.linkedType === 'client' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {stmt.linkedInvoiceNo || 'Linked'}
-                        </span>
-                        <button 
-                          onClick={() => handleUnlinkInvoice(stmt.id)}
-                          className="p-1 text-red-500 hover:bg-red-50 rounded"
-                          title="Unlink invoice"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => { setActiveStatement(stmt); setShowLinkModal(true); }}
-                          className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100 border border-blue-200"
-                          title="Link to existing invoice"
-                        >
-                          Link
-                        </button>
-                        <button
-                          onClick={() => { setActiveStatement(stmt); setShowConvertModal(true); }}
-                          className="px-2 py-1 text-xs bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100 border border-emerald-200"
-                          title="Convert to invoice"
-                        >
-                          Convert
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    <input
-                      type="checkbox"
-                      checked={stmt.reconciled}
-                      onChange={(e) => updateStatement(stmt.id, 'reconciled', e.target.checked)}
-                      className="w-4 h-4"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-1">
-                      {activeBankSubTab === 'reviewed' && (
-                        <button
-                          onClick={() => handleRecallTransaction(stmt.id)}
-                          className="px-2 py-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100"
-                          title="Move back to New Transactions"
-                        >
-                          Recall
-                        </button>
-                      )}
-                      <button
-                        onClick={() => smartAllocateTransactions([stmt.id])}
-                        disabled={aiAllocatingIds.includes(stmt.id)}
-                        className="p-1 text-purple-500 hover:bg-purple-50 rounded disabled:opacity-50"
-                        title="Smart Allocate (learns from your history)"
-                      >
-                        {aiAllocatingIds.includes(stmt.id) ? (
-                          <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <Calculator className="w-4 h-4" />
-                        )}
-                      </button>
-                      <button onClick={() => deleteStatement(stmt.id)} className="p-1 text-red-500 hover:bg-red-50 rounded">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-                {/* Expanded transaction detail row */}
-                {expandedIds.includes(stmt.id) && (
-                  <tr className="bg-slate-50 border-t border-dashed">
-                    <td colSpan={11} className="px-4 py-3">
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                        <div>
-                          <span className="font-medium text-slate-500 block">Full Description</span>
-                          <span className="text-slate-800">{stmt.description || '—'}</span>
-                        </div>
-                        <div>
-                          <span className="font-medium text-slate-500 block">Payee</span>
-                          <span className="text-slate-800">{stmt.payee || '—'}</span>
-                        </div>
-                        <div>
-                          <span className="font-medium text-slate-500 block">Reference</span>
-                          <span className="text-slate-800">{stmt.reference || '—'}</span>
-                        </div>
-                        <div>
-                          <span className="font-medium text-slate-500 block">Category</span>
-                          <span className="text-slate-800">{stmt.selection || '—'}</span>
-                        </div>
-                        <div>
-                          <span className="font-medium text-slate-500 block">VAT Rate</span>
-                          <span className="text-slate-800">{stmt.vatRate || '—'}</span>
-                        </div>
-                        <div>
-                          <span className="font-medium text-slate-500 block">Spent</span>
-                          <span className="text-red-600 font-medium">{stmt.spent ? `R ${stmt.spent.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}</span>
-                        </div>
-                        <div>
-                          <span className="font-medium text-slate-500 block">Received</span>
-                          <span className="text-emerald-600 font-medium">{stmt.received ? `R ${stmt.received.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}</span>
-                        </div>
-                        <div>
-                          <span className="font-medium text-slate-500 block">Status</span>
-                          <div className="flex gap-1 mt-0.5">
-                            {stmt.reconciled && <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px]">Reconciled</span>}
-                            {stmt.reviewed && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px]">Reviewed</span>}
-                            {stmt.linkedInvoice && <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px]">Linked: {stmt.linkedInvoiceNo}</span>}
-                            {stmt.allocationTier === 'auto' && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">Auto-matched ({stmt.allocationConfidence}%)</span>}
-                            {stmt.allocationTier === 'ai-suggested' && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px]">AI-suggested ({stmt.allocationConfidence}%)</span>}
-                            {stmt.allocationTier === 'needs-review' && <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px]">Needs review</span>}
-                            {stmt.aiAllocated && !stmt.allocationTier && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">AI Allocated</span>}
-                            {!stmt.reconciled && !stmt.reviewed && !stmt.linkedInvoice && <span className="text-slate-400">Unprocessed</span>}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-                </React.Fragment>
+                <TransactionRow
+                  key={stmt.id}
+                  stmt={stmt}
+                  isSelected={selectedIds.includes(stmt.id)}
+                  isExpanded={expandedIds.includes(stmt.id)}
+                  isAllocating={aiAllocatingIds.includes(stmt.id)}
+                  activeBankSubTab={activeBankSubTab}
+                  selectionOptions={selectionOptions}
+                  onToggleSelect={toggleSelect}
+                  onToggleExpand={toggleExpand}
+                  onUpdate={updateStatement}
+                  onDelete={deleteStatement}
+                  onSmartAllocate={smartAllocateTransactions}
+                  onRecall={handleRecallTransaction}
+                  onUnlink={handleUnlinkInvoice}
+                  onOpenLink={(s) => { setActiveStatement(s); setShowLinkModal(true); }}
+                  onOpenConvert={(s) => { setActiveStatement(s); setShowConvertModal(true); }}
+                />
               )) : (
                 <tr>
                   <td colSpan={11} className="text-center py-8 text-slate-500">
@@ -5612,7 +5536,7 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
               onClick={() => setShowRulesModal(true)}
               className="px-6 py-2 bg-white text-slate-600 border border-slate-300 rounded font-medium text-sm hover:bg-slate-50 flex items-center gap-2"
             >
-              <Settings className="w-4 h-4" /> Manage Rules ({allocationRules.filter(r => r.companyId === company?.id).length})
+              <Settings className="w-4 h-4" /> Manage Rules ({companyAllocationRules.length})
             </button>
           </div>
         </div>
@@ -5771,7 +5695,7 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
               <div>
                 <h3 className="font-bold text-purple-800">Allocation Rules Management</h3>
                 <p className="text-sm text-purple-600 mt-1">
-                  {allocationRules.filter(r => r.companyId === company?.id).length} learned patterns for {company?.name || 'this company'}
+                  {companyAllocationRules.length} learned patterns for {company?.name || 'this company'}
                 </p>
               </div>
               <div className="flex gap-2 items-center">
@@ -5797,25 +5721,25 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                 <div className="bg-emerald-50 rounded-lg p-3 text-center">
                   <p className="text-2xl font-bold text-emerald-700">
-                    {allocationRules.filter(r => r.companyId === company?.id && r.confidenceScore >= 3).length}
+                    {companyAllocationRules.filter(r => r.confidenceScore >= 3).length}
                   </p>
                   <p className="text-xs text-emerald-600">High Confidence (Auto-allocate)</p>
                 </div>
                 <div className="bg-blue-50 rounded-lg p-3 text-center">
                   <p className="text-2xl font-bold text-blue-700">
-                    {allocationRules.filter(r => r.companyId === company?.id && r.confidenceScore >= 1 && r.confidenceScore < 3).length}
+                    {companyAllocationRules.filter(r => r.confidenceScore >= 1 && r.confidenceScore < 3).length}
                   </p>
                   <p className="text-xs text-blue-600">Learning (AI-assisted)</p>
                 </div>
                 <div className="bg-purple-50 rounded-lg p-3 text-center">
                   <p className="text-2xl font-bold text-purple-700">
-                    {allocationRules.filter(r => r.companyId === company?.id).reduce((s, r) => s + r.timesMatched, 0)}
+                    {companyAllocationRules.reduce((s, r) => s + r.timesMatched, 0)}
                   </p>
                   <p className="text-xs text-purple-600">Total Times Applied</p>
                 </div>
                 <div className="bg-emerald-50 rounded-lg p-3 text-center">
                   <p className="text-2xl font-bold text-emerald-600">
-                    {allocationRules.filter(r => r.companyId === company?.id && r.source === 'default').length}
+                    {companyAllocationRules.filter(r => r.source === 'default').length}
                   </p>
                   <p className="text-xs text-emerald-500">Default Rules</p>
                 </div>
@@ -5848,8 +5772,7 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
                     </tr>
                   </thead>
                   <tbody>
-                    {allocationRules
-                      .filter(r => r.companyId === company?.id)
+                    {[...companyAllocationRules]
                       .sort((a, b) => b.confidenceScore - a.confidenceScore)
                       .map(rule => (
                         <tr key={rule.id} className="border-t hover:bg-slate-50">
@@ -5892,7 +5815,7 @@ Use EXACT account and vatRate names from the lists above. Match the most appropr
                           </td>
                         </tr>
                       ))}
-                    {allocationRules.filter(r => r.companyId === company?.id).length === 0 && (
+                    {companyAllocationRules.length === 0 && (
                       <tr>
                         <td colSpan={8} className="px-3 py-8 text-center text-slate-400">
                           No allocation rules yet. Click &quot;Train from History&quot; to learn from your past transactions, or allocate transactions manually to start building rules automatically.
