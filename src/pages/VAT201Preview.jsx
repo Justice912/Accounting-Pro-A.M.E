@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -6,6 +6,7 @@ import {
   FileSpreadsheet,
   RefreshCw,
 } from 'lucide-react';
+import { normalizeVatPeriodSelection } from './vatPeriodViewModel.js';
 
 function toZAR(value) {
   return new Intl.NumberFormat('en-ZA', {
@@ -31,12 +32,20 @@ export default function VAT201Preview() {
   const [searchParams] = useSearchParams();
   const clientId = searchParams.get('client') || '';
   const period = searchParams.get('period') || '';
+  const customStartDate = searchParams.get('start') || '';
+  const customEndDate = searchParams.get('end') || '';
+  const periodSelection = useMemo(() => normalizeVatPeriodSelection({
+    periodMode: customStartDate || customEndDate ? 'custom' : 'preset',
+    selectedPeriod: period,
+    customStartDate,
+    customEndDate,
+  }), [customEndDate, customStartDate, period]);
   const [summary, setSummary] = useState(null);
   const [clientName, setClientName] = useState(clientId);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    if (!clientId || !period || !api?.vatGetPeriodSummary) {
+    if (!clientId || !periodSelection.period || !periodSelection.isValid || !api?.vatGetPeriodSummary) {
       setSummary(null);
       setLoading(false);
       return;
@@ -45,7 +54,7 @@ export default function VAT201Preview() {
     setLoading(true);
     try {
       const [summaryResult, clients] = await Promise.all([
-        api.vatGetPeriodSummary(clientId, period),
+        api.vatGetPeriodSummary(clientId, periodSelection.period, periodSelection.isCustom ? periodSelection.filters : undefined),
         api?.listClients ? api.listClients() : Promise.resolve([]),
       ]);
       setSummary(summaryResult || null);
@@ -57,7 +66,7 @@ export default function VAT201Preview() {
     } finally {
       setLoading(false);
     }
-  }, [api, clientId, period]);
+  }, [api, clientId, periodSelection]);
 
   useEffect(() => {
     load();
@@ -74,7 +83,7 @@ export default function VAT201Preview() {
                 <h1 className="text-lg font-bold text-slate-800">VAT201 Preview</h1>
               </div>
               <p className="mt-1 text-sm text-slate-500">
-                Preview of the computed VAT201 fields for {clientName || 'the selected client'} in {period || 'the selected period'}.
+                Preview of the computed VAT201 fields for {clientName || 'the selected client'} in {periodSelection.label || 'the selected period'}.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -96,9 +105,9 @@ export default function VAT201Preview() {
           </div>
         </div>
 
-        {!clientId || !period ? (
+        {!clientId || !periodSelection.period || !periodSelection.isValid ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-500">
-            Open this page from the VAT dashboard to preview a specific client and VAT period.
+            {periodSelection.error || 'Open this page from the VAT dashboard to preview a specific client and VAT period.'}
           </div>
         ) : loading ? (
           <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-500">
@@ -177,7 +186,7 @@ export default function VAT201Preview() {
                     </div>
                     <div className="flex items-center justify-between">
                       <span>Period</span>
-                      <span className="text-slate-800">{period}</span>
+                      <span className="text-slate-800">{periodSelection.label}</span>
                     </div>
                   </div>
                 </div>

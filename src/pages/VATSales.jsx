@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
+  CalendarDays,
   CheckCircle2,
   Clock,
   FileSpreadsheet,
@@ -18,7 +19,15 @@ import {
   getComplianceTone,
   getSalesInvoiceDraft,
 } from './vatComplianceViewModel.js';
+import {
+  buildVatPeriodOptions,
+  currentVatPeriod,
+  formatVatPeriodLabel,
+  getVatPeriodDateRange,
+  normalizeVatPeriodSelection,
+} from './vatPeriodViewModel.js';
 import PractitionerOverridePanel from '../components/vat/PractitionerOverridePanel.jsx';
+import ClientManager from '../components/clients/ClientManager.jsx';
 
 const STATUS = {
   pending: { label: 'Pending', icon: Clock, badge: 'bg-amber-100 text-amber-800' },
@@ -33,32 +42,6 @@ function toZAR(value) {
     currency: 'ZAR',
     minimumFractionDigits: 2,
   }).format(Number(value) || 0);
-}
-
-function currentPeriod() {
-  const date = new Date();
-  const month = date.getMonth() + 1;
-  const start = month % 2 === 0 ? month - 1 : month;
-  return `${date.getFullYear()}-${String(start).padStart(2, '0')}`;
-}
-
-function periodLabel(period) {
-  if (!period) return '';
-  const [year, month] = period.split('-').map(Number);
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${months[month - 1]}/${months[month]} ${year}`;
-}
-
-function buildPeriodOptions() {
-  const options = [];
-  const now = new Date();
-  for (let index = 0; index < 8; index += 1) {
-    const date = new Date(now.getFullYear(), now.getMonth() - index * 2, 1);
-    const month = date.getMonth() + 1;
-    const start = month % 2 === 0 ? month - 1 : month;
-    options.push(`${date.getFullYear()}-${String(start).padStart(2, '0')}`);
-  }
-  return [...new Set(options)];
 }
 
 function normalizeLineItems(lineItems) {
@@ -142,9 +125,14 @@ function DraftField({ label, value, onChange, type = 'text' }) {
 
 export default function VATSales() {
   const api = window.api;
+  const initialPeriod = currentVatPeriod();
+  const initialCustomRange = getVatPeriodDateRange(initialPeriod);
   const [clients, setClients] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState('');
-  const [selectedPeriod, setSelectedPeriod] = useState(currentPeriod());
+  const [selectedPeriod, setSelectedPeriod] = useState(initialPeriod);
+  const [periodMode, setPeriodMode] = useState('preset');
+  const [customStartDate, setCustomStartDate] = useState(initialCustomRange.startDate);
+  const [customEndDate, setCustomEndDate] = useState(initialCustomRange.endDate);
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null);
@@ -153,7 +141,15 @@ export default function VATSales() {
   const [searchQuery, setSearchQuery] = useState('');
   const [toast, setToast] = useState(null);
   const [overrideBusy, setOverrideBusy] = useState(false);
-  const periodOptions = useMemo(() => buildPeriodOptions(), []);
+  const [showClientManager, setShowClientManager] = useState(false);
+  const [clientManagerMode, setClientManagerMode] = useState('list');
+  const periodOptions = useMemo(() => buildVatPeriodOptions(), []);
+  const periodSelection = useMemo(() => normalizeVatPeriodSelection({
+    periodMode,
+    selectedPeriod,
+    customStartDate,
+    customEndDate,
+  }), [customEndDate, customStartDate, periodMode, selectedPeriod]);
 
   const showToast = useCallback((message, type = 'info') => {
     setToast({ message, type });
@@ -175,6 +171,23 @@ export default function VATSales() {
   useEffect(() => {
     loadClients();
   }, [loadClients]);
+
+  const closeClientManager = useCallback(async () => {
+    setShowClientManager(false);
+    await loadClients();
+  }, [loadClients]);
+
+  const openClientManager = useCallback((mode = 'list') => {
+    setClientManagerMode(mode);
+    setShowClientManager(true);
+  }, []);
+
+  useEffect(() => {
+    if (periodMode !== 'preset') return;
+    const range = getVatPeriodDateRange(selectedPeriod);
+    setCustomStartDate(range.startDate);
+    setCustomEndDate(range.endDate);
+  }, [periodMode, selectedPeriod]);
 
   const refreshSelectedInvoice = useCallback(async (invoiceId, fallbackInvoice = null) => {
     const nextInvoiceId = invoiceId || fallbackInvoice?.id || null;
@@ -209,14 +222,14 @@ export default function VATSales() {
   }, [refreshSelectedInvoice]);
 
   const loadSales = useCallback(async () => {
-    if (!selectedClientId || !api?.vatListSales) {
+    if (!selectedClientId || !api?.vatListSales || !periodSelection.isValid) {
       setSales([]);
       return;
     }
 
     setLoading(true);
     try {
-      const list = await api.vatListSales(selectedClientId, { period: selectedPeriod });
+      const list = await api.vatListSales(selectedClientId, periodSelection.filters);
       setSales(list || []);
 
       if (selectedInvoiceId) {
@@ -232,7 +245,7 @@ export default function VATSales() {
     } finally {
       setLoading(false);
     }
-  }, [api, selectedClientId, selectedInvoiceId, selectedPeriod]);
+  }, [api, periodSelection, selectedClientId, selectedInvoiceId]);
 
   useEffect(() => {
     loadSales();
@@ -471,16 +484,52 @@ export default function VATSales() {
               ))}
             </select>
           </label>
+          <button
+            onClick={() => openClientManager(clients.length ? 'list' : 'new')}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+          >
+            <Plus className="h-4 w-4" />
+            {clients.length ? 'Manage Clients' : 'Add Client'}
+          </button>
 
+          <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            <CalendarDays className="h-4 w-4 text-slate-400" />
+            <select
+              value={periodMode}
+              onChange={event => setPeriodMode(event.target.value)}
+              className="bg-transparent outline-none"
+            >
+              <option value="preset">Standard period</option>
+              <option value="custom">Custom dates</option>
+            </select>
+          </label>
           <select
             value={selectedPeriod}
             onChange={event => setSelectedPeriod(event.target.value)}
             className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 outline-none"
           >
             {periodOptions.map(period => (
-              <option key={period} value={period}>{periodLabel(period)}</option>
+              <option key={period} value={period}>{formatVatPeriodLabel(period)}</option>
             ))}
           </select>
+          {periodMode === 'custom' && (
+            <>
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={event => setCustomStartDate(event.target.value)}
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 outline-none"
+                aria-label="Custom VAT period start date"
+              />
+              <input
+                type="date"
+                value={customEndDate}
+                onChange={event => setCustomEndDate(event.target.value)}
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 outline-none"
+                aria-label="Custom VAT period end date"
+              />
+            </>
+          )}
 
           <label className="flex min-w-[240px] items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
             <Search className="h-4 w-4 text-slate-400" />
@@ -492,11 +541,16 @@ export default function VATSales() {
             />
           </label>
         </div>
+        {!periodSelection.isValid && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {periodSelection.error}
+          </div>
+        )}
       </div>
 
       <div className="grid gap-4 px-6 py-4 lg:grid-cols-3">
         <MetricCard label="Invoices" value={summary.count} sub={selectedClient?.name || 'Select a client'} />
-        <MetricCard label="Output VAT" value={toZAR(summary.outputVat)} sub={periodLabel(selectedPeriod)} />
+        <MetricCard label="Output VAT" value={toZAR(summary.outputVat)} sub={periodSelection.label} />
         <MetricCard label="Avg Compliance" value={`${Math.round(summary.averageScore || 0)}`} sub="Advisory-first score" />
       </div>
 
@@ -719,6 +773,7 @@ export default function VATSales() {
           onClose={() => setToast(null)}
         />
       ) : null}
+      {showClientManager && <ClientManager initialMode={clientManagerMode} onClose={closeClientManager} />}
     </div>
   );
 }

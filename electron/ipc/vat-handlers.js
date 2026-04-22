@@ -5,6 +5,10 @@ import { buildReminderCandidates } from '../services/vat-reminders.js';
 import { evaluateVatDocument } from '../services/vat-rules-engine.js';
 import { buildVatPeriodSummary } from '../services/vat-period-summary.js';
 import {
+  getVatDocumentPeriodWhere,
+  normalizeVatDateRangeFilter,
+} from '../services/vat-period-filters.js';
+import {
   applyDocumentOverrides,
   clearDocumentOverride,
   getActiveDocumentOverrides,
@@ -521,16 +525,9 @@ function normalizeStoredPeriodSummary(row) {
   };
 }
 
-function buildAndPersistPeriodSummary(database, clientId, period, now) {
-  const purchases = database.getAll(
-    'SELECT * FROM vat_receipts WHERE client_id = ? AND vat_period = ?',
-    [clientId, period]
-  ).map(receipt => mapReceiptToPeriodSummaryInput(database, receipt));
-  const sales = database.getAll(
-    'SELECT * FROM vat_sales_invoices WHERE client_id = ? AND vat_period = ?',
-    [clientId, period]
-  ).map(invoice => mapSalesInvoiceToPeriodSummaryInput(database, invoice));
-
+function buildVatPeriodSummaryFromRows(database, clientId, period, purchasesRows, salesRows, now, dateRange = null) {
+  const purchases = purchasesRows.map(receipt => mapReceiptToPeriodSummaryInput(database, receipt));
+  const sales = salesRows.map(invoice => mapSalesInvoiceToPeriodSummaryInput(database, invoice));
   const client = typeof database?.getOne === 'function'
     ? database.getOne(
       `SELECT penalty_interest_rate
@@ -549,6 +546,38 @@ function buildAndPersistPeriodSummary(database, clientId, period, now) {
       : null,
     now: now.toISOString().slice(0, 10),
   });
+
+  if (!dateRange) return summary;
+
+  return {
+    ...summary,
+    periodStart: dateRange.startDate,
+    periodEnd: dateRange.endDate,
+    periodLabel: `${dateRange.startDate} to ${dateRange.endDate}`,
+  };
+}
+
+function buildPeriodSummary(database, clientId, period, now, dateRange = null) {
+  const purchaseFilter = getVatDocumentPeriodWhere(
+    dateRange ? { period, ...dateRange } : { period }
+  );
+  const salesFilter = getVatDocumentPeriodWhere(
+    dateRange ? { period, ...dateRange } : { period }
+  );
+  const purchasesRows = database.getAll(
+    `SELECT * FROM vat_receipts WHERE client_id = ?${purchaseFilter.clause}`,
+    [clientId, ...purchaseFilter.params]
+  );
+  const salesRows = database.getAll(
+    `SELECT * FROM vat_sales_invoices WHERE client_id = ?${salesFilter.clause}`,
+    [clientId, ...salesFilter.params]
+  );
+
+  return buildVatPeriodSummaryFromRows(database, clientId, period, purchasesRows, salesRows, now, dateRange);
+}
+
+function buildAndPersistPeriodSummary(database, clientId, period, now) {
+  const summary = buildPeriodSummary(database, clientId, period, now);
 
   if (typeof database?.run === 'function') {
     const persisted = toPersistedPeriodSummary(summary, now.toISOString());
@@ -688,6 +717,49 @@ export function getVatReminderClientIdsForPeriod(database, period) {
   )];
 }
 
+function getVatDashboardClientIds(database, period, periodDates, dateRange = null) {
+  const clientIds = [];
+  const addRows = rows => {
+    rows.forEach(row => {
+      if (row?.client_id && !clientIds.includes(row.client_id)) {
+        clientIds.push(row.client_id);
+      }
+    });
+  };
+
+  if (dateRange) {
+    addRows(database.getAll(
+      'SELECT DISTINCT client_id FROM vat_receipts WHERE invoice_date >= ? AND invoice_date <= ?',
+      [dateRange.startDate, dateRange.endDate]
+    ));
+    addRows(database.getAll(
+      'SELECT DISTINCT client_id FROM vat_sales_invoices WHERE invoice_date >= ? AND invoice_date <= ?',
+      [dateRange.startDate, dateRange.endDate]
+    ));
+  } else {
+    addRows(database.getAll(
+      'SELECT DISTINCT client_id FROM vat_receipts WHERE vat_period = ?',
+      [period]
+    ));
+    addRows(database.getAll(
+      'SELECT DISTINCT client_id FROM vat_sales_invoices WHERE vat_period = ?',
+      [period]
+    ));
+    addRows(database.getAll(
+      'SELECT DISTINCT client_id FROM vat_schedules WHERE period = ?',
+      [period]
+    ));
+  }
+
+  addRows(database.getAll(
+    `SELECT DISTINCT client_id FROM vat_bank_transactions
+     WHERE txn_date >= ? AND txn_date <= ?`,
+    [periodDates.start, periodDates.end]
+  ));
+
+  return clientIds;
+}
+
 function upsertReminderState(database, payload, now = new Date()) {
   const {
     clientId,
@@ -734,7 +806,9 @@ export default function registerVatHandlers(ipcMain, services) {
     try {
       let sql = 'SELECT * FROM vat_receipts WHERE client_id = ?';
       const params = [clientId];
-      if (filters.period) { sql += ' AND vat_period = ?'; params.push(filters.period); }
+      const periodFilter = getVatDocumentPeriodWhere(filters);
+      sql += periodFilter.clause;
+      params.push(...periodFilter.params);
       if (filters.status && filters.status !== 'all') { sql += ' AND status = ?'; params.push(filters.status); }
       sql += ' ORDER BY invoice_date DESC, created_at DESC';
       return database.getAll(sql, params);
@@ -1197,10 +1271,9 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
     try {
       let sql = 'SELECT * FROM vat_sales_invoices WHERE client_id = ?';
       const params = [clientId];
-      if (filters.period) {
-        sql += ' AND vat_period = ?';
-        params.push(filters.period);
-      }
+      const periodFilter = getVatDocumentPeriodWhere(filters);
+      sql += periodFilter.clause;
+      params.push(...periodFilter.params);
       if (filters.status && filters.status !== 'all') {
         sql += ' AND status = ?';
         params.push(filters.status);
@@ -1508,15 +1581,20 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
     }
   });
 
-  ipcMain.handle('vat:period-summary:get', async (event, clientId, period) => {
+  ipcMain.handle('vat:period-summary:get', async (event, clientId, period, filters = {}) => {
     try {
-      if (!clientId || !period) return null;
+      const dateRange = normalizeVatDateRangeFilter(filters);
+      const effectivePeriod = period || (dateRange ? getVatPeriod(dateRange.startDate) : null);
+      if (!clientId || !effectivePeriod) return null;
+      if (dateRange) {
+        return buildPeriodSummary(database, clientId, effectivePeriod, getHandlerNow(services), dateRange);
+      }
       const existing = database.getOne(
         'SELECT * FROM vat_period_summaries WHERE client_id = ? AND vat_period = ?',
-        [clientId, period]
+        [clientId, effectivePeriod]
       );
       if (existing) return normalizeStoredPeriodSummary(existing);
-      return buildAndPersistPeriodSummary(database, clientId, period, getHandlerNow(services));
+      return buildAndPersistPeriodSummary(database, clientId, effectivePeriod, getHandlerNow(services));
     } catch {
       return null;
     }
@@ -1524,28 +1602,22 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
 
   // ── Dashboard (practice-wide overview) ──────────────────────────────────
 
-  ipcMain.handle('vat:dashboard:get', async (event, period) => {
+  ipcMain.handle('vat:dashboard:get', async (event, periodInput) => {
     try {
       const now = getHandlerNow(services);
-      const effectivePeriod = period || getCurrentVatPeriod(now);
+      const filters = periodInput && typeof periodInput === 'object'
+        ? periodInput
+        : { period: periodInput };
+      const dateRange = normalizeVatDateRangeFilter(filters);
+      const effectivePeriod = filters.period || (dateRange ? getVatPeriod(dateRange.startDate) : getCurrentVatPeriod(now));
       if (!effectivePeriod) return { period: null, clients: [], summary: {} };
 
-      const pd = getPeriodDates(effectivePeriod);
+      const pd = dateRange
+        ? { start: dateRange.startDate, end: dateRange.endDate }
+        : getPeriodDates(effectivePeriod);
       const periodEndDate = new Date(pd.end + 'T23:59:59');
       const daysUntilClose = Math.ceil((periodEndDate - now) / (1000 * 60 * 60 * 24));
-
-      // All clients that have any VAT activity for this period
-      const clientIds = getVatReminderClientIdsForPeriod(database, effectivePeriod);
-
-      // Also include clients that have bank transactions in the period
-      const bankClientRows = database.getAll(
-        `SELECT DISTINCT client_id FROM vat_bank_transactions
-         WHERE txn_date >= ? AND txn_date <= ?`,
-        [pd.start, pd.end]
-      );
-      bankClientRows.forEach(r => {
-        if (r.client_id && !clientIds.includes(r.client_id)) clientIds.push(r.client_id);
-      });
+      const clientIds = getVatDashboardClientIds(database, effectivePeriod, pd, dateRange);
 
       // Fetch client details
       const clientMap = {};
@@ -1561,17 +1633,26 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
       let totalReceipts = 0, totalPending = 0, totalApproved = 0, totalFlagged = 0;
       let totalInputVat = 0, totalPurchases = 0;
       let totalBankTxns = 0, totalBankMatched = 0;
+      let totalComplianceScore = 0, complianceClientCount = 0;
+      let totalPenaltyRisk = 0, totalBlockedInputVat = 0, totalApportionedInputVat = 0;
       let clientsWithWork = 0;
 
       const clients = clientIds.map(cid => {
         const client = clientMap[cid] || { id: cid, name: cid, vat_number: null };
-        const periodSummaryRow = database.getOne(
-          'SELECT * FROM vat_period_summaries WHERE client_id = ? AND vat_period = ?',
-          [cid, effectivePeriod]
+        const periodSummary = dateRange
+          ? buildPeriodSummary(database, cid, effectivePeriod, now, dateRange)
+          : (() => {
+            const periodSummaryRow = database.getOne(
+              'SELECT * FROM vat_period_summaries WHERE client_id = ? AND vat_period = ?',
+              [cid, effectivePeriod]
+            );
+            return periodSummaryRow
+              ? normalizeStoredPeriodSummary(periodSummaryRow)
+              : buildAndPersistPeriodSummary(database, cid, effectivePeriod, now);
+          })();
+        const receiptFilter = getVatDocumentPeriodWhere(
+          dateRange ? { period: effectivePeriod, ...dateRange } : { period: effectivePeriod }
         );
-        const periodSummary = periodSummaryRow
-          ? normalizeStoredPeriodSummary(periodSummaryRow)
-          : buildAndPersistPeriodSummary(database, cid, effectivePeriod, now);
 
         // Receipt stats
         const rStats = database.getOne(
@@ -1584,17 +1665,20 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
             SUM(CASE WHEN flags != '[]' AND flags IS NOT NULL AND status != 'approved' THEN 1 ELSE 0 END) AS flagged,
             SUM(CASE WHEN status = 'approved' THEN vat_amount ELSE 0 END) AS input_vat,
             SUM(CASE WHEN status = 'approved' THEN total_incl_vat ELSE 0 END) AS purchases
-          FROM vat_receipts WHERE client_id = ? AND vat_period = ?`,
-          [cid, effectivePeriod]
+          FROM vat_receipts WHERE client_id = ?${receiptFilter.clause}`,
+          [cid, ...receiptFilter.params]
         ) || {};
 
         // Schedule status
-        const schedule = database.getOne(
-          'SELECT * FROM vat_schedules WHERE client_id = ? AND period = ?',
-          [cid, effectivePeriod]
-        );
-        let scheduleStatus = 'missing';
-        if (schedule) {
+        let schedule = null;
+        let scheduleStatus = dateRange ? 'custom' : 'missing';
+        if (!dateRange) {
+          schedule = database.getOne(
+            'SELECT * FROM vat_schedules WHERE client_id = ? AND period = ?',
+            [cid, effectivePeriod]
+          );
+        }
+        if (!dateRange && schedule) {
           const latestApproved = database.getOne(
             `SELECT MAX(updated_at) AS latest FROM vat_receipts
              WHERE client_id = ? AND vat_period = ? AND status = 'approved'`,
@@ -1615,20 +1699,25 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
 
         // Reminder count
         let reminderCount = 0;
-        try {
-          const ctx = loadReminderContext(database, cid, effectivePeriod);
-          const reminders = buildReminderCandidates({
-            clientId: cid, period: effectivePeriod,
-            receipts: ctx.receipts, schedule: ctx.schedule,
-            reminderStateRows: ctx.reminderStateRows, now,
-          });
-          reminderCount = reminders.length;
-        } catch { /* non-fatal */ }
+        if (!dateRange) {
+          try {
+            const ctx = loadReminderContext(database, cid, effectivePeriod);
+            const reminders = buildReminderCandidates({
+              clientId: cid, period: effectivePeriod,
+              receipts: ctx.receipts, schedule: ctx.schedule,
+              reminderStateRows: ctx.reminderStateRows, now,
+            });
+            reminderCount = reminders.length;
+          } catch { /* non-fatal */ }
+        }
 
         // Urgency
         const pending = rStats.pending || 0;
         const flagged = rStats.flagged || 0;
-        const hasOutstandingWork = pending > 0 || flagged > 0 || (rStats.query || 0) > 0 || scheduleStatus !== 'current';
+        const hasOutstandingWork = pending > 0
+          || flagged > 0
+          || (rStats.query || 0) > 0
+          || (!dateRange && scheduleStatus !== 'current');
         let urgency = 'clear';
         if (hasOutstandingWork && daysUntilClose <= 7) urgency = 'high';
         else if (hasOutstandingWork && daysUntilClose <= 14) urgency = 'medium';
@@ -1645,6 +1734,11 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
         totalPurchases += rStats.purchases || 0;
         totalBankTxns += bStats.total || 0;
         totalBankMatched += bStats.matched || 0;
+        totalComplianceScore += Number(periodSummary?.complianceScore) || 0;
+        complianceClientCount += 1;
+        totalPenaltyRisk += Number(periodSummary?.penaltyRisk?.latePenalty) || 0;
+        totalBlockedInputVat += Number(periodSummary?.totals?.blockedInputVat) || 0;
+        totalApportionedInputVat += Number(periodSummary?.totals?.apportionedInputVat) || 0;
 
         return {
           id: client.id,
@@ -1671,25 +1765,18 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
       const urgencyOrder = { high: 0, medium: 1, low: 2, clear: 3 };
       clients.sort((a, b) => (urgencyOrder[a.urgency] ?? 4) - (urgencyOrder[b.urgency] ?? 4));
 
-      const complianceSummary = database.getOne(
-        `SELECT
-          AVG(compliance_score) AS average_compliance_score,
-          SUM(penalty_risk_amount) AS total_penalty_risk,
-          SUM(blocked_input_vat) AS blocked_input_vat,
-          SUM(apportioned_input_vat) AS apportioned_input_vat
-         FROM vat_period_summaries
-         WHERE vat_period = ?`,
-        [effectivePeriod]
-      ) || {};
-
       return {
         period: effectivePeriod,
-        periodLabel: (() => {
-          const [y, m] = effectivePeriod.split('-').map(Number);
-          const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-          return `${months[m - 1]}/${months[m]} ${y}`;
-        })(),
+        periodLabel: dateRange
+          ? `${dateRange.startDate} to ${dateRange.endDate}`
+          : (() => {
+            const [y, m] = effectivePeriod.split('-').map(Number);
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            return `${months[m - 1]}/${months[m]} ${y}`;
+          })(),
+        periodStart: pd.start,
         periodEnd: pd.end,
+        isCustomPeriod: !!dateRange,
         daysUntilClose,
         clients,
         summary: {
@@ -1697,12 +1784,12 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
           clientsWithWork,
           totalReceipts, totalPending, totalApproved, totalFlagged,
           totalInputVat, totalPurchases,
-          averageComplianceScore:
-            Number(complianceSummary.average_compliance_score ?? complianceSummary.compliance_score) || 0,
-          totalPenaltyRisk:
-            Number(complianceSummary.total_penalty_risk ?? complianceSummary.penalty_risk_amount) || 0,
-          totalBlockedInputVat: Number(complianceSummary.blocked_input_vat) || 0,
-          totalApportionedInputVat: Number(complianceSummary.apportioned_input_vat) || 0,
+          averageComplianceScore: complianceClientCount > 0
+            ? totalComplianceScore / complianceClientCount
+            : 0,
+          totalPenaltyRisk,
+          totalBlockedInputVat,
+          totalApportionedInputVat,
           reconciliationRate: totalBankTxns > 0 ? totalBankMatched / totalBankTxns : null,
           daysUntilClose,
         },

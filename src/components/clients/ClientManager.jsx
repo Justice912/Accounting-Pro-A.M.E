@@ -32,10 +32,10 @@ function createEmptyClientForm() {
   };
 }
 
-export default function ClientManager({ onClose }) {
+export default function ClientManager({ onClose, initialMode = 'list' }) {
   const [clients, setClients] = useState([]);
   const [search, setSearch] = useState('');
-  const [editing, setEditing] = useState(null); // null = list view, 'new' = create, id = edit
+  const [editing, setEditing] = useState(initialMode === 'new' ? 'new' : null); // null = list view, 'new' = create, id = edit
   const [form, setForm] = useState(createEmptyClientForm());
   const [saving, setSaving] = useState(false);
 

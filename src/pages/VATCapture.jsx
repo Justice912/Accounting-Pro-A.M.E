@@ -4,7 +4,7 @@ import {
   CheckCircle2, XCircle, AlertCircle, Clock, HelpCircle,
   Eye, Trash2, Edit3, RefreshCw, Download, Plus, Search,
   ArrowLeft, AlertTriangle, Shield, ShieldCheck, ShieldOff,
-  FileText, Banknote, BarChart3, X, Save, Camera,
+  FileText, Banknote, BarChart3, X, Save, Camera, CalendarDays,
 } from 'lucide-react';
 import {
   getReminderActionState,
@@ -16,7 +16,15 @@ import {
   getComplianceTone,
   groupFindingsBySeverity,
 } from './vatComplianceViewModel.js';
+import {
+  buildVatPeriodOptions,
+  currentVatPeriod,
+  formatVatPeriodLabel,
+  getVatPeriodDateRange,
+  normalizeVatPeriodSelection,
+} from './vatPeriodViewModel.js';
 import PractitionerOverridePanel from '../components/vat/PractitionerOverridePanel.jsx';
+import ClientManager from '../components/clients/ClientManager.jsx';
 
 // ── Design tokens (matching spec) ────────────────────────────────────────────
 const STATUS = {
@@ -37,34 +45,6 @@ function toZAR(v) {
 
 function parseFlags(flagsStr) {
   try { return JSON.parse(flagsStr || '[]'); } catch { return []; }
-}
-
-function currentPeriod() {
-  const d = new Date();
-  const m = d.getMonth() + 1;
-  const start = m % 2 === 0 ? m - 1 : m;
-  return `${d.getFullYear()}-${String(start).padStart(2, '0')}`;
-}
-
-function periodLabel(p) {
-  if (!p) return '';
-  const [year, month] = p.split('-').map(Number);
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const end = month + 1;
-  return `${months[month - 1]}/${months[end - 1]} ${year}`;
-}
-
-function buildPeriodOptions() {
-  const options = [];
-  const now = new Date();
-  for (let i = 0; i < 8; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i * 2, 1);
-    const m = d.getMonth() + 1;
-    const start = m % 2 === 0 ? m - 1 : m;
-    const period = `${d.getFullYear()}-${String(start).padStart(2, '0')}`;
-    options.push(period);
-  }
-  return [...new Set(options)];
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -250,12 +230,23 @@ export default function VATCapture() {
   // Read query params for dashboard drill-down
   const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const initialClient = urlParams.get('client') || '';
-  const initialPeriod = urlParams.get('period') || currentPeriod();
+  const initialPeriod = urlParams.get('period') || currentVatPeriod();
+  const initialCustomRange = getVatPeriodDateRange(initialPeriod);
+  const initialStartDate = urlParams.get('start') || initialCustomRange.startDate;
+  const initialEndDate = urlParams.get('end') || initialCustomRange.endDate;
+  const initialPeriodMode = initialStartDate && initialEndDate && (urlParams.get('start') || urlParams.get('end'))
+    ? 'custom'
+    : 'preset';
 
   // ─ Global state ─
   const [clients, setClients] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState(initialClient);
   const [selectedPeriod, setSelectedPeriod] = useState(initialPeriod);
+  const [periodMode, setPeriodMode] = useState(initialPeriodMode);
+  const [customStartDate, setCustomStartDate] = useState(initialStartDate);
+  const [customEndDate, setCustomEndDate] = useState(initialEndDate);
+  const [showClientManager, setShowClientManager] = useState(false);
+  const [clientManagerMode, setClientManagerMode] = useState('list');
   const [activeTab, setActiveTab] = useState('receipts');
   const [toast, setToast] = useState(null);
 
@@ -293,36 +284,67 @@ export default function VATCapture() {
   const [bankFilter, setBankFilter] = useState('all'); // all | matched | unmatched
   const [matchingTxnId, setMatchingTxnId] = useState(null);
 
-  const periodOptions = useMemo(() => buildPeriodOptions(), []);
+  const periodOptions = useMemo(() => buildVatPeriodOptions(), []);
+  const periodSelection = useMemo(() => normalizeVatPeriodSelection({
+    periodMode,
+    selectedPeriod,
+    customStartDate,
+    customEndDate,
+  }), [customEndDate, customStartDate, periodMode, selectedPeriod]);
 
   const showToast = useCallback((message, type = 'info') => {
     setToast({ message, type, key: Date.now() });
   }, []);
 
   // ── Load clients ─────────────────────────────────────────────────────────
+  const loadClients = useCallback(async () => {
+    if (!api?.listClients) return [];
+    try {
+      const list = await api.listClients();
+      setClients(list || []);
+      if (list?.length) {
+        setSelectedClientId(prev => {
+          if (prev && list.some(c => c.id === prev)) return prev;
+          return list[0].id;
+        });
+      }
+      return list || [];
+    } catch (err) {
+      console.error('[VATCapture] listClients error:', err);
+      return [];
+    }
+  }, [api]);
+
   useEffect(() => {
-    if (!api?.listClients) return;
-    api.listClients()
-      .then(list => {
-        setClients(list || []);
-        if (list?.length) {
-          setSelectedClientId(prev => {
-            if (prev && list.some(c => c.id === prev)) return prev;
-            return list[0].id;
-          });
-        }
-      })
-      .catch(err => console.error('[VATCapture] listClients error:', err));
+    void loadClients();
+  }, [loadClients]);
+
+  const closeClientManager = useCallback(async () => {
+    setShowClientManager(false);
+    await loadClients();
+  }, [loadClients]);
+
+  const openClientManager = useCallback((mode = 'list') => {
+    setClientManagerMode(mode);
+    setShowClientManager(true);
   }, []);
+
+  useEffect(() => {
+    if (periodMode !== 'preset') return;
+    const range = getVatPeriodDateRange(selectedPeriod);
+    setCustomStartDate(range.startDate);
+    setCustomEndDate(range.endDate);
+  }, [periodMode, selectedPeriod]);
 
   // ── Load receipts when client/period/filter changes ──────────────────────
   const loadReceipts = useCallback(async () => {
-    if (!selectedClientId || !api?.vatListReceipts) return;
+    if (!selectedClientId || !api?.vatListReceipts || !periodSelection.isValid) {
+      setReceipts([]);
+      return;
+    }
     setLoadingReceipts(true);
     try {
-      const list = await api.vatListReceipts(selectedClientId, {
-        period: selectedPeriod,
-      });
+      const list = await api.vatListReceipts(selectedClientId, periodSelection.filters);
       setReceipts(list || []);
       setSelectedIds(new Set());
       // Mutations all call loadReceipts, so dispatching here catches every receipt change.
@@ -333,12 +355,12 @@ export default function VATCapture() {
     } finally {
       setLoadingReceipts(false);
     }
-  }, [selectedClientId, selectedPeriod]);
+  }, [api, periodSelection, selectedClientId]);
 
   useEffect(() => { loadReceipts(); }, [loadReceipts]);
 
   const loadReminders = useCallback(async () => {
-    if (!selectedClientId || !selectedPeriod || !api?.vatGetReminders) {
+    if (!selectedClientId || !selectedPeriod || periodSelection.isCustom || !api?.vatGetReminders) {
       setReminders([]);
       return;
     }
@@ -349,7 +371,7 @@ export default function VATCapture() {
       console.error('[VATCapture] loadReminders error:', err);
       setReminders([]);
     }
-  }, [api, selectedClientId, selectedPeriod]);
+  }, [api, periodSelection.isCustom, selectedClientId, selectedPeriod]);
 
   useEffect(() => {
     loadReminders();
@@ -412,6 +434,11 @@ export default function VATCapture() {
 
   // ── Load VAT schedule ─────────────────────────────────────────────────────
   const loadSchedule = useCallback(async () => {
+    if (periodSelection.isCustom) {
+      setSchedule(null);
+      setScheduleReceipts([]);
+      return;
+    }
     if (!selectedClientId || !api?.vatGetSchedule) return;
     setLoadingSchedule(true);
     try {
@@ -425,7 +452,7 @@ export default function VATCapture() {
     } finally {
       setLoadingSchedule(false);
     }
-  }, [selectedClientId, selectedPeriod]);
+  }, [api, periodSelection.isCustom, selectedClientId, selectedPeriod]);
 
   useEffect(() => {
     if (activeTab === 'schedule') loadSchedule();
@@ -736,6 +763,10 @@ export default function VATCapture() {
   // ── Schedule actions ──────────────────────────────────────────────────────
   async function generateSchedule() {
     if (!selectedClientId) return;
+    if (periodSelection.isCustom) {
+      showToast('Use a standard VAT period to generate a schedule.', 'warning');
+      return;
+    }
     setLoadingSchedule(true);
     const res = await api.vatGenerateSchedule(selectedClientId, selectedPeriod);
     if (res?.success) {
@@ -750,6 +781,10 @@ export default function VATCapture() {
 
   async function exportExcel() {
     if (!selectedClientId) return;
+    if (periodSelection.isCustom) {
+      showToast('Use a standard VAT period to export the VAT schedule.', 'warning');
+      return;
+    }
     const res = await api.vatExportExcel(selectedClientId, selectedPeriod);
     if (res?.success) showToast('Exported to Excel', 'success');
     else if (!res?.cancelled) showToast(res?.error || 'Export failed', 'error');
@@ -812,20 +847,54 @@ export default function VATCapture() {
               <option key={c.id} value={c.id}>{c.name}{c.vat_number ? ` (${c.vat_number})` : ''}</option>
             ))}
           </select>
+          <button
+            onClick={() => openClientManager(clients.length ? 'list' : 'new')}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {clients.length ? 'Manage' : 'Add Client'}
+          </button>
         </div>
 
         {/* Period selector */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-500 font-medium">Period:</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <CalendarDays className="h-4 w-4 text-slate-400" />
+          <select
+            value={periodMode}
+            onChange={e => setPeriodMode(e.target.value)}
+            className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white"
+          >
+            <option value="preset">Standard period</option>
+            <option value="custom">Custom dates</option>
+          </select>
           <select
             value={selectedPeriod}
             onChange={e => setSelectedPeriod(e.target.value)}
             className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white"
           >
             {periodOptions.map(p => (
-              <option key={p} value={p}>{periodLabel(p)}</option>
+              <option key={p} value={p}>{formatVatPeriodLabel(p)}</option>
             ))}
           </select>
+          {periodMode === 'custom' && (
+            <>
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={e => setCustomStartDate(e.target.value)}
+                className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white"
+                aria-label="Custom VAT period start date"
+              />
+              <span className="text-xs text-slate-400">to</span>
+              <input
+                type="date"
+                value={customEndDate}
+                onChange={e => setCustomEndDate(e.target.value)}
+                className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white"
+                aria-label="Custom VAT period end date"
+              />
+            </>
+          )}
         </div>
 
         {/* Tabs */}
@@ -864,6 +933,11 @@ export default function VATCapture() {
             onDismiss={handleDismissReminder}
             onSnooze={handleSnoozeReminder}
           />
+          {!periodSelection.isValid && (
+            <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-800">
+              {periodSelection.error}
+            </div>
+          )}
         </>
       )}
 
@@ -873,7 +947,13 @@ export default function VATCapture() {
           <div className="flex flex-col items-center justify-center h-full text-slate-400">
             <Building2 className="w-12 h-12 mb-3 opacity-30" />
             <p className="text-base font-medium">Select a client to get started</p>
-            <p className="text-sm mt-1">Use the dropdown above to choose a client</p>
+            <button
+              onClick={() => openClientManager('new')}
+              className="mt-3 inline-flex items-center gap-2 rounded-lg bg-[#1B4F72] px-3 py-2 text-sm font-medium text-white hover:bg-[#2E75B6]"
+            >
+              <Plus className="h-4 w-4" />
+              Add Client
+            </button>
           </div>
         ) : activeTab === 'receipts' ? (
           <ReceiptsTab
@@ -950,6 +1030,7 @@ export default function VATCapture() {
 
       {/* ── Toast ── */}
       {toast && <Toast key={toast.key} message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      {showClientManager && <ClientManager initialMode={clientManagerMode} onClose={closeClientManager} />}
     </div>
   );
 }
@@ -1552,7 +1633,7 @@ function ScheduleTab({ schedule, receipts, period, loading, onGenerate, onExport
           <div>
             <div className="flex items-center gap-2 mb-1">
               <BarChart3 className="w-5 h-5 text-[#1B4F72]" />
-              <h2 className="text-base font-semibold text-slate-800">VAT Schedule — {periodLabel(period)}</h2>
+              <h2 className="text-base font-semibold text-slate-800">VAT Schedule — {formatVatPeriodLabel(period)}</h2>
             </div>
             <p className="text-sm text-slate-500">
               Auto-generated from approved receipts. Mirrors SARS VAT201 input tax structure.
