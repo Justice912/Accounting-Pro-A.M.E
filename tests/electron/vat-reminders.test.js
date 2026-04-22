@@ -340,6 +340,9 @@ test('period_closing uses the end of April for the Mar/Apr VAT period', () => {
   });
 
   assert.deepEqual(reminders.map(r => r.ruleKey), ['period_closing', 'pending_receipts']);
+  const closingReminder = reminders.find(r => r.ruleKey === 'period_closing');
+  assert.equal(closingReminder.actionTab, 'receipts');
+  assert.equal(closingReminder.actionFilter, 'pending');
 });
 
 test('period_closing does not fire in late January for the Nov/Dec VAT period', () => {
@@ -385,6 +388,9 @@ test('period_closing includes flagged-only work during closing window', () => {
     reminders.map(r => r.ruleKey),
     ['period_closing', 'flagged_receipts']
   );
+  const closingReminder = reminders.find(r => r.ruleKey === 'period_closing');
+  assert.equal(closingReminder.actionTab, 'receipts');
+  assert.equal(closingReminder.actionFilter, 'all');
 });
 
 test('period_closing includes stale schedules as outstanding work', () => {
@@ -419,6 +425,9 @@ test('period_closing includes stale schedules as outstanding work', () => {
     reminders.map(r => r.ruleKey),
     ['period_closing', 'schedule_stale']
   );
+  const closingReminder = reminders.find(r => r.ruleKey === 'period_closing');
+  assert.equal(closingReminder.actionTab, 'schedule');
+  assert.equal(closingReminder.actionFilter, null);
 });
 
 test('schedule_stale only tracks approved freshness', () => {
