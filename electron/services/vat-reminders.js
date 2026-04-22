@@ -247,11 +247,25 @@ export function buildReminderCandidates({
 
   if (needsClosingReminder) {
     const closingItems = [...pending, ...queried, ...flagged];
-    if (!schedule || scheduleStale) {
+    const hasScheduleWorkOutstanding = (approved.length && !schedule) || scheduleStale;
+
+    if (hasScheduleWorkOutstanding) {
       closingItems.push(...approved);
     }
+
+    const actionFilter = pending.length
+      ? 'pending'
+      : queried.length
+        ? 'query'
+        : 'all';
+
     reminders.push(buildReminder('period_closing', clientId, period, daysToEnd, {
-      conditionSignature: makeConditionSignature('period_closing', closingItems),
+      actionTab: hasScheduleWorkOutstanding ? 'schedule' : 'receipts',
+      actionFilter: hasScheduleWorkOutstanding ? null : actionFilter,
+      conditionSignature: makeConditionSignature('period_closing', closingItems, {
+        hasScheduleWorkOutstanding,
+        actionFilter,
+      }),
     }));
   }
 
