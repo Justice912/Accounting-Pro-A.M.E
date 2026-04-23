@@ -191,7 +191,11 @@ test('vat:reminders:get returns reminder candidates from receipts, schedule, and
   };
   const ipcMain = createFakeIpcMain();
 
-  registerVatHandlers(ipcMain, { database: fakeDb, keychain: {} });
+  registerVatHandlers(ipcMain, {
+    database: fakeDb,
+    keychain: {},
+    now: new Date('2026-04-20T10:00:00Z'),
+  });
   const reminders = await ipcMain.handlers['vat:reminders:get']({}, 'client-1', '2026-03');
 
   assert.deepEqual(reminders.map(reminder => reminder.ruleKey), ['schedule_stale']);
@@ -282,7 +286,7 @@ test('vat:reminders:count includes clients discovered from schedules as well as 
   registerVatHandlers(ipcMain, {
     database: fakeDb,
     keychain: {},
-    now: new Date('2026-04-26T10:00:00Z'),
+    now: new Date('2026-04-20T10:00:00Z'),
   });
 
   const result = await ipcMain.handlers['vat:reminders:count']();

@@ -833,13 +833,14 @@ export default function registerVatHandlers(ipcMain, services) {
     try {
       if (!clientId || !period) return [];
       const context = loadReminderContext(database, clientId, period);
+      const handlerNow = getHandlerNow(services);
       return buildReminderCandidates({
         clientId,
         period,
         receipts: context.receipts,
         schedule: context.schedule,
         reminderStateRows: context.reminderStateRows,
-        now: new Date(),
+        now: handlerNow,
       });
     } catch {
       return [];
@@ -857,7 +858,8 @@ export default function registerVatHandlers(ipcMain, services) {
 
   ipcMain.handle('vat:reminders:count', async () => {
     try {
-      const period = getCurrentVatPeriod(getHandlerNow(services));
+      const handlerNow = getHandlerNow(services);
+      const period = getCurrentVatPeriod(handlerNow);
       if (!period) return { count: 0 };
 
       const clientIds = getVatReminderClientIdsForPeriod(database, period);
@@ -870,7 +872,7 @@ export default function registerVatHandlers(ipcMain, services) {
           receipts: context.receipts,
           schedule: context.schedule,
           reminderStateRows: context.reminderStateRows,
-          now: new Date(),
+          now: handlerNow,
         });
         return total + reminders.length;
       }, 0);
