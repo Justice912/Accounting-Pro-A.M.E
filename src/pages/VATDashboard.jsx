@@ -4,30 +4,19 @@ import {
   BarChart3, Users, Receipt, FileSpreadsheet, AlertTriangle,
   CheckCircle2, Clock, ChevronDown, RefreshCw, ArrowRight,
   Banknote, Bell, ShieldCheck, AlertCircle, XCircle,
+  Plus, CalendarDays,
 } from 'lucide-react';
+import {
+  buildVatPeriodOptions,
+  currentVatPeriod,
+  formatVatPeriodLabel,
+  getVatPeriodDateRange,
+  normalizeVatPeriodSelection,
+} from './vatPeriodViewModel.js';
+import ClientManager from '../components/clients/ClientManager.jsx';
 
 function toZAR(v) {
   return new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR', minimumFractionDigits: 2 }).format(Number(v) || 0);
-}
-
-function buildPeriodOptions() {
-  const options = [];
-  const now = new Date();
-  for (let i = 0; i < 8; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i * 2, 1);
-    const m = d.getMonth() + 1;
-    const start = m % 2 === 0 ? m - 1 : m;
-    const period = `${d.getFullYear()}-${String(start).padStart(2, '0')}`;
-    options.push(period);
-  }
-  return [...new Set(options)];
-}
-
-function periodLabel(p) {
-  if (!p) return '';
-  const [year, month] = p.split('-').map(Number);
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${months[month - 1]}/${months[month]} ${year}`;
 }
 
 const URGENCY = {
@@ -41,6 +30,7 @@ const SCHEDULE_STATUS = {
   current: { label: 'Current',  icon: CheckCircle2, color: 'text-green-600' },
   stale:   { label: 'Stale',    icon: AlertCircle,  color: 'text-amber-600' },
   missing: { label: 'Missing',  icon: XCircle,      color: 'text-red-500' },
+  custom:  { label: 'Custom dates', icon: CalendarDays, color: 'text-slate-500' },
 };
 
 function UrgencyBadge({ urgency }) {
@@ -67,7 +57,7 @@ function SummaryCard({ icon: Icon, label, value, sub, color = 'text-slate-800' }
   );
 }
 
-function ClientCard({ client, onOpen }) {
+function ClientCard({ client, onOpen, onPreview }) {
   const u = URGENCY[client.urgency] || URGENCY.clear;
   const sched = SCHEDULE_STATUS[client.schedule.status] || SCHEDULE_STATUS.missing;
   const SchedIcon = sched.icon;
@@ -76,10 +66,7 @@ function ClientCard({ client, onOpen }) {
     : null;
 
   return (
-    <button
-      onClick={() => onOpen(client.id)}
-      className={`w-full text-left rounded-xl border ${u.border} ${u.bg} p-4 hover:shadow-md transition-shadow group`}
-    >
+    <div className={`rounded-xl border ${u.border} ${u.bg} p-4 transition-shadow hover:shadow-md`}>
       <div className="flex items-start justify-between mb-3">
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-slate-800 truncate">{client.name}</h3>
@@ -144,40 +131,111 @@ function ClientCard({ client, onOpen }) {
         </div>
       )}
 
-      <div className="flex items-center justify-end gap-1 mt-2 text-xs text-slate-400 group-hover:text-[#1B4F72] transition-colors">
-        Open <ArrowRight className="w-3 h-3" />
+      <div className="mt-2 rounded-lg bg-white/70 px-3 py-2 text-xs text-slate-600">
+        <div className="flex items-center justify-between">
+          <span>Compliance score</span>
+          <span className="font-semibold text-slate-800">{Math.round(client.complianceScore || 0)}</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between">
+          <span>Penalty risk</span>
+          <span className="font-semibold text-slate-800">{toZAR(client.penaltyRisk)}</span>
+        </div>
       </div>
-    </button>
+      {client.complianceScore < 50 && (
+        <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          Critical compliance work is still unresolved for this VAT period.
+        </div>
+      )}
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          onClick={() => onOpen(client.id)}
+          className="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
+        >
+          Open
+          <ArrowRight className="w-3 h-3" />
+        </button>
+        <button
+          onClick={() => onPreview(client.id)}
+          className="inline-flex items-center gap-1 rounded-lg bg-[#1B4F72] px-3 py-2 text-xs font-medium text-white hover:bg-[#2E75B6]"
+        >
+          <FileSpreadsheet className="w-3.5 h-3.5" />
+          VAT201
+        </button>
+      </div>
+    </div>
   );
 }
 
 export default function VATDashboard() {
   const navigate = useNavigate();
-  const [period, setPeriod] = useState('');
+  const initialPeriod = currentVatPeriod();
+  const initialRange = getVatPeriodDateRange(initialPeriod);
+  const [period, setPeriod] = useState(initialPeriod);
+  const [periodMode, setPeriodMode] = useState('preset');
+  const [customStartDate, setCustomStartDate] = useState(initialRange.startDate);
+  const [customEndDate, setCustomEndDate] = useState(initialRange.endDate);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
+  const [showClientManager, setShowClientManager] = useState(false);
+  const [clientManagerMode, setClientManagerMode] = useState('list');
 
-  const periods = useMemo(() => buildPeriodOptions(), []);
+  const periods = useMemo(() => buildVatPeriodOptions(), []);
+  const periodSelection = useMemo(() => normalizeVatPeriodSelection({
+    periodMode,
+    selectedPeriod: period,
+    customStartDate,
+    customEndDate,
+  }), [customEndDate, customStartDate, period, periodMode]);
 
-  const load = useCallback(async (p) => {
+  const load = useCallback(async () => {
+    if (!periodSelection.isValid) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const res = await window.api?.vatDashboardGet(p || undefined);
+      const res = await window.api?.vatDashboardGet(periodSelection.isCustom
+        ? periodSelection.filters
+        : periodSelection.period);
       setData(res);
-      if (res?.period && !p) setPeriod(res.period);
     } catch {
       setData(null);
     }
     setLoading(false);
-  }, []);
+  }, [periodSelection]);
 
-  useEffect(() => { load(period); }, [period, load]);
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (periodMode !== 'preset') return;
+    const range = getVatPeriodDateRange(period);
+    setCustomStartDate(range.startDate);
+    setCustomEndDate(range.endDate);
+  }, [period, periodMode]);
 
   const handlePeriodChange = (e) => setPeriod(e.target.value);
 
+  const openClientManager = useCallback((mode = 'list') => {
+    setClientManagerMode(mode);
+    setShowClientManager(true);
+  }, []);
+
   const handleOpenClient = (clientId) => {
-    navigate(`/vat-capture?client=${clientId}&period=${period || data?.period || ''}`);
+    const params = new URLSearchParams({
+      client: clientId,
+      ...periodSelection.queryParams,
+    });
+    navigate(`/vat-capture?${params.toString()}`);
+  };
+
+  const handlePreviewClient = (clientId) => {
+    const params = new URLSearchParams({
+      client: clientId,
+      ...periodSelection.queryParams,
+    });
+    navigate(`/vat201-preview?${params.toString()}`);
   };
 
   const filteredClients = useMemo(() => {
@@ -202,21 +260,58 @@ export default function VATDashboard() {
               Overview of all clients' VAT status for the selected period.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              onClick={() => openClientManager('new')}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <Plus className="h-4 w-4" />
+              Add Client
+            </button>
             <div className="relative">
               <select
-                value={period || data?.period || ''}
+                value={periodMode}
+                onChange={event => setPeriodMode(event.target.value)}
+                className="appearance-none bg-white border border-slate-300 rounded-lg pl-9 pr-8 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1B4F72]/30 focus:border-[#1B4F72]"
+              >
+                <option value="preset">Standard period</option>
+                <option value="custom">Custom dates</option>
+              </select>
+              <CalendarDays className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            </div>
+            <div className="relative">
+              <select
+                value={period}
                 onChange={handlePeriodChange}
                 className="appearance-none bg-white border border-slate-300 rounded-lg pl-3 pr-8 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1B4F72]/30 focus:border-[#1B4F72]"
               >
                 {periods.map(p => (
-                  <option key={p} value={p}>{periodLabel(p)}</option>
+                  <option key={p} value={p}>{formatVatPeriodLabel(p)}</option>
                 ))}
               </select>
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
             </div>
+            {periodMode === 'custom' && (
+              <>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={event => setCustomStartDate(event.target.value)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1B4F72]/30 focus:border-[#1B4F72]"
+                  aria-label="Custom VAT period start date"
+                />
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={event => setCustomEndDate(event.target.value)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1B4F72]/30 focus:border-[#1B4F72]"
+                  aria-label="Custom VAT period end date"
+                />
+              </>
+            )}
             <button
-              onClick={() => load(period)}
+              onClick={load}
               className="p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100"
               title="Refresh"
             >
@@ -224,6 +319,12 @@ export default function VATDashboard() {
             </button>
           </div>
         </div>
+
+        {!periodSelection.isValid && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            {periodSelection.error}
+          </div>
+        )}
 
         {/* Period deadline banner */}
         {data?.daysUntilClose != null && data.daysUntilClose <= 14 && (
@@ -250,7 +351,7 @@ export default function VATDashboard() {
 
         {/* Summary cards */}
         {!loading && data?.clients?.length > 0 && (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
             <SummaryCard icon={Users} label="Clients" value={s.totalClients || 0}
               sub={s.clientsWithWork > 0 ? `${s.clientsWithWork} need attention` : 'All clear'} />
             <SummaryCard icon={Receipt} label="Receipts" value={s.totalReceipts || 0}
@@ -264,6 +365,12 @@ export default function VATDashboard() {
             <SummaryCard icon={Banknote} label="Reconciliation"
               value={s.reconciliationRate != null ? `${Math.round(s.reconciliationRate * 100)}%` : '—'}
               sub={s.reconciliationRate != null ? 'Bank match rate' : 'No bank data'} />
+            <SummaryCard icon={ShieldCheck} label="Compliance"
+              value={Math.round(s.averageComplianceScore || 0)}
+              sub="Average score" />
+            <SummaryCard icon={AlertCircle} label="Penalty Risk"
+              value={toZAR(s.totalPenaltyRisk || 0)}
+              sub={toZAR(s.totalBlockedInputVat || 0)} />
           </div>
         )}
 
@@ -307,15 +414,35 @@ export default function VATDashboard() {
                 ? 'Capture receipts in the VAT Capture tab to see clients here.'
                 : 'Try a different filter or period.'}
             </p>
+            {data?.clients?.length === 0 && (
+              <button
+                onClick={() => openClientManager('new')}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[#1B4F72] px-3 py-2 text-sm font-medium text-white hover:bg-[#2E75B6]"
+              >
+                <Plus className="h-4 w-4" />
+                Add Client
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredClients.map(client => (
-              <ClientCard key={client.id} client={client} onOpen={handleOpenClient} />
+              <ClientCard
+                key={client.id}
+                client={client}
+                onOpen={handleOpenClient}
+                onPreview={handlePreviewClient}
+              />
             ))}
           </div>
         )}
       </div>
+      {showClientManager && (
+        <ClientManager
+          initialMode={clientManagerMode}
+          onClose={() => { setShowClientManager(false); load(); }}
+        />
+      )}
     </div>
   );
 }

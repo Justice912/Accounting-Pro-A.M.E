@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  Plus, Search, Settings, Home, X, Receipt, BarChart3,
+  Plus, Search, Settings, Home, X, Receipt, BarChart3, FileSpreadsheet,
 } from 'lucide-react';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import ConversationList from '../sidebar/ConversationList';
@@ -220,6 +220,15 @@ export default function Sidebar() {
               </span>
             )}
           </span>
+        </button>
+        <button
+          onClick={() => navigate('/vat-sales')}
+          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+            location.pathname === '/vat-sales' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-800/60 hover:text-white'
+          }`}
+        >
+          <FileSpreadsheet className="w-4 h-4" />
+          VAT Sales
         </button>
       </div>
     </aside>

@@ -2,12 +2,49 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { buildReminderCandidates } from '../services/vat-reminders.js';
+import { evaluateVatDocument } from '../services/vat-rules-engine.js';
+import { buildVatPeriodSummary } from '../services/vat-period-summary.js';
+import {
+  getVatDocumentPeriodWhere,
+  normalizeVatDateRangeFilter,
+} from '../services/vat-period-filters.js';
+import {
+  applyDocumentOverrides,
+  clearDocumentOverride,
+  getActiveDocumentOverrides,
+  getDocumentOverrideHistory,
+  saveDocumentOverride,
+} from '../services/vat-document-overrides.js';
 
 const VAT_RATE = 0.15;
+const VAT_OVERRIDE_DOCUMENT_TYPES = new Set(['purchase_receipt', 'sales_invoice']);
 
 /** SARS VAT number: 10 digits starting with 4 */
 function validateVatNumberFormat(vatNum) {
   return /^4\d{9}$/.test((vatNum || '').replace(/\s/g, ''));
+}
+
+function normalizeVatOverrideDocumentType(documentType) {
+  const normalized = String(documentType || '').trim();
+  if (!VAT_OVERRIDE_DOCUMENT_TYPES.has(normalized)) {
+    throw new Error(`Unsupported VAT override document type: ${normalized || '<empty>'}`);
+  }
+  return normalized;
+}
+
+function getVatOverrideDocumentScope(database, documentType, documentId) {
+  if (!documentId || typeof database?.getOne !== 'function') {
+    return null;
+  }
+
+  const normalizedDocumentType = normalizeVatOverrideDocumentType(documentType);
+  const tableName = normalizedDocumentType === 'purchase_receipt'
+    ? 'vat_receipts'
+    : 'vat_sales_invoices';
+  return database.getOne(
+    `SELECT client_id, vat_period FROM ${tableName} WHERE id = ?`,
+    [documentId]
+  );
 }
 
 /**
@@ -56,6 +93,520 @@ function computeFlags(data) {
     if (d < fiveYearsAgo) flags.push('old_date');
   }
   return flags;
+}
+
+function parseLineItems(lineItems) {
+  if (Array.isArray(lineItems)) return lineItems;
+  if (typeof lineItems === 'string') {
+    try {
+      const parsed = JSON.parse(lineItems);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function serializeLineItems(lineItems) {
+  if (lineItems == null) return null;
+  return typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems);
+}
+
+function getClientVatSettings(database, clientId) {
+  if (!clientId || typeof database?.getOne !== 'function') return null;
+
+  try {
+    const client = database.getOne(
+      `SELECT has_mixed_supplies, apportionment_ratio, penalty_interest_rate
+       FROM clients WHERE id = ?`,
+      [clientId]
+    );
+    if (!client) return null;
+
+    return {
+      hasMixedSupplies: Boolean(client.has_mixed_supplies),
+      apportionmentRatio: Number(client.apportionment_ratio) || 0,
+      penaltyInterestRate: Number(client.penalty_interest_rate) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function evaluatePurchaseReceiptCompliance(database, data) {
+  const clientSettings = data.clientSettings || getClientVatSettings(database, data.client_id) || undefined;
+  return evaluateVatDocument({
+    documentTable: 'vat_receipts',
+    direction: 'purchase',
+    documentType: data.document_type || 'tax_invoice',
+    totalInclVat: data.total_incl_vat,
+    totalExclVat: data.total_excl_vat,
+    vatAmount: data.vat_amount,
+    hasTextTaxInvoice: data.has_text_tax_invoice ?? data.hasTextTaxInvoice ?? null,
+    supplierName: data.supplier_name,
+    supplierVatNumber: data.supplier_vat_number,
+    supplierAddress: data.supplier_address,
+    recipientName: data.recipient_name,
+    recipientVatNumber: data.recipient_vat_number,
+    invoiceNumber: data.invoice_number,
+    invoiceDate: data.invoice_date,
+    paymentDate: data.payment_date,
+    vatType: data.vat_type,
+    lineItems: parseLineItems(data.line_items),
+    clientSettings,
+  });
+}
+
+function evaluateSalesInvoiceCompliance(database, data) {
+  const clientSettings = data.clientSettings || getClientVatSettings(database, data.client_id) || undefined;
+  return evaluateVatDocument({
+    documentTable: 'vat_sales_invoices',
+    direction: 'sale',
+    documentType: data.document_type || 'tax_invoice',
+    totalInclVat: data.total_incl_vat,
+    totalExclVat: data.total_excl_vat,
+    vatAmount: data.vat_amount,
+    invoiceNumber: data.invoice_number,
+    invoiceDate: data.invoice_date,
+    paymentDate: data.payment_date,
+    recipientName: data.customer_name,
+    recipientVatNumber: data.customer_vat_number,
+    supplierName: data.customer_name,
+    supplierVatNumber: data.customer_vat_number,
+    supplierAddress: data.customer_address,
+    lineItems: parseLineItems(data.line_items),
+    clientSettings,
+  });
+}
+
+function buildReceiptComplianceFields(compliance, evaluatedAt) {
+  return {
+    document_kind: compliance.summary.documentKind || null,
+    compliance_score: Number(compliance.summary.complianceScore) || 0,
+    supply_type: compliance.summary.supplyType || null,
+    supply_type_reason: compliance.summary.supplyTypeReason || null,
+    blocked_input_amount: Number(compliance.summary.blockedInputAmount) || 0,
+    apportioned_input_amount: Number(compliance.summary.apportionedInputAmount) || 0,
+    non_claimable_apportionment_amount:
+      Number(compliance.summary.nonClaimableApportionmentAmount) || 0,
+    time_of_supply_date: compliance.summary.timeOfSupplyDate || null,
+    duplicate_status: compliance.summary.duplicateStatus || 'clear',
+    rules_evaluated_at: evaluatedAt,
+  };
+}
+
+function persistRuleResults(database, {
+  sourceType,
+  sourceId,
+  clientId,
+  vatPeriod,
+  findings = [],
+  evaluatedAt,
+  complianceScore = 0,
+}) {
+  if (!database) return;
+
+  if (typeof database.run === 'function') {
+    database.run('DELETE FROM vat_rule_results WHERE source_type = ? AND source_id = ?', [
+      sourceType,
+      sourceId,
+    ]);
+  }
+
+  if (typeof database.insert !== 'function') return;
+
+  const severityScore = { critical: 25, warning: 10, info: 5 };
+  findings.forEach(finding => {
+    database.insert('vat_rule_results', {
+      id: crypto.randomUUID(),
+      source_type: sourceType,
+      source_id: sourceId,
+      client_id: clientId,
+      vat_period: vatPeriod,
+      rule_key: finding.ruleKey,
+      rule_name: finding.ruleKey,
+      status: 'active',
+      severity: finding.severity || 'info',
+      message: finding.message || null,
+      details: JSON.stringify({ finding }),
+      score: severityScore[finding.severity] || 0,
+      created_at: evaluatedAt,
+      updated_at: evaluatedAt,
+    });
+  });
+
+  if (!findings.length && typeof database.insert === 'function') {
+    database.insert('vat_rule_results', {
+      id: crypto.randomUUID(),
+      source_type: sourceType,
+      source_id: sourceId,
+      client_id: clientId,
+      vat_period: vatPeriod,
+      rule_key: 'compliance_score',
+      rule_name: 'compliance_score',
+      status: 'calculated',
+      severity: 'info',
+      message: 'Compliance score calculated with no active findings.',
+      details: JSON.stringify({ complianceScore }),
+      score: complianceScore,
+      created_at: evaluatedAt,
+      updated_at: evaluatedAt,
+    });
+  }
+}
+
+function invalidateVatPeriodSummary(database, clientId, vatPeriod) {
+  if (!clientId || !vatPeriod || typeof database?.run !== 'function') return;
+  database.run('DELETE FROM vat_period_summaries WHERE client_id = ? AND vat_period = ?', [
+    clientId,
+    vatPeriod,
+  ]);
+}
+
+function getVatDocumentFindings(database, sourceType, documentId) {
+  if (typeof database?.getAll !== 'function') {
+    return [];
+  }
+
+  try {
+    return database.getAll(
+      `SELECT * FROM vat_rule_results
+       WHERE source_type = ? AND source_id = ?
+       ORDER BY created_at ASC`,
+      [sourceType, documentId]
+    );
+  } catch {
+    return [];
+  }
+}
+
+function buildReceiptBaseCompliance(receipt, findings = []) {
+  const apportionedInputAmount =
+    Number(receipt.apportioned_input_amount) || Number(receipt.vat_amount) || 0;
+  const blockedInputAmount = Number(receipt.blocked_input_amount) || 0;
+  const nonClaimableApportionmentAmount =
+    Number(receipt.non_claimable_apportionment_amount) || 0;
+  const vatType = receipt.vat_type || 'standard';
+
+  return {
+    summary: {
+      documentKind: receipt.document_kind || null,
+      complianceScore: Number(receipt.compliance_score) || 0,
+      supplyType: receipt.supply_type || null,
+      supplyTypeReason: receipt.supply_type_reason || null,
+      blockedInputAmount,
+      apportionedInputAmount,
+      nonClaimableApportionmentAmount,
+      timeOfSupplyDate: receipt.time_of_supply_date || null,
+      duplicateStatus: receipt.duplicate_status || 'clear',
+    },
+    findings,
+    computed: {
+      supplyType: receipt.supply_type || null,
+      supplyTypeReason: receipt.supply_type_reason || null,
+      blockedInputAmount,
+      apportionedInputAmount,
+      duplicateStatus: receipt.duplicate_status || 'clear',
+      timeOfSupplyDate: receipt.time_of_supply_date || null,
+      vat201: {
+        standardRatedSuppliesExclVat: 0,
+        zeroRatedSuppliesExclVat: 0,
+        exemptSuppliesExclVat: 0,
+        outputTax: 0,
+        inputTax: vatType === 'capital' ? 0 : apportionedInputAmount,
+        capitalInputTax: vatType === 'capital' ? apportionedInputAmount : 0,
+      },
+    },
+    document: {
+      direction: 'purchase',
+      totalExclVat: Number(receipt.total_excl_vat) || 0,
+      vatAmount: Number(receipt.vat_amount) || 0,
+      vatType,
+    },
+  };
+}
+
+function buildSalesBaseCompliance(invoice, findings = []) {
+  const supplyType = invoice.supply_type || 'standard';
+  const totalExclVat = Number(invoice.total_excl_vat) || 0;
+  const vatAmount = Number(invoice.vat_amount) || 0;
+
+  return {
+    summary: {
+      documentKind: invoice.document_kind || null,
+      complianceScore: Number(invoice.compliance_score) || 0,
+      supplyType,
+      supplyTypeReason: invoice.supply_type_reason || null,
+      timeOfSupplyDate: invoice.time_of_supply_date || null,
+      duplicateStatus: invoice.duplicate_status || 'clear',
+    },
+    findings,
+    computed: {
+      supplyType,
+      supplyTypeReason: invoice.supply_type_reason || null,
+      duplicateStatus: invoice.duplicate_status || 'clear',
+      timeOfSupplyDate: invoice.time_of_supply_date || null,
+      vat201: {
+        standardRatedSuppliesExclVat: supplyType === 'standard' ? totalExclVat : 0,
+        zeroRatedSuppliesExclVat: supplyType === 'zero' ? totalExclVat : 0,
+        exemptSuppliesExclVat: supplyType === 'exempt' ? totalExclVat : 0,
+        outputTax: supplyType === 'standard' ? vatAmount : 0,
+        inputTax: 0,
+        capitalInputTax: 0,
+      },
+    },
+    document: {
+      direction: 'sale',
+      totalExclVat,
+      vatAmount,
+    },
+  };
+}
+
+function buildEffectiveCompliance(database, documentType, documentId, baseCompliance) {
+  const activeOverrides = getActiveDocumentOverrides(database, documentType, documentId);
+  return {
+    activeOverrides,
+    effectiveCompliance: applyDocumentOverrides(baseCompliance, activeOverrides),
+  };
+}
+
+function buildEffectiveComplianceDetail(database, documentType, documentId, baseCompliance) {
+  const { activeOverrides, effectiveCompliance } = buildEffectiveCompliance(
+    database,
+    documentType,
+    documentId,
+    baseCompliance
+  );
+  const overrideHistory = getDocumentOverrideHistory(database, documentType, documentId);
+
+  return {
+    activeOverrides,
+    overrideHistory,
+    effectiveCompliance,
+  };
+}
+
+function buildReceiptDetail(database, receipt) {
+  const findings = getVatDocumentFindings(database, 'purchase_receipt', receipt.id);
+  const baseCompliance = buildReceiptBaseCompliance(receipt, findings);
+  const {
+    activeOverrides,
+    overrideHistory,
+    effectiveCompliance,
+  } = buildEffectiveComplianceDetail(database, 'purchase_receipt', receipt.id, baseCompliance);
+
+  const detailReceipt = {
+    ...receipt,
+    findings,
+    baseCompliance,
+    effectiveCompliance,
+    activeOverrides,
+    overrideHistory,
+  };
+
+  return {
+    receipt: detailReceipt,
+    findings,
+    baseCompliance,
+    effectiveCompliance,
+    activeOverrides,
+    overrideHistory,
+  };
+}
+
+function buildSalesDetail(database, invoice) {
+  const findings = getVatDocumentFindings(database, 'sales_invoice', invoice.id);
+  const baseCompliance = buildSalesBaseCompliance(invoice, findings);
+  const {
+    activeOverrides,
+    overrideHistory,
+    effectiveCompliance,
+  } = buildEffectiveComplianceDetail(database, 'sales_invoice', invoice.id, baseCompliance);
+
+  return {
+    ...invoice,
+    findings,
+    baseCompliance,
+    effectiveCompliance,
+    activeOverrides,
+    overrideHistory,
+  };
+}
+
+function mapReceiptToPeriodSummaryInput(database, receipt) {
+  const baseCompliance = buildReceiptBaseCompliance(receipt);
+  const { effectiveCompliance } = buildEffectiveCompliance(
+    database,
+    'purchase_receipt',
+    receipt.id,
+    baseCompliance
+  );
+
+  return {
+    id: receipt.id,
+    status: receipt.status,
+    summary: baseCompliance.summary,
+    computed: baseCompliance.computed,
+    effectiveSummary: effectiveCompliance.summary,
+    effectiveComputed: effectiveCompliance.computed,
+    effectiveVat201: effectiveCompliance.effectiveVat201,
+  };
+}
+
+function mapSalesInvoiceToPeriodSummaryInput(database, invoice) {
+  const baseCompliance = buildSalesBaseCompliance(invoice);
+  const { effectiveCompliance } = buildEffectiveCompliance(
+    database,
+    'sales_invoice',
+    invoice.id,
+    baseCompliance
+  );
+
+  return {
+    id: invoice.id,
+    status: invoice.status,
+    summary: baseCompliance.summary,
+    computed: baseCompliance.computed,
+    effectiveSummary: effectiveCompliance.summary,
+    effectiveComputed: effectiveCompliance.computed,
+    effectiveVat201: effectiveCompliance.effectiveVat201,
+  };
+}
+
+function toPersistedPeriodSummary(summary, now) {
+  return {
+    id: `${summary.clientId}_${summary.period}`,
+    client_id: summary.clientId,
+    vat_period: summary.period,
+    output_vat: Number(summary.totals?.outputVat) || 0,
+    input_vat: Number(summary.totals?.inputVat) || 0,
+    net_vat: Number(summary.netVat) || 0,
+    filing_status: 'draft',
+    summary_data: JSON.stringify({
+      vat201: summary.vat201,
+      totals: summary.totals,
+      penaltyRisk: summary.penaltyRisk,
+    }),
+    compliance_score: Number(summary.complianceScore) || 0,
+    penalty_risk_amount: Number(summary.penaltyRisk?.latePenalty) || 0,
+    blocked_input_vat: Number(summary.totals?.blockedInputVat) || 0,
+    apportioned_input_vat: Number(summary.totals?.apportionedInputVat) || 0,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function normalizeStoredPeriodSummary(row) {
+  if (!row) return null;
+  let summaryData = {};
+  try {
+    summaryData = JSON.parse(row.summary_data || '{}');
+  } catch {
+    summaryData = {};
+  }
+
+  return {
+    clientId: row.client_id,
+    period: row.vat_period,
+    vat201: summaryData.vat201 || {},
+    totals: summaryData.totals || {
+      outputVat: Number(row.output_vat) || 0,
+      inputVat: Number(row.input_vat) || 0,
+      blockedInputVat: Number(row.blocked_input_vat) || 0,
+      apportionedInputVat: Number(row.apportioned_input_vat) || 0,
+    },
+    netVat: Number(row.net_vat) || 0,
+    complianceScore: Number(row.compliance_score) || 0,
+    penaltyRisk: summaryData.penaltyRisk || {
+      latePenalty: Number(row.penalty_risk_amount) || 0,
+    },
+  };
+}
+
+function buildVatPeriodSummaryFromRows(database, clientId, period, purchasesRows, salesRows, now, dateRange = null) {
+  const purchases = purchasesRows.map(receipt => mapReceiptToPeriodSummaryInput(database, receipt));
+  const sales = salesRows.map(invoice => mapSalesInvoiceToPeriodSummaryInput(database, invoice));
+  const client = typeof database?.getOne === 'function'
+    ? database.getOne(
+      `SELECT penalty_interest_rate
+       FROM clients WHERE id = ?`,
+      [clientId]
+    )
+    : null;
+
+  const summary = buildVatPeriodSummary({
+    clientId,
+    period,
+    purchases,
+    sales,
+    clientSettings: client
+      ? { penaltyInterestRate: Number(client.penalty_interest_rate) || 0 }
+      : null,
+    now: now.toISOString().slice(0, 10),
+  });
+
+  if (!dateRange) return summary;
+
+  return {
+    ...summary,
+    periodStart: dateRange.startDate,
+    periodEnd: dateRange.endDate,
+    periodLabel: `${dateRange.startDate} to ${dateRange.endDate}`,
+  };
+}
+
+function buildPeriodSummary(database, clientId, period, now, dateRange = null) {
+  const purchaseFilter = getVatDocumentPeriodWhere(
+    dateRange ? { period, ...dateRange } : { period }
+  );
+  const salesFilter = getVatDocumentPeriodWhere(
+    dateRange ? { period, ...dateRange } : { period }
+  );
+  const purchasesRows = database.getAll(
+    `SELECT * FROM vat_receipts WHERE client_id = ?${purchaseFilter.clause}`,
+    [clientId, ...purchaseFilter.params]
+  );
+  const salesRows = database.getAll(
+    `SELECT * FROM vat_sales_invoices WHERE client_id = ?${salesFilter.clause}`,
+    [clientId, ...salesFilter.params]
+  );
+
+  return buildVatPeriodSummaryFromRows(database, clientId, period, purchasesRows, salesRows, now, dateRange);
+}
+
+function buildAndPersistPeriodSummary(database, clientId, period, now) {
+  const summary = buildPeriodSummary(database, clientId, period, now);
+
+  if (typeof database?.run === 'function') {
+    const persisted = toPersistedPeriodSummary(summary, now.toISOString());
+    database.run(
+      `INSERT OR REPLACE INTO vat_period_summaries
+       (id, client_id, vat_period, output_vat, input_vat, net_vat, filing_status,
+        summary_data, compliance_score, penalty_risk_amount, blocked_input_vat,
+        apportioned_input_vat, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        persisted.id,
+        persisted.client_id,
+        persisted.vat_period,
+        persisted.output_vat,
+        persisted.input_vat,
+        persisted.net_vat,
+        persisted.filing_status,
+        persisted.summary_data,
+        persisted.compliance_score,
+        persisted.penalty_risk_amount,
+        persisted.blocked_input_vat,
+        persisted.apportioned_input_vat,
+        persisted.created_at,
+        persisted.updated_at,
+      ]
+    );
+  }
+
+  return summary;
 }
 
 /**
@@ -166,6 +717,49 @@ export function getVatReminderClientIdsForPeriod(database, period) {
   )];
 }
 
+function getVatDashboardClientIds(database, period, periodDates, dateRange = null) {
+  const clientIds = [];
+  const addRows = rows => {
+    rows.forEach(row => {
+      if (row?.client_id && !clientIds.includes(row.client_id)) {
+        clientIds.push(row.client_id);
+      }
+    });
+  };
+
+  if (dateRange) {
+    addRows(database.getAll(
+      'SELECT DISTINCT client_id FROM vat_receipts WHERE invoice_date >= ? AND invoice_date <= ?',
+      [dateRange.startDate, dateRange.endDate]
+    ));
+    addRows(database.getAll(
+      'SELECT DISTINCT client_id FROM vat_sales_invoices WHERE invoice_date >= ? AND invoice_date <= ?',
+      [dateRange.startDate, dateRange.endDate]
+    ));
+  } else {
+    addRows(database.getAll(
+      'SELECT DISTINCT client_id FROM vat_receipts WHERE vat_period = ?',
+      [period]
+    ));
+    addRows(database.getAll(
+      'SELECT DISTINCT client_id FROM vat_sales_invoices WHERE vat_period = ?',
+      [period]
+    ));
+    addRows(database.getAll(
+      'SELECT DISTINCT client_id FROM vat_schedules WHERE period = ?',
+      [period]
+    ));
+  }
+
+  addRows(database.getAll(
+    `SELECT DISTINCT client_id FROM vat_bank_transactions
+     WHERE txn_date >= ? AND txn_date <= ?`,
+    [periodDates.start, periodDates.end]
+  ));
+
+  return clientIds;
+}
+
 function upsertReminderState(database, payload, now = new Date()) {
   const {
     clientId,
@@ -212,7 +806,9 @@ export default function registerVatHandlers(ipcMain, services) {
     try {
       let sql = 'SELECT * FROM vat_receipts WHERE client_id = ?';
       const params = [clientId];
-      if (filters.period) { sql += ' AND vat_period = ?'; params.push(filters.period); }
+      const periodFilter = getVatDocumentPeriodWhere(filters);
+      sql += periodFilter.clause;
+      params.push(...periodFilter.params);
       if (filters.status && filters.status !== 'all') { sql += ' AND status = ?'; params.push(filters.status); }
       sql += ' ORDER BY invoice_date DESC, created_at DESC';
       return database.getAll(sql, params);
@@ -237,13 +833,14 @@ export default function registerVatHandlers(ipcMain, services) {
     try {
       if (!clientId || !period) return [];
       const context = loadReminderContext(database, clientId, period);
+      const handlerNow = getHandlerNow(services);
       return buildReminderCandidates({
         clientId,
         period,
         receipts: context.receipts,
         schedule: context.schedule,
         reminderStateRows: context.reminderStateRows,
-        now: new Date(),
+        now: handlerNow,
       });
     } catch {
       return [];
@@ -261,7 +858,8 @@ export default function registerVatHandlers(ipcMain, services) {
 
   ipcMain.handle('vat:reminders:count', async () => {
     try {
-      const period = getCurrentVatPeriod(getHandlerNow(services));
+      const handlerNow = getHandlerNow(services);
+      const period = getCurrentVatPeriod(handlerNow);
       if (!period) return { count: 0 };
 
       const clientIds = getVatReminderClientIdsForPeriod(database, period);
@@ -274,7 +872,7 @@ export default function registerVatHandlers(ipcMain, services) {
           receipts: context.receipts,
           schedule: context.schedule,
           reminderStateRows: context.reminderStateRows,
-          now: new Date(),
+          now: handlerNow,
         });
         return total + reminders.length;
       }, 0);
@@ -288,9 +886,107 @@ export default function registerVatHandlers(ipcMain, services) {
   /** Get a single receipt by ID */
   ipcMain.handle('vat:receipt:get', async (event, id) => {
     try {
-      return database.getOne('SELECT * FROM vat_receipts WHERE id = ?', [id]);
+      const receipt = database.getOne('SELECT * FROM vat_receipts WHERE id = ?', [id]);
+      if (!receipt) return null;
+      return buildReceiptDetail(database, receipt).receipt;
     } catch {
       return null;
+    }
+  });
+
+  ipcMain.handle('vat:document:overrides:get', async (event, documentType, documentId) => {
+    try {
+      const normalizedDocumentType = normalizeVatOverrideDocumentType(documentType);
+      return {
+        success: true,
+        overrides: getActiveDocumentOverrides(database, normalizedDocumentType, documentId),
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:document:override:save', async (event, payload) => {
+    try {
+      const normalizedDocumentType = normalizeVatOverrideDocumentType(
+        payload?.documentType ?? payload?.document_type
+      );
+      const override = saveDocumentOverride(database, {
+        ...payload,
+        documentType: normalizedDocumentType,
+      });
+      const documentScope = getVatOverrideDocumentScope(
+        database,
+        normalizedDocumentType,
+        payload?.documentId ?? payload?.document_id
+      );
+      invalidateVatPeriodSummary(database, documentScope?.client_id, documentScope?.vat_period);
+      return { success: true, override };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:document:override:clear', async (event, payload) => {
+    try {
+      const normalizedDocumentType = normalizeVatOverrideDocumentType(
+        payload?.documentType ?? payload?.document_type
+      );
+      const override = clearDocumentOverride(database, {
+        ...payload,
+        documentType: normalizedDocumentType,
+      });
+      if (!override) {
+        return { success: false, error: 'No active override found for the document.' };
+      }
+      const documentScope = getVatOverrideDocumentScope(
+        database,
+        normalizedDocumentType,
+        payload?.documentId ?? payload?.document_id
+      );
+      invalidateVatPeriodSummary(database, documentScope?.client_id, documentScope?.vat_period);
+      return { success: true, override };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:document:override:history', async (event, documentType, documentId) => {
+    try {
+      const normalizedDocumentType = normalizeVatOverrideDocumentType(documentType);
+      return {
+        success: true,
+        history: getDocumentOverrideHistory(database, normalizedDocumentType, documentId),
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:receipt:compliance:get', async (event, id) => {
+    try {
+      const receipt = database.getOne('SELECT * FROM vat_receipts WHERE id = ?', [id]);
+      if (!receipt) {
+        return {
+          receipt: null,
+          findings: [],
+          baseCompliance: null,
+          effectiveCompliance: null,
+          activeOverrides: [],
+          overrideHistory: [],
+        };
+      }
+
+      return buildReceiptDetail(database, receipt);
+    } catch {
+      return {
+        receipt: null,
+        findings: [],
+        baseCompliance: null,
+        effectiveCompliance: null,
+        activeOverrides: [],
+        overrideHistory: [],
+      };
     }
   });
 
@@ -301,6 +997,11 @@ export default function registerVatHandlers(ipcMain, services) {
       const id = data.id || crypto.randomUUID();
       const now = new Date().toISOString();
       const vatPeriod = data.vat_period || getVatPeriod(data.invoice_date);
+      const compliance = evaluatePurchaseReceiptCompliance(database, {
+        ...data,
+        id,
+      });
+      const complianceFields = buildReceiptComplianceFields(compliance, now);
       const mathsValid = (() => {
         const n = Number(data.total_excl_vat) || 0;
         const v = Number(data.vat_amount) || 0;
@@ -325,7 +1026,7 @@ export default function registerVatHandlers(ipcMain, services) {
         total_incl_vat: Number(data.total_incl_vat) || 0,
         vat_amount: Number(data.vat_amount) || 0,
         total_excl_vat: Number(data.total_excl_vat) || 0,
-        line_items: data.line_items ? JSON.stringify(data.line_items) : null,
+        line_items: serializeLineItems(data.line_items),
         vat_number_valid: vatNumberValid,
         maths_valid: mathsValid,
         ai_confidence: data.ai_confidence != null ? Number(data.ai_confidence) : null,
@@ -338,6 +1039,7 @@ export default function registerVatHandlers(ipcMain, services) {
         bank_transaction_id: data.bank_transaction_id || null,
         is_reconciled: data.is_reconciled ? 1 : 0,
         updated_at: now,
+        ...complianceFields,
       };
 
       if (!isNew) {
@@ -353,7 +1055,19 @@ export default function registerVatHandlers(ipcMain, services) {
         record.created_at = now;
         database.insert('vat_receipts', record);
       }
-      return { success: true, id };
+
+      persistRuleResults(database, {
+        sourceType: 'purchase_receipt',
+        sourceId: id,
+        clientId: data.client_id,
+        vatPeriod,
+        findings: compliance.findings,
+        evaluatedAt: now,
+        complianceScore: compliance.summary.complianceScore,
+      });
+      invalidateVatPeriodSummary(database, data.client_id, vatPeriod);
+
+      return { success: true, id, compliance };
     } catch (e) {
       return { success: false, error: e.message };
     }
@@ -362,7 +1076,10 @@ export default function registerVatHandlers(ipcMain, services) {
   /** Delete a receipt */
   ipcMain.handle('vat:receipt:delete', async (event, id) => {
     try {
+      const existing = database.getOne('SELECT client_id, vat_period FROM vat_receipts WHERE id = ?', [id]);
       database.run('DELETE FROM vat_receipts WHERE id = ?', [id]);
+      database.run('DELETE FROM vat_rule_results WHERE source_type = ? AND source_id = ?', ['purchase_receipt', id]);
+      invalidateVatPeriodSummary(database, existing?.client_id, existing?.vat_period);
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };
@@ -373,10 +1090,12 @@ export default function registerVatHandlers(ipcMain, services) {
   ipcMain.handle('vat:receipt:update-status', async (event, id, status, notes) => {
     try {
       const now = new Date().toISOString();
+      const existing = database.getOne('SELECT client_id, vat_period FROM vat_receipts WHERE id = ?', [id]);
       database.run(
         'UPDATE vat_receipts SET status = ?, review_notes = ?, reviewed_at = ?, updated_at = ? WHERE id = ?',
         [status, notes || null, now, now, id]
       );
+      invalidateVatPeriodSummary(database, existing?.client_id, existing?.vat_period);
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };
@@ -387,11 +1106,17 @@ export default function registerVatHandlers(ipcMain, services) {
   ipcMain.handle('vat:receipt:bulk-status', async (event, ids, status) => {
     try {
       const now = new Date().toISOString();
+      const receipts = database.getAll(
+        `SELECT id, client_id, vat_period FROM vat_receipts
+         WHERE id IN (${ids.map(() => '?').join(', ')})`,
+        ids
+      );
       const placeholders = ids.map(() => '?').join(', ');
       database.run(
         `UPDATE vat_receipts SET status = ?, reviewed_at = ?, updated_at = ? WHERE id IN (${placeholders})`,
         [status, now, now, ...ids]
       );
+      receipts.forEach(receipt => invalidateVatPeriodSummary(database, receipt.client_id, receipt.vat_period));
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };
@@ -525,9 +1250,147 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
         if (dup) flags.push('duplicate_suspected');
       }
 
-      return { success: true, extracted: { ...extracted, flags } };
+      const compliance = evaluatePurchaseReceiptCompliance(database, {
+        ...extracted,
+        flags,
+      });
+
+      return {
+        success: true,
+        extracted: {
+          ...extracted,
+          flags,
+          compliance_score: compliance.summary.complianceScore,
+          compliance,
+        },
+      };
     } catch (e) {
       return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('vat:sales:list', async (event, clientId, filters = {}) => {
+    try {
+      let sql = 'SELECT * FROM vat_sales_invoices WHERE client_id = ?';
+      const params = [clientId];
+      const periodFilter = getVatDocumentPeriodWhere(filters);
+      sql += periodFilter.clause;
+      params.push(...periodFilter.params);
+      if (filters.status && filters.status !== 'all') {
+        sql += ' AND status = ?';
+        params.push(filters.status);
+      }
+      sql += ' ORDER BY invoice_date DESC, created_at DESC';
+      return database.getAll(sql, params);
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('vat:sales:get', async (event, id) => {
+    try {
+      const invoice = database.getOne('SELECT * FROM vat_sales_invoices WHERE id = ?', [id]);
+      if (!invoice) return null;
+      return buildSalesDetail(database, invoice);
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.handle('vat:sales:save', async (event, data) => {
+    try {
+      const isNew = !data.id;
+      const id = data.id || crypto.randomUUID();
+      const now = new Date().toISOString();
+      const vatPeriod = data.vat_period || getVatPeriod(data.invoice_date);
+      const compliance = evaluateSalesInvoiceCompliance(database, {
+        ...data,
+        id,
+      });
+
+      const record = {
+        id,
+        client_id: data.client_id,
+        document_type: data.document_type || 'tax_invoice',
+        customer_name: data.customer_name || null,
+        customer_vat_number: data.customer_vat_number || null,
+        customer_address: data.customer_address || null,
+        invoice_number: data.invoice_number || null,
+        invoice_date: data.invoice_date || null,
+        payment_date: data.payment_date || null,
+        total_incl_vat: Number(data.total_incl_vat) || 0,
+        vat_amount: Number(data.vat_amount) || 0,
+        total_excl_vat: Number(data.total_excl_vat) || 0,
+        line_items: serializeLineItems(data.line_items),
+        vat_period: vatPeriod,
+        document_kind: compliance.summary.documentKind || null,
+        supply_type: compliance.summary.supplyType || null,
+        supply_type_reason: compliance.summary.supplyTypeReason || null,
+        time_of_supply_date: compliance.summary.timeOfSupplyDate || null,
+        duplicate_status: compliance.summary.duplicateStatus || 'clear',
+        compliance_score: Number(compliance.summary.complianceScore) || 0,
+        status: data.status || 'pending',
+        review_notes: data.review_notes || null,
+        rules_evaluated_at: now,
+        updated_at: now,
+      };
+
+      if (!isNew) {
+        const setClauses = Object.keys(record)
+          .filter(key => key !== 'id' && key !== 'client_id' && key !== 'created_at')
+          .map(key => `${key} = ?`)
+          .join(', ');
+        const values = Object.keys(record)
+          .filter(key => key !== 'id' && key !== 'client_id' && key !== 'created_at')
+          .map(key => record[key]);
+        values.push(id);
+        database.run(`UPDATE vat_sales_invoices SET ${setClauses} WHERE id = ?`, values);
+      } else {
+        record.created_at = now;
+        database.insert('vat_sales_invoices', record);
+      }
+
+      persistRuleResults(database, {
+        sourceType: 'sales_invoice',
+        sourceId: id,
+        clientId: data.client_id,
+        vatPeriod,
+        findings: compliance.findings,
+        evaluatedAt: now,
+        complianceScore: compliance.summary.complianceScore,
+      });
+      invalidateVatPeriodSummary(database, data.client_id, vatPeriod);
+
+      return { success: true, id, compliance };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:sales:delete', async (event, id) => {
+    try {
+      const existing = database.getOne('SELECT * FROM vat_sales_invoices WHERE id = ?', [id]);
+      database.run('DELETE FROM vat_sales_invoices WHERE id = ?', [id]);
+      database.run('DELETE FROM vat_rule_results WHERE source_type = ? AND source_id = ?', ['sales_invoice', id]);
+      invalidateVatPeriodSummary(database, existing?.client_id, existing?.vat_period);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('vat:sales:update-status', async (event, id, status, notes) => {
+    try {
+      const now = new Date().toISOString();
+      const existing = database.getOne('SELECT * FROM vat_sales_invoices WHERE id = ?', [id]);
+      database.run(
+        'UPDATE vat_sales_invoices SET status = ?, review_notes = ?, reviewed_at = ?, updated_at = ? WHERE id = ?',
+        [status, notes || null, now, now, id]
+      );
+      invalidateVatPeriodSummary(database, existing?.client_id, existing?.vat_period);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   });
 
@@ -758,30 +1621,43 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
     }
   });
 
+  ipcMain.handle('vat:period-summary:get', async (event, clientId, period, filters = {}) => {
+    try {
+      const dateRange = normalizeVatDateRangeFilter(filters);
+      const effectivePeriod = period || (dateRange ? getVatPeriod(dateRange.startDate) : null);
+      if (!clientId || !effectivePeriod) return null;
+      if (dateRange) {
+        return buildPeriodSummary(database, clientId, effectivePeriod, getHandlerNow(services), dateRange);
+      }
+      const existing = database.getOne(
+        'SELECT * FROM vat_period_summaries WHERE client_id = ? AND vat_period = ?',
+        [clientId, effectivePeriod]
+      );
+      if (existing) return normalizeStoredPeriodSummary(existing);
+      return buildAndPersistPeriodSummary(database, clientId, effectivePeriod, getHandlerNow(services));
+    } catch {
+      return null;
+    }
+  });
+
   // ── Dashboard (practice-wide overview) ──────────────────────────────────
 
-  ipcMain.handle('vat:dashboard:get', async (event, period) => {
+  ipcMain.handle('vat:dashboard:get', async (event, periodInput) => {
     try {
       const now = getHandlerNow(services);
-      const effectivePeriod = period || getCurrentVatPeriod(now);
+      const filters = periodInput && typeof periodInput === 'object'
+        ? periodInput
+        : { period: periodInput };
+      const dateRange = normalizeVatDateRangeFilter(filters);
+      const effectivePeriod = filters.period || (dateRange ? getVatPeriod(dateRange.startDate) : getCurrentVatPeriod(now));
       if (!effectivePeriod) return { period: null, clients: [], summary: {} };
 
-      const pd = getPeriodDates(effectivePeriod);
+      const pd = dateRange
+        ? { start: dateRange.startDate, end: dateRange.endDate }
+        : getPeriodDates(effectivePeriod);
       const periodEndDate = new Date(pd.end + 'T23:59:59');
       const daysUntilClose = Math.ceil((periodEndDate - now) / (1000 * 60 * 60 * 24));
-
-      // All clients that have any VAT activity for this period
-      const clientIds = getVatReminderClientIdsForPeriod(database, effectivePeriod);
-
-      // Also include clients that have bank transactions in the period
-      const bankClientRows = database.getAll(
-        `SELECT DISTINCT client_id FROM vat_bank_transactions
-         WHERE txn_date >= ? AND txn_date <= ?`,
-        [pd.start, pd.end]
-      );
-      bankClientRows.forEach(r => {
-        if (r.client_id && !clientIds.includes(r.client_id)) clientIds.push(r.client_id);
-      });
+      const clientIds = getVatDashboardClientIds(database, effectivePeriod, pd, dateRange);
 
       // Fetch client details
       const clientMap = {};
@@ -797,10 +1673,26 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
       let totalReceipts = 0, totalPending = 0, totalApproved = 0, totalFlagged = 0;
       let totalInputVat = 0, totalPurchases = 0;
       let totalBankTxns = 0, totalBankMatched = 0;
+      let totalComplianceScore = 0, complianceClientCount = 0;
+      let totalPenaltyRisk = 0, totalBlockedInputVat = 0, totalApportionedInputVat = 0;
       let clientsWithWork = 0;
 
       const clients = clientIds.map(cid => {
         const client = clientMap[cid] || { id: cid, name: cid, vat_number: null };
+        const periodSummary = dateRange
+          ? buildPeriodSummary(database, cid, effectivePeriod, now, dateRange)
+          : (() => {
+            const periodSummaryRow = database.getOne(
+              'SELECT * FROM vat_period_summaries WHERE client_id = ? AND vat_period = ?',
+              [cid, effectivePeriod]
+            );
+            return periodSummaryRow
+              ? normalizeStoredPeriodSummary(periodSummaryRow)
+              : buildAndPersistPeriodSummary(database, cid, effectivePeriod, now);
+          })();
+        const receiptFilter = getVatDocumentPeriodWhere(
+          dateRange ? { period: effectivePeriod, ...dateRange } : { period: effectivePeriod }
+        );
 
         // Receipt stats
         const rStats = database.getOne(
@@ -813,17 +1705,20 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
             SUM(CASE WHEN flags != '[]' AND flags IS NOT NULL AND status != 'approved' THEN 1 ELSE 0 END) AS flagged,
             SUM(CASE WHEN status = 'approved' THEN vat_amount ELSE 0 END) AS input_vat,
             SUM(CASE WHEN status = 'approved' THEN total_incl_vat ELSE 0 END) AS purchases
-          FROM vat_receipts WHERE client_id = ? AND vat_period = ?`,
-          [cid, effectivePeriod]
+          FROM vat_receipts WHERE client_id = ?${receiptFilter.clause}`,
+          [cid, ...receiptFilter.params]
         ) || {};
 
         // Schedule status
-        const schedule = database.getOne(
-          'SELECT * FROM vat_schedules WHERE client_id = ? AND period = ?',
-          [cid, effectivePeriod]
-        );
-        let scheduleStatus = 'missing';
-        if (schedule) {
+        let schedule = null;
+        let scheduleStatus = dateRange ? 'custom' : 'missing';
+        if (!dateRange) {
+          schedule = database.getOne(
+            'SELECT * FROM vat_schedules WHERE client_id = ? AND period = ?',
+            [cid, effectivePeriod]
+          );
+        }
+        if (!dateRange && schedule) {
           const latestApproved = database.getOne(
             `SELECT MAX(updated_at) AS latest FROM vat_receipts
              WHERE client_id = ? AND vat_period = ? AND status = 'approved'`,
@@ -844,20 +1739,25 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
 
         // Reminder count
         let reminderCount = 0;
-        try {
-          const ctx = loadReminderContext(database, cid, effectivePeriod);
-          const reminders = buildReminderCandidates({
-            clientId: cid, period: effectivePeriod,
-            receipts: ctx.receipts, schedule: ctx.schedule,
-            reminderStateRows: ctx.reminderStateRows, now,
-          });
-          reminderCount = reminders.length;
-        } catch { /* non-fatal */ }
+        if (!dateRange) {
+          try {
+            const ctx = loadReminderContext(database, cid, effectivePeriod);
+            const reminders = buildReminderCandidates({
+              clientId: cid, period: effectivePeriod,
+              receipts: ctx.receipts, schedule: ctx.schedule,
+              reminderStateRows: ctx.reminderStateRows, now,
+            });
+            reminderCount = reminders.length;
+          } catch { /* non-fatal */ }
+        }
 
         // Urgency
         const pending = rStats.pending || 0;
         const flagged = rStats.flagged || 0;
-        const hasOutstandingWork = pending > 0 || flagged > 0 || (rStats.query || 0) > 0 || scheduleStatus !== 'current';
+        const hasOutstandingWork = pending > 0
+          || flagged > 0
+          || (rStats.query || 0) > 0
+          || (!dateRange && scheduleStatus !== 'current');
         let urgency = 'clear';
         if (hasOutstandingWork && daysUntilClose <= 7) urgency = 'high';
         else if (hasOutstandingWork && daysUntilClose <= 14) urgency = 'medium';
@@ -865,14 +1765,20 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
 
         if (hasOutstandingWork) clientsWithWork++;
 
+        const clientInputVat = Number(periodSummary?.totals?.inputVat) || 0;
         totalReceipts += rStats.total || 0;
         totalPending += pending;
         totalApproved += rStats.approved || 0;
         totalFlagged += flagged;
-        totalInputVat += rStats.input_vat || 0;
+        totalInputVat += clientInputVat;
         totalPurchases += rStats.purchases || 0;
         totalBankTxns += bStats.total || 0;
         totalBankMatched += bStats.matched || 0;
+        totalComplianceScore += Number(periodSummary?.complianceScore) || 0;
+        complianceClientCount += 1;
+        totalPenaltyRisk += Number(periodSummary?.penaltyRisk?.latePenalty) || 0;
+        totalBlockedInputVat += Number(periodSummary?.totals?.blockedInputVat) || 0;
+        totalApportionedInputVat += Number(periodSummary?.totals?.apportionedInputVat) || 0;
 
         return {
           id: client.id,
@@ -885,8 +1791,12 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
           schedule: { status: scheduleStatus, updatedAt: schedule?.updated_at || null },
           bank: { total: bStats.total || 0, matched: bStats.matched || 0 },
           reminders: reminderCount,
-          inputVat: rStats.input_vat || 0,
+          inputVat: clientInputVat,
           totalPurchases: rStats.purchases || 0,
+          complianceScore: periodSummary?.complianceScore || 0,
+          penaltyRisk: Number(periodSummary?.penaltyRisk?.latePenalty) || 0,
+          blockedInputVat: Number(periodSummary?.totals?.blockedInputVat) || 0,
+          apportionedInputVat: Number(periodSummary?.totals?.apportionedInputVat) || 0,
           urgency,
         };
       });
@@ -897,12 +1807,16 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
 
       return {
         period: effectivePeriod,
-        periodLabel: (() => {
-          const [y, m] = effectivePeriod.split('-').map(Number);
-          const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-          return `${months[m - 1]}/${months[m]} ${y}`;
-        })(),
+        periodLabel: dateRange
+          ? `${dateRange.startDate} to ${dateRange.endDate}`
+          : (() => {
+            const [y, m] = effectivePeriod.split('-').map(Number);
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            return `${months[m - 1]}/${months[m]} ${y}`;
+          })(),
+        periodStart: pd.start,
         periodEnd: pd.end,
+        isCustomPeriod: !!dateRange,
         daysUntilClose,
         clients,
         summary: {
@@ -910,6 +1824,12 @@ Respond ONLY with valid JSON — no markdown fences, no explanation, just the JS
           clientsWithWork,
           totalReceipts, totalPending, totalApproved, totalFlagged,
           totalInputVat, totalPurchases,
+          averageComplianceScore: complianceClientCount > 0
+            ? totalComplianceScore / complianceClientCount
+            : 0,
+          totalPenaltyRisk,
+          totalBlockedInputVat,
+          totalApportionedInputVat,
           reconciliationRate: totalBankTxns > 0 ? totalBankMatched / totalBankTxns : null,
           daysUntilClose,
         },

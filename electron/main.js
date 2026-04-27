@@ -35,6 +35,7 @@ let mainWindow = null;
 
 function createWindow() {
   const preloadPath = path.join(__dirname, '../preload/index.mjs');
+  let revealTimeout = null;
 
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -57,10 +58,61 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
-  // Show window when ready to avoid visual flash
-  mainWindow.once('ready-to-show', () => {
+  const clearRevealTimeout = () => {
+    if (revealTimeout) {
+      clearTimeout(revealTimeout);
+      revealTimeout = null;
+    }
+  };
+
+  const revealMainWindow = (reason) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      clearRevealTimeout();
+      return;
+    }
+
+    clearRevealTimeout();
+
+    if (mainWindow.isVisible()) {
+      return;
+    }
+
+    console.log(`[Window] Revealing main window via ${reason}`);
+
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+
     mainWindow.show();
+    mainWindow.focus();
+  };
+
+  // Prefer ready-to-show, but fall back if Chromium never emits it.
+  mainWindow.once('ready-to-show', () => {
+    revealMainWindow('ready-to-show');
   });
+  mainWindow.webContents.once('did-finish-load', () => {
+    revealMainWindow('did-finish-load');
+  });
+  mainWindow.webContents.on('did-fail-load', (_, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) {
+      return;
+    }
+
+    console.error(
+      `[Window] Renderer failed to load (${errorCode}) ${errorDescription}: ${validatedURL}`,
+    );
+    revealMainWindow('did-fail-load');
+  });
+  mainWindow.webContents.on('render-process-gone', (_, details) => {
+    console.error('[Window] Renderer process exited unexpectedly:', details);
+  });
+  mainWindow.on('unresponsive', () => {
+    console.error('[Window] Main window became unresponsive');
+  });
+  revealTimeout = setTimeout(() => {
+    revealMainWindow('timeout-fallback');
+  }, 1500);
 
   // Notify renderer of maximize state changes
   mainWindow.on('maximize', () => {
@@ -71,6 +123,7 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => {
+    clearRevealTimeout();
     mainWindow = null;
   });
 
