@@ -25,6 +25,7 @@ import {
 } from './vatPeriodViewModel.js';
 import PractitionerOverridePanel from '../components/vat/PractitionerOverridePanel.jsx';
 import ClientManager from '../components/clients/ClientManager.jsx';
+import webApi from '../api/webApi.js';
 
 // ── Design tokens (matching spec) ────────────────────────────────────────────
 const STATUS = {
@@ -225,7 +226,7 @@ function VatReminderCard({ reminder, onAction, onDismiss, onSnooze }) {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function VATCapture() {
-  const api = window.api;
+  const api = window.api ?? webApi;
 
   // Read query params for dashboard drill-down
   const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
