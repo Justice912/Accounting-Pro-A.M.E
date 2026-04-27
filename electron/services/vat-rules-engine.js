@@ -10,6 +10,27 @@ const ENTERTAINMENT_KEYWORDS = [
   'function',
 ];
 
+// Schedule 1 Part B zero-rated basic foodstuffs and other zero-rated supplies
+const ZERO_RATED_KEYWORDS = [
+  'brown bread', 'maize meal', 'samp', 'mealie rice', 'dried mealies', 'dried beans', 'lentils',
+  'pilchards', 'sardines', 'milk powder', 'dairy powder blend', 'rice', 'vegetables', 'fruit',
+  'vegetable oil', 'milk', 'cultured milk', 'brown wheaten meal', 'eggs', 'edible legumes',
+  'edible pulses', 'illuminating paraffin', 'sanitary towels', 'tampons',
+  'fertiliser', 'fertilizer', 'pesticide', 'animal feed', 'seeds',
+  'export', 'zero-rated',
+];
+
+// Section 12 exempt supplies
+const EXEMPT_KEYWORDS = [
+  'interest', 'financial service', 'residential rent', 'residential rental',
+  'tuition', 'school fee', 'school fees', 'educational', 'child care', 'childcare',
+  'union fee', 'union subscription', 'public transport', 'bus fare', 'train fare',
+];
+
+// S17(2)(b) motor car — excluded if clearly a commercial delivery vehicle
+const MOTOR_CAR_KEYWORDS = ['sedan', 'suv', 'hatchback', 'coupe', 'motor car', 'passenger vehicle'];
+const COMMERCIAL_VEHICLE_KEYWORDS = ['bakkie', 'truck', 'delivery van', 'minibus taxi', 'tow truck', 'forklift'];
+
 function normalizeString(value) {
   if (value == null) return null;
   const normalized = String(value).trim();
@@ -60,11 +81,23 @@ function findZeroRatedReason(lineItems) {
   for (const lineItem of lineItems) {
     const description = normalizeString(lineItem.description)?.toLowerCase();
     if (!description) continue;
-    if (description.includes('brown bread')) {
-      return 'Zero-rated supply matched brown bread.';
+    const match = ZERO_RATED_KEYWORDS.find(k => description.includes(k));
+    if (match) {
+      return `Zero-rated supply (Schedule 1 / S11): matched '${match}'.`;
     }
   }
+  return null;
+}
 
+function findExemptReason(lineItems) {
+  for (const lineItem of lineItems) {
+    const description = normalizeString(lineItem.description)?.toLowerCase();
+    if (!description) continue;
+    const match = EXEMPT_KEYWORDS.find(k => description.includes(k));
+    if (match) {
+      return `Exempt supply (S12): matched '${match}'.`;
+    }
+  }
   return null;
 }
 
@@ -184,30 +217,57 @@ export function checkInputTaxBlocks(document) {
     return { blockedInputAmount: 0, findings: [] };
   }
 
-  const blockedLineItems = document.lineItems.filter(lineItem => {
-    const description = normalizeString(lineItem.description)?.toLowerCase() || '';
-    return ENTERTAINMENT_KEYWORDS.some(keyword => description.includes(keyword));
-  });
+  const findings = [];
+  let blockedVat = 0;
 
-  if (!blockedLineItems.length) {
+  for (const lineItem of document.lineItems) {
+    const desc = normalizeString(lineItem.description)?.toLowerCase() || '';
+    const vat = normalizeNumber(lineItem.vatAmount);
+
+    if (ENTERTAINMENT_KEYWORDS.some(k => desc.includes(k))) {
+      blockedVat += vat;
+      if (!findings.some(f => f.ruleKey === 'section17_entertainment_block')) {
+        findings.push(createFinding(
+          'section17_entertainment_block',
+          'critical',
+          'Entertainment input tax is blocked under S17(2)(a).'
+        ));
+      }
+      continue;
+    }
+
+    const isMotorCar = MOTOR_CAR_KEYWORDS.some(k => desc.includes(k));
+    const isCommercial = COMMERCIAL_VEHICLE_KEYWORDS.some(k => desc.includes(k));
+    if (isMotorCar && !isCommercial) {
+      blockedVat += vat;
+      if (!findings.some(f => f.ruleKey === 'section17_motor_car_block')) {
+        findings.push(createFinding(
+          'section17_motor_car_block',
+          'critical',
+          'Motor car input tax is blocked under S17(2)(b) — only commercial vehicles qualify.'
+        ));
+      }
+      continue;
+    }
+
+    if (['private use', 'personal use', 'donation', 'gift', 'non-business'].some(k => desc.includes(k))) {
+      blockedVat += vat;
+      if (!findings.some(f => f.ruleKey === 'section17_non_taxable_use')) {
+        findings.push(createFinding(
+          'section17_non_taxable_use',
+          'critical',
+          'Input tax blocked under S17(2)(c) — non-taxable or private use.'
+        ));
+      }
+    }
+  }
+
+  if (!findings.length) {
     return { blockedInputAmount: 0, findings: [] };
   }
 
-  const blockedInputAmount = roundAmount(
-    blockedLineItems.reduce((sum, lineItem) => sum + normalizeNumber(lineItem.vatAmount), 0) ||
-    document.vatAmount
-  );
-
-  return {
-    blockedInputAmount,
-    findings: [
-      createFinding(
-        'section17_entertainment_block',
-        'critical',
-        'Entertainment input tax is blocked under Section 17(2).'
-      ),
-    ],
-  };
+  const blockedInputAmount = roundAmount(blockedVat || document.vatAmount);
+  return { blockedInputAmount, findings };
 }
 
 export function calculateTimeOfSupply(document) {
@@ -261,31 +321,70 @@ export function calculateApportionment(document, clientSettings = {}, blockedInp
   };
 }
 
+function daysBetween(dateA, dateB) {
+  if (!dateA || !dateB) return Infinity;
+  return Math.abs(new Date(dateA) - new Date(dateB)) / 86400000;
+}
+
+function fuzzyNameMatch(a, b) {
+  if (!a || !b) return false;
+  const norm = s => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const na = norm(a), nb = norm(b);
+  return na === nb || (na.length > 4 && nb.includes(na)) || (nb.length > 4 && na.includes(nb));
+}
+
 export function detectDuplicateStatus(document, context = null) {
   const candidates = Array.isArray(context?.existingDocuments) ? context.existingDocuments : [];
-  const exactDuplicate = candidates.find(candidate => (
-    normalizeString(candidate?.invoiceNumber) === document.invoiceNumber &&
-    normalizeString(candidate?.supplierVatNumber) === document.supplierVatNumber &&
-    roundAmount(candidate?.totalInclVat) === roundAmount(document.totalInclVat)
-  ));
 
+  // Exact: same supplier VAT + invoice number + total (S5.5 spec)
+  const exactDuplicate = candidates.find(c => (
+    normalizeString(c?.invoiceNumber) === document.invoiceNumber &&
+    normalizeString(c?.supplierVatNumber) === document.supplierVatNumber &&
+    roundAmount(c?.totalInclVat) === roundAmount(document.totalInclVat)
+  ));
   if (exactDuplicate) {
     return {
       duplicateStatus: 'exact',
-      findings: [
-        createFinding(
-          'duplicate_exact_match',
-          'warning',
-          'A matching VAT document already exists with the same invoice reference and total.'
-        ),
-      ],
+      findings: [createFinding(
+        'duplicate_exact_match', 'warning',
+        'A matching VAT document already exists with the same invoice reference and total.'
+      )],
     };
   }
 
-  return {
-    duplicateStatus: 'clear',
-    findings: [],
-  };
+  // Probable: same supplier name (fuzzy) + same total + date within 7 days
+  const probable = candidates.find(c => (
+    fuzzyNameMatch(c?.supplierName, document.supplierName) &&
+    roundAmount(c?.totalInclVat) === roundAmount(document.totalInclVat) &&
+    daysBetween(c?.invoiceDate, document.invoiceDate) <= 7
+  ));
+  if (probable) {
+    return {
+      duplicateStatus: 'probable',
+      findings: [createFinding(
+        'duplicate_probable_match', 'warning',
+        'Probable duplicate — same supplier name, total, and date within 7 days.'
+      )],
+    };
+  }
+
+  // Near: same total + same date + different supplier (suspicious)
+  const near = candidates.find(c => (
+    roundAmount(c?.totalInclVat) === roundAmount(document.totalInclVat) &&
+    normalizeString(c?.invoiceDate) === document.invoiceDate &&
+    !fuzzyNameMatch(c?.supplierName, document.supplierName)
+  ));
+  if (near) {
+    return {
+      duplicateStatus: 'near',
+      findings: [createFinding(
+        'duplicate_near_match', 'warning',
+        'Suspicious duplicate — same total and date but different supplier.'
+      )],
+    };
+  }
+
+  return { duplicateStatus: 'clear', findings: [] };
 }
 
 export function calculatePenaltyRisk(periodContext = null) {
@@ -359,16 +458,15 @@ function buildVat201Contribution(document, classification, apportionment) {
 export function classifySupply(document) {
   const zeroRatedReason = findZeroRatedReason(document.lineItems);
   if (zeroRatedReason) {
-    return {
-      supplyType: 'zero',
-      reason: zeroRatedReason,
-    };
+    return { supplyType: 'zero', reason: zeroRatedReason };
   }
 
-  return {
-    supplyType: 'standard',
-    reason: 'Defaulted to standard-rated supply.',
-  };
+  const exemptReason = findExemptReason(document.lineItems);
+  if (exemptReason) {
+    return { supplyType: 'exempt', reason: exemptReason };
+  }
+
+  return { supplyType: 'standard', reason: 'Defaulted to standard-rated supply.' };
 }
 
 export function evaluateVatDocument(input) {
