@@ -109,7 +109,7 @@ webApi.vatSaveReceipt = async (data) => {
       id,
       image_path: imagePath,
       vat_period: vatPeriod,
-      flags: JSON.stringify(flags),
+      flags: flags,
       status: data.status || 'pending',
       total_incl_vat: Number(data.total_incl_vat) || 0,
       vat_amount: Number(data.vat_amount) || 0,
@@ -172,7 +172,13 @@ webApi.vatImportImage = () => new Promise((resolve) => {
     const imageSrc = URL.createObjectURL(file);
     resolve({ success: true, imagePath: 'web-blob', imageSrc });
   };
-  input.oncancel = () => resolve({ success: false, cancelled: true });
+  const onFocus = () => {
+    setTimeout(() => {
+      window.removeEventListener('focus', onFocus);
+      if (!input.files?.length) resolve({ success: false, cancelled: true });
+    }, 300);
+  };
+  window.addEventListener('focus', onFocus);
   input.click();
 });
 
@@ -181,11 +187,12 @@ webApi.vatExtractReceipt = async (_imagePath) => {
     const file = _pendingImageFile;
     if (!file) return { success: false, error: 'No image selected' };
 
-    const buffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    bytes.forEach(b => { binary += String.fromCharCode(b); });
-    const imageBase64 = btoa(binary);
+    const imageBase64 = await new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result.split(',')[1]);
+      reader.onerror = rej;
+      reader.readAsDataURL(file);
+    });
     const mimeType = file.type || 'image/jpeg';
 
     const res = await fetch('/api/extract-receipt', {
@@ -215,7 +222,15 @@ webApi.vatVerifyVatNumber = async (vatNumber) => {
 function parseBankCSV(csv) {
   const lines = csv.split('\n').map(l => l.trim()).filter(l => l);
   if (lines.length < 2) return [];
-  const header = lines[0].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase());
+  const rawHeader = [];
+  let cur2 = '', inQ2 = false;
+  for (const ch of lines[0]) {
+    if (ch === '"') { inQ2 = !inQ2; }
+    else if (ch === ',' && !inQ2) { rawHeader.push(cur2.trim().toLowerCase()); cur2 = ''; }
+    else { cur2 += ch; }
+  }
+  rawHeader.push(cur2.trim().toLowerCase());
+  const header = rawHeader;
 
   let dateIdx = -1, descIdx = -1, amountIdx = -1, refIdx = -1, debitIdx = -1;
   let bankName = 'Unknown';
@@ -236,7 +251,14 @@ function parseBankCSV(csv) {
 
   const transactions = [];
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.replace(/"/g, '').trim());
+    const cols = [];
+    let cur = '', inQ = false;
+    for (const ch of lines[i]) {
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
+      else { cur += ch; }
+    }
+    cols.push(cur.trim());
     if (cols.length < 2) continue;
     const dateRaw = dateIdx >= 0 ? cols[dateIdx] : '';
     if (!dateRaw) continue;
@@ -246,7 +268,7 @@ function parseBankCSV(csv) {
     const desc = descIdx >= 0 ? cols[descIdx] : '';
     let amount = 0;
     if (amountIdx >= 0) {
-      amount = -Math.abs(parseFloat((cols[amountIdx] || '').replace(/[R,\s]/g, '')) || 0);
+      amount = parseFloat((cols[amountIdx] || '').replace(/[R,\s]/g, '')) || 0;
     } else if (debitIdx >= 0) {
       const debit = parseFloat((cols[debitIdx] || '').replace(/[R,\s]/g, '')) || 0;
       amount = debit > 0 ? -debit : 0;
@@ -263,7 +285,7 @@ async function autoMatchTransactionsWeb(clientId) {
   try {
     const [txnSnap, receiptSnap] = await Promise.all([
       getDocs(query(collection(db, 'vat_bank_transactions'), where('client_id', '==', clientId), where('is_matched', '==', false))),
-      getDocs(query(collection(db, 'vat_receipts'), where('client_id', '==', clientId), where('is_reconciled', '==', false), where('status', '!=', 'rejected'))),
+      getDocs(query(collection(db, 'vat_receipts'), where('client_id', '==', clientId), where('is_reconciled', '==', false), where('status', 'in', ['pending', 'reviewed', 'approved']))),
     ]);
     const unmatched = docsToArray(txnSnap);
     const unreconciled = docsToArray(receiptSnap);
@@ -323,7 +345,13 @@ webApi.vatImportBank = (clientId) => new Promise((resolve) => {
       resolve({ success: false, error: err.message });
     }
   };
-  input.oncancel = () => resolve({ success: false, cancelled: true });
+  const onFocus = () => {
+    setTimeout(() => {
+      window.removeEventListener('focus', onFocus);
+      if (!input.files?.length) resolve({ success: false, cancelled: true });
+    }, 300);
+  };
+  window.addEventListener('focus', onFocus);
   input.click();
 });
 
@@ -384,7 +412,7 @@ webApi.vatDeleteBankTxns = async (ids) => {
 
 webApi.vatDeleteUndatedBankTxns = async (clientId) => {
   try {
-    const snap = await getDocs(query(collection(db, 'vat_bank_transactions'), where('client_id', '==', clientId), where('txn_date', '==', null)));
+    const snap = await getDocs(query(collection(db, 'vat_bank_transactions'), where('client_id', '==', clientId), where('txn_date', 'in', [null, ''])));
     const batch = writeBatch(db);
     snap.docs.forEach(d => batch.delete(d.ref));
     await batch.commit();
@@ -396,6 +424,9 @@ webApi.vatDeleteUndatedBankTxns = async (clientId) => {
 
 webApi.vatGenerateSchedule = async (clientId, period) => {
   try {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+      return { success: false, error: `Invalid period format: ${period}` };
+    }
     const snap = await getDocs(query(collection(db, 'vat_receipts'), where('client_id', '==', clientId), where('vat_period', '==', period)));
     const receipts = docsToArray(snap);
     const approved = receipts.filter(r => r.status === 'approved');
@@ -417,7 +448,7 @@ webApi.vatGenerateSchedule = async (clientId, period) => {
       input_vat_total: inputTotal, output_vat_standard: 0, output_vat_total: 0, net_vat: -inputTotal,
       receipt_count: receipts.length, approved_count: approved.length,
       pending_count: receipts.filter(r => r.status === 'pending').length,
-      flagged_count: receipts.filter(r => { try { return JSON.parse(r.flags || '[]').length > 0; } catch { return false; } }).length,
+      flagged_count: receipts.filter(r => Array.isArray(r.flags) ? r.flags.length > 0 : false).length,
       updated_at: new Date().toISOString(),
     });
     return { success: true, scheduleId };
