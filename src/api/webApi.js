@@ -97,8 +97,8 @@ webApi.vatSaveReceipt = async (data) => {
       const storageRef = ref(storage, `vat-receipts/${data.client_id || 'unknown'}/${id}.${ext}`);
       await uploadBytes(storageRef, _pendingImageFile);
       imagePath = await getDownloadURL(storageRef);
-      _pendingImageFile = null;
     }
+    _pendingImageFile = null;
 
     const vatPeriod = data.vat_period || getVatPeriod(data.invoice_date);
     const flags = computeFlags(data);
@@ -176,7 +176,7 @@ webApi.vatImportImage = () => new Promise((resolve) => {
   input.click();
 });
 
-webApi.vatExtractReceipt = async () => {
+webApi.vatExtractReceipt = async (_imagePath) => {
   try {
     const file = _pendingImageFile;
     if (!file) return { success: false, error: 'No image selected' };
