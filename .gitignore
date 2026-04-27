@@ -5,3 +5,5 @@ package-lock.json
 .vercel
 out/
 dist-electron/
+.env.local
+.env*.local

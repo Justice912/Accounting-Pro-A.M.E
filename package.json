@@ -25,6 +25,7 @@
     "docx": "^8.5.0",
     "electron-updater": "^6.1.0",
     "exceljs": "^4.4.0",
+    "firebase": "^12.12.1",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.263.1",
     "mammoth": "^1.11.0",
