@@ -17,8 +17,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'imageBase64 required' });
   }
 
-  if (typeof imageBase64 !== 'string' || imageBase64.length > 7_000_000) {
-    return res.status(400).json({ success: false, error: 'imageBase64 must be a string under 5 MB' });
+  if (typeof imageBase64 !== 'string' || imageBase64.length > 6_990_000) {
+    return res.status(400).json({ success: false, error: 'imageBase64 must be a string under ~5 MB binary' });
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -90,20 +90,27 @@ export default async function handler(req, res) {
       return res.status(502).json({ success: false, error: 'Could not parse AI response as JSON' });
     }
 
+    const toNum = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+    extracted.total_excl_vat = toNum(extracted.total_excl_vat);
+    extracted.vat_amount     = toNum(extracted.vat_amount);
+    extracted.total_incl_vat = toNum(extracted.total_incl_vat);
+
     const flags = [];
     if (!extracted.supplier_vat_number) flags.push('missing_vat_number');
     if (!extracted.invoice_number) flags.push('missing_invoice_number');
-    if (Number.isFinite(Number(extracted.total_excl_vat)) &&
-        Number.isFinite(Number(extracted.vat_amount)) &&
-        Number.isFinite(Number(extracted.total_incl_vat))) {
-      const calc = Number(extracted.total_excl_vat) + Number(extracted.vat_amount);
-      if (Math.abs(calc - Number(extracted.total_incl_vat)) > 0.02) flags.push('vat_mismatch');
+    if (extracted.total_excl_vat !== null && extracted.vat_amount !== null && extracted.total_incl_vat !== null) {
+      if (Math.abs(extracted.total_excl_vat + extracted.vat_amount - extracted.total_incl_vat) > 0.02) {
+        flags.push('vat_mismatch');
+      }
     }
+
+    const rawC = Number(extracted.confidence);
+    const confidence = Number.isFinite(rawC) ? Math.max(0, Math.min(1, rawC)) : 0.8;
 
     return res.status(200).json({
       success: true,
       extracted: { ...extracted, flags },
-      confidence: (() => { const c = Number(extracted.confidence); return Number.isFinite(c) ? Math.max(0, Math.min(1, c)) : 0.8; })(),
+      confidence,
     });
   } catch (e) {
     console.error('extract-receipt failure', e);
