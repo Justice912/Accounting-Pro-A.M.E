@@ -3,6 +3,12 @@
 @tailwind utilities;
 
 @media print {
+  /* Collapse the document to auto height so invisible elements don't create phantom pages */
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
   /* Hide everything except the invoice content */
   body * {
     visibility: hidden;
@@ -15,16 +21,17 @@
 
   #invoice-print {
     position: absolute;
-    left: 0;
     top: 0;
+    left: 0;
+    right: 0;
     width: 100%;
-    padding: 20px;
+    padding: 0;
     font-family: Arial, Helvetica, sans-serif;
   }
 
-  /* Hide the modal overlay and controls during print */
+  /* Collapse the modal overlay so it doesn't add height */
   .fixed.inset-0 {
-    position: absolute;
+    position: static !important;
     background: none !important;
     padding: 0 !important;
   }
@@ -34,22 +41,23 @@
     display: none !important;
   }
 
-  /* Remove max-height scroll on print */
+  /* Collapse the scrollable modal container so it doesn't add height */
   .max-h-\[90vh\] {
     max-height: none !important;
+    max-width: 100% !important;
+    width: 100% !important;
     overflow: visible !important;
     box-shadow: none !important;
     border-radius: 0 !important;
   }
 
-  /* Ensure flex layouts work in print */
-  #invoice-print div[style*="display: flex"] {
-    display: flex !important;
+  /* Prevent table rows from splitting across pages */
+  #invoice-print tr {
+    page-break-inside: avoid;
   }
 
-  /* Page setup for clean printing */
   @page {
-    margin: 15mm;
-    size: A4;
+    size: A4 portrait;
+    margin: 8mm;
   }
 }

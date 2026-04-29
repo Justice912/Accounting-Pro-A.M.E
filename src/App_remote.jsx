@@ -1342,7 +1342,9 @@ const CustomersView = ({ invoices, saveInvoices, customers, saveCustomers, showI
     phone: '',
     address: '',
     city: '',
-    postalCode: ''
+    postalCode: '',
+    physicalAddress: '',
+    postalAddress: ''
   });
 
   const [newInvoice, setNewInvoice] = useState({
@@ -1475,7 +1477,9 @@ const CustomersView = ({ invoices, saveInvoices, customers, saveCustomers, showI
       phone: newCustomer.phone.trim(),
       address: newCustomer.address.trim(),
       city: newCustomer.city.trim(),
-      postalCode: newCustomer.postalCode.trim()
+      postalCode: newCustomer.postalCode.trim(),
+      physicalAddress: newCustomer.physicalAddress.trim(),
+      postalAddress: newCustomer.postalAddress.trim()
     };
 
     saveCustomers([...customers, customer]);
@@ -1488,7 +1492,9 @@ const CustomersView = ({ invoices, saveInvoices, customers, saveCustomers, showI
       phone: '',
       address: '',
       city: '',
-      postalCode: ''
+      postalCode: '',
+      physicalAddress: '',
+      postalAddress: ''
     });
   };
 
@@ -1505,7 +1511,9 @@ const CustomersView = ({ invoices, saveInvoices, customers, saveCustomers, showI
         phone: selected.phone,
         address: selected.address,
         city: selected.city,
-        postalCode: selected.postalCode
+        postalCode: selected.postalCode,
+        physicalAddress: selected.physicalAddress || '',
+        postalAddress: selected.postalAddress || ''
       } : null
     }));
   };
@@ -1632,6 +1640,14 @@ const CustomersView = ({ invoices, saveInvoices, customers, saveCustomers, showI
             <div className="grid grid-cols-2 gap-3">
               <input type="text" placeholder="City" value={newCustomer.city} onChange={e => setNewCustomer({...newCustomer, city: e.target.value})} className="border rounded px-3 py-2 text-sm" />
               <input type="text" placeholder="Postal Code" value={newCustomer.postalCode} onChange={e => setNewCustomer({...newCustomer, postalCode: e.target.value})} className="border rounded px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Physical Address</label>
+              <textarea placeholder="e.g. 12 Main Road, Durban, 4001" value={newCustomer.physicalAddress} onChange={e => setNewCustomer({...newCustomer, physicalAddress: e.target.value})} className="w-full border rounded px-3 py-2 text-sm" rows={3} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Postal Address</label>
+              <textarea placeholder="e.g. P.O. Box 123, Durban, 4001" value={newCustomer.postalAddress} onChange={e => setNewCustomer({...newCustomer, postalAddress: e.target.value})} className="w-full border rounded px-3 py-2 text-sm" rows={3} />
             </div>
             <button onClick={handleSaveCustomer} className="bg-emerald-600 text-white px-4 py-2 rounded text-sm hover:bg-emerald-700">Save Customer</button>
           </div>
@@ -2356,14 +2372,24 @@ const PrintPreview = ({ invoice, onClose, company }) => {
               {invoice.customerDetails?.vatNo && <p style={{ fontSize: '11px', color: '#475569', margin: '0 0 4px 0' }}>CUSTOMER VAT NO: {invoice.customerDetails.vatNo}</p>}
               <div style={{ display: 'flex', gap: '12px' }}>
                 <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: '9px', fontWeight: '600', color: '#94a3b8', marginBottom: '1px' }}>POSTAL ADDRESS</p>
-                  {invoice.postalAddress?.filter(Boolean).map((line, i) => <p key={i} style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{line}</p>)}
-                </div>
-                <div style={{ flex: 1 }}>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: '#94a3b8', marginBottom: '1px' }}>PHYSICAL ADDRESS</p>
-                  {invoice.customerDetails?.address && <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{invoice.customerDetails.address}</p>}
-                  {invoice.customerDetails?.city && <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{invoice.customerDetails.city}</p>}
+                  {invoice.customerDetails?.physicalAddress
+                    ? invoice.customerDetails.physicalAddress.split('\n').filter(l => l.trim()).map((line, i) => <p key={i} style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{line}</p>)
+                    : <>
+                        {invoice.customerDetails?.address && <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{invoice.customerDetails.address}</p>}
+                        {invoice.customerDetails?.city && <p style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{invoice.customerDetails.city}</p>}
+                      </>
+                  }
                 </div>
+                {(invoice.customerDetails?.postalAddress || invoice.postalAddress?.filter(Boolean).length > 0) && (
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: '9px', fontWeight: '600', color: '#94a3b8', marginBottom: '1px' }}>POSTAL ADDRESS</p>
+                    {invoice.customerDetails?.postalAddress
+                      ? invoice.customerDetails.postalAddress.split('\n').filter(l => l.trim()).map((line, i) => <p key={i} style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{line}</p>)
+                      : invoice.postalAddress?.filter(Boolean).map((line, i) => <p key={i} style={{ fontSize: '11px', color: '#475569', margin: 0 }}>{line}</p>)
+                    }
+                  </div>
+                )}
               </div>
             </div>
           </div>
