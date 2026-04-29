@@ -16,7 +16,8 @@
     "package:mac": "electron-vite build && electron-builder --mac",
     "package:linux": "electron-vite build && electron-builder --linux",
     "build:ci": "vite build",
-    "deploy:check": "node scripts/check-vercel-readiness.mjs"
+    "deploy:check": "node scripts/check-vercel-readiness.mjs",
+    "deploy:check:vat-env": "node scripts/check-vat-capture-env.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
