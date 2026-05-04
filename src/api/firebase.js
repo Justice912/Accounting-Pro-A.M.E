@@ -14,4 +14,13 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
-export const auth = getAuth(app);
+
+// getAuth validates the API key immediately — guard against missing env vars
+// so a misconfigured deployment doesn't crash the whole app
+let auth = null;
+try {
+  auth = getAuth(app);
+} catch (e) {
+  console.warn('Firebase Auth unavailable (check VITE_FIREBASE_API_KEY):', e.message);
+}
+export { auth };
