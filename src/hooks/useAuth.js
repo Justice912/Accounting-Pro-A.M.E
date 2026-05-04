@@ -6,11 +6,16 @@ export function useAuth() {
   const [user, setUser] = useState(undefined); // undefined = loading
 
   useEffect(() => {
+    // auth is null when Firebase env vars are missing — degrade gracefully
+    if (!auth) {
+      setUser(null);
+      return;
+    }
+
     return onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         setUser(firebaseUser);
       } else {
-        // Sign in anonymously so every browser session has a stable UID
         try {
           const credential = await signInAnonymously(auth);
           setUser(credential.user);
