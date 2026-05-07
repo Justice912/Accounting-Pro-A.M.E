@@ -2,11 +2,23 @@
 
 This sidebar is the in-app AI assistant for Accounting Pro. It lets the user
 chat with Claude and ask Claude to execute actions inside the running app
-(navigate, open clients, summarise data, draft invoices).
+(navigate, open clients, summarise data, allocate bank transactions, draft
+invoices).
 
-The Anthropic API key is **never** in browser code. It lives in a Vercel
-environment variable and is only read by the serverless route at
-`api/claude.js`.
+There are **two ways** to provide the Anthropic API key — pick one or both:
+
+1. **Server env var (recommended for shipped product).** Set
+   `ANTHROPIC_API_KEY` on Vercel. Every user gets to chat without pasting
+   anything; usage goes on the operator's Anthropic billing.
+2. **Bring-your-own-key (BYOK).** Each user clicks the cog icon in the
+   sidebar header, pastes their personal Anthropic key, and saves it. The
+   key is kept in their browser's `localStorage` and sent in a header to the
+   server proxy, which forwards it to Anthropic. Usage goes on that user's
+   billing.
+
+If a user has saved a BYOK key, that key is used. Otherwise the server
+falls back to `ANTHROPIC_API_KEY`. If neither is set, the sidebar shows a
+clear error explaining the user needs to paste a key or set the env var.
 
 ---
 
@@ -20,7 +32,24 @@ environment variable and is only read by the serverless route at
 
 ---
 
-## 2. Add the key to Vercel
+## 2a. (Optional) BYOK — paste a key in the sidebar
+
+If you don't want to set a server env var, or you want each user on their
+own Anthropic billing:
+
+1. Open the running app and click the green **Claude** button bottom-right.
+2. Click the **cog** icon in the sidebar header.
+3. Paste the key (starts with `sk-ant-...`) and click **Save key**.
+
+The key is kept in the browser's `localStorage` under
+`claude-sidebar-byok-key-v1`, sent in an `x-anthropic-api-key` request
+header to `/api/claude`, and forwarded to Anthropic. **Clear** removes it.
+
+If both a BYOK key and a server env var exist, the BYOK key wins.
+
+---
+
+## 2b. Add the key to Vercel
 
 1. Open your project in the Vercel dashboard.
 2. Go to **Settings → Environment Variables**.
@@ -133,6 +162,8 @@ src/components/ClaudeSidebar/
   claudeClient.js                               ← /api/claude streaming + tool-use loop (max 5 iter)
   toolRegistry.js                               ← Tool definitions + execute() implementations
   systemPrompt.js                               ← System prompt for the assistant
+  SettingsPanel.jsx                             ← In-sidebar settings overlay (BYOK key)
+  keyStore.js                                   ← localStorage helpers for the BYOK key
   index.js                                      ← Re-exports
 CLAUDE_SIDEBAR_SETUP.md                         ← This file
 ```

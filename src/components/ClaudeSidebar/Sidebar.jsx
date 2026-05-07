@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Trash2 } from 'lucide-react';
+import { X, Trash2, Settings } from 'lucide-react';
 import MessageList from './MessageList.jsx';
 import MessageInput from './MessageInput.jsx';
 import ToggleButton from './ToggleButton.jsx';
+import SettingsPanel from './SettingsPanel.jsx';
 import { runChat } from './claudeClient.js';
 
 const STORAGE_KEY = 'claude-sidebar-history-v1';
@@ -55,6 +56,7 @@ function buildViewMessages(apiMessages) {
 
 export default function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [messages, setMessages] = useState([]); // API-shape conversation
   const [input, setInput] = useState('');
   const [streamingText, setStreamingText] = useState('');
@@ -205,6 +207,15 @@ export default function Sidebar() {
             </button>
             <button
               type="button"
+              onClick={() => setShowSettings((v) => !v)}
+              className="rounded-md p-1 hover:bg-white/15"
+              aria-label="Settings"
+              title="Settings (API key)"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
               onClick={() => setIsOpen(false)}
               className="rounded-md p-1 hover:bg-white/15"
               aria-label="Close"
@@ -214,7 +225,10 @@ export default function Sidebar() {
           </div>
         </header>
 
-        <MessageList viewMessages={viewMessages} isStreaming={isStreaming && !streamingText} />
+        <div className="relative flex-1 flex flex-col min-h-0">
+          <MessageList viewMessages={viewMessages} isStreaming={isStreaming && !streamingText} />
+          {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+        </div>
 
         {error && (
           <div className="px-3 py-2 bg-red-50 border-t border-red-200 text-xs text-red-700">
