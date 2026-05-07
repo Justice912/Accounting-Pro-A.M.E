@@ -728,6 +728,7 @@ const AccountingDashboard = () => {
           saveCustomers,
           saveClients,
           saveSuppliers,
+          saveBankStatements,
         }}
       />
       <ClaudeSidebar />

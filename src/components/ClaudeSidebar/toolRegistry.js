@@ -398,6 +398,259 @@ export const TOOLS = [
       return { ok: true };
     },
   },
+
+  // ===================== Agentic banking tools =====================
+  // Claude can read transactions, look at the chart of accounts, and then
+  // actually write allocations back into the app.
+
+  {
+    name: 'list_accounts',
+    description:
+      'Return the chart of accounts. Use this BEFORE allocating bank transactions so you know which exact account names exist (the selection field on a transaction must match an account name verbatim). Optionally filter by category, e.g. "Expenses", "Sales", "Other Income".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        category: {
+          type: 'string',
+          description: 'Optional category filter, e.g. "Expenses", "Sales", "Other Income", "Current Assets".',
+        },
+      },
+    },
+    execute: ({ category } = {}) => {
+      const { state } = requireBridge();
+      let rows = (state.accounts || []).filter((a) => a.active !== false);
+      if (category) {
+        const c = String(category).toLowerCase();
+        rows = rows.filter((a) => String(a.category || '').toLowerCase() === c);
+      }
+      return {
+        count: rows.length,
+        accounts: rows.map((a) => ({ name: a.name, category: a.category })),
+      };
+    },
+  },
+
+  {
+    name: 'allocate_bank_transaction',
+    description:
+      'Allocate one bank transaction to an account (and optionally a VAT rate). The account_name must match an entry returned by list_accounts. The change is persisted immediately and visible in the Banking tab. Use this for one-off corrections; for batch allocation prefer bulk_allocate_bank_transactions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        transaction_id: { type: ['string', 'number'], description: 'id of the bank transaction.' },
+        account_name: { type: 'string', description: 'Exact account name from list_accounts (e.g. "Motor Vehicle Expenses").' },
+        vat_rate: {
+          type: 'string',
+          description: 'Optional VAT rate label, e.g. "Standard Rate (15.00%)", "Zero Rate (0.00%)", "Exempt and Non-Supplies (0.00%)", "No VAT".',
+        },
+      },
+      required: ['transaction_id', 'account_name'],
+    },
+    execute: ({ transaction_id, account_name, vat_rate }) => {
+      const { state, actions } = requireBridge();
+      const stmt = (state.bankStatements || []).find((s) => String(s.id) === String(transaction_id));
+      if (!stmt) return { ok: false, error: `No bank transaction with id ${transaction_id}` };
+
+      const account = (state.accounts || []).find((a) => a.name === account_name);
+      if (!account) {
+        return {
+          ok: false,
+          error: `Unknown account "${account_name}". Call list_accounts to see valid names.`,
+        };
+      }
+
+      const updated = (state.bankStatements || []).map((s) =>
+        String(s.id) === String(transaction_id)
+          ? {
+              ...s,
+              selection: account.name,
+              vatRate: vat_rate || s.vatRate || 'No VAT',
+              aiAllocated: true,
+              allocationTier: 'ai-suggested',
+              allocationConfidence: 70,
+            }
+          : s,
+      );
+      actions.saveBankStatements(updated);
+      return {
+        ok: true,
+        allocated: {
+          id: stmt.id,
+          description: stmt.description,
+          account: account.name,
+          vat_rate: vat_rate || stmt.vatRate || 'No VAT',
+        },
+      };
+    },
+  },
+
+  {
+    name: 'bulk_allocate_bank_transactions',
+    description:
+      'Allocate many bank transactions in one call. Pass an `allocations` array, each with { transaction_id, account_name, vat_rate? }. Account names must match the chart of accounts (list_accounts). Returns a per-row report of successes and failures. This is the preferred tool for the agentic flow: list_bank_transactions(unallocated_only=true) -> list_accounts -> bulk_allocate_bank_transactions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        allocations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              transaction_id: { type: ['string', 'number'] },
+              account_name: { type: 'string' },
+              vat_rate: { type: 'string' },
+            },
+            required: ['transaction_id', 'account_name'],
+          },
+        },
+      },
+      required: ['allocations'],
+    },
+    execute: ({ allocations }) => {
+      const { state, actions } = requireBridge();
+      const accountsByName = new Map((state.accounts || []).map((a) => [a.name, a]));
+      const stmtsById = new Map((state.bankStatements || []).map((s) => [String(s.id), s]));
+
+      const successes = [];
+      const failures = [];
+      const patch = new Map();
+
+      for (const a of allocations || []) {
+        const stmt = stmtsById.get(String(a.transaction_id));
+        if (!stmt) {
+          failures.push({ transaction_id: a.transaction_id, error: 'Transaction not found' });
+          continue;
+        }
+        const acc = accountsByName.get(a.account_name);
+        if (!acc) {
+          failures.push({ transaction_id: a.transaction_id, error: `Unknown account: ${a.account_name}` });
+          continue;
+        }
+        patch.set(String(stmt.id), {
+          selection: acc.name,
+          vatRate: a.vat_rate || stmt.vatRate || 'No VAT',
+          aiAllocated: true,
+          allocationTier: 'ai-suggested',
+          allocationConfidence: 70,
+        });
+        successes.push({
+          transaction_id: stmt.id,
+          description: stmt.description,
+          account: acc.name,
+          vat_rate: a.vat_rate || stmt.vatRate || 'No VAT',
+        });
+      }
+
+      if (patch.size > 0) {
+        const updated = (state.bankStatements || []).map((s) => {
+          const p = patch.get(String(s.id));
+          return p ? { ...s, ...p } : s;
+        });
+        actions.saveBankStatements(updated);
+      }
+
+      return {
+        ok: failures.length === 0,
+        allocated: successes.length,
+        failed: failures.length,
+        successes,
+        failures,
+      };
+    },
+  },
+
+  {
+    name: 'unallocate_bank_transaction',
+    description:
+      'Reset a bank transaction back to Unallocated. Useful for undoing an incorrect allocation.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        transaction_id: { type: ['string', 'number'] },
+      },
+      required: ['transaction_id'],
+    },
+    execute: ({ transaction_id }) => {
+      const { state, actions } = requireBridge();
+      const stmt = (state.bankStatements || []).find((s) => String(s.id) === String(transaction_id));
+      if (!stmt) return { ok: false, error: `No bank transaction with id ${transaction_id}` };
+      const isIncome = (Number(stmt.received) || 0) > 0;
+      const target = isIncome ? 'Unallocated Income' : 'Unallocated Expen';
+      const updated = (state.bankStatements || []).map((s) =>
+        String(s.id) === String(transaction_id)
+          ? { ...s, selection: target, aiAllocated: false, allocationTier: null, allocationConfidence: 0, matchedRule: null }
+          : s,
+      );
+      actions.saveBankStatements(updated);
+      return { ok: true, transaction_id: stmt.id, selection: target };
+    },
+  },
+
+  {
+    name: 'set_active_company',
+    description:
+      'Find the best-matching company by name and set it as the active company. Returns the chosen company. Use this when the user says "switch to client X" or "work on client Y".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'A name or partial name to fuzzy-match against the client list.' },
+      },
+      required: ['query'],
+    },
+    execute: ({ query }) => {
+      const { state, actions } = requireBridge();
+      const q = String(query || '').trim().toLowerCase();
+      if (!q) return { ok: false, error: 'query is required' };
+      const matches = (state.clients || []).filter((c) =>
+        String(c.name || '').toLowerCase().includes(q),
+      );
+      if (matches.length === 0) {
+        return { ok: false, error: `No client matches "${query}".` };
+      }
+      if (matches.length > 1) {
+        return {
+          ok: false,
+          error: 'Multiple matches; please confirm which one.',
+          matches: matches.slice(0, 5).map((c) => ({ id: c.id, name: c.name })),
+        };
+      }
+      const target = matches[0];
+      actions.setActiveCompanyId(target.id);
+      return { ok: true, active_company: { id: target.id, name: target.name } };
+    },
+  },
+
+  {
+    name: 'mark_invoice_paid',
+    description:
+      'Set an invoice\'s status to Paid and persist via the existing saveInvoices store. Returns the updated invoice. The user does not need to confirm — this is a direct write.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        invoice_id: { type: ['string', 'number'] },
+      },
+      required: ['invoice_id'],
+    },
+    execute: ({ invoice_id }) => {
+      const { state, actions } = requireBridge();
+      const target = (state.invoices || []).find((i) => String(i.id) === String(invoice_id));
+      if (!target) return { ok: false, error: `No invoice with id ${invoice_id}` };
+      const updated = (state.invoices || []).map((i) =>
+        String(i.id) === String(invoice_id) ? { ...i, status: 'Paid' } : i,
+      );
+      actions.saveInvoices(updated);
+      return {
+        ok: true,
+        invoice: {
+          id: target.id,
+          number: target.number || target.invoiceNumber,
+          customer: target.customer || target.customerName,
+          total: target.total,
+          status: 'Paid',
+        },
+      };
+    },
+  },
 ];
 
 // Anthropic-shaped tool definitions (no execute function).

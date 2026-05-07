@@ -109,6 +109,12 @@ the same setters and state the dashboard exposes.
 | `list_bank_transactions` | Returns bank transactions for the active company, optionally only unallocated or within a date range. |
 | `get_dashboard_totals` | Returns income, expenses, profit, pending-invoice count and unallocated-transaction count for the active company. |
 | `summarise_data` | Pulls a structured snapshot of `invoices`, `bank`, `vat`, `payroll`, or `clients` for Claude to summarise. |
+| `list_accounts` | Returns the chart of accounts (optionally filtered by category). Claude calls this before allocating transactions so it uses valid account names. |
+| `allocate_bank_transaction` | **Agentic write.** Sets `selection` + `vatRate` on one bank transaction and persists via `saveBankStatements`. |
+| `bulk_allocate_bank_transactions` | **Agentic write.** Allocates many transactions in one call. Preferred for the "allocate all unallocated" flow. |
+| `unallocate_bank_transaction` | Resets a transaction back to `Unallocated Expen` / `Unallocated Income`. |
+| `set_active_company` | Fuzzy-find a company by name and switch the active company in one step. |
+| `mark_invoice_paid` | **Agentic write.** Sets invoice status to `Paid` and persists. |
 
 ---
 
