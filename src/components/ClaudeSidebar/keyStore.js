@@ -9,18 +9,44 @@
 // the header and forwards only the bearer value to Anthropic.
 
 const STORAGE_KEY = 'claude-sidebar-byok-key-v1';
+// The existing app header dropdown (src/App_remote.jsx) saves the user's
+// Anthropic key under this storage key. The sidebar transparently reuses
+// it when the user has not set a sidebar-specific key, so users who have
+// already configured the app's AI features do not have to paste the key
+// twice.
+const LEGACY_APP_KEY = 'anthropic-api-key';
 
 function isBrowser() {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
 
-export function getKey() {
-  if (!isBrowser()) return '';
+function readRaw(name) {
   try {
-    return window.localStorage.getItem(STORAGE_KEY) || '';
+    return window.localStorage.getItem(name) || '';
   } catch {
     return '';
   }
+}
+
+export function getKey() {
+  if (!isBrowser()) return '';
+  return readRaw(STORAGE_KEY) || readRaw(LEGACY_APP_KEY) || '';
+}
+
+// Returns where the active key came from, for UI display.
+//   'sidebar'  - saved in the sidebar Settings panel
+//   'app'      - inherited from the existing app header dropdown
+//   'none'     - no key saved on this device (server env var still works)
+export function getKeySource() {
+  if (!isBrowser()) return 'none';
+  if (readRaw(STORAGE_KEY)) return 'sidebar';
+  if (readRaw(LEGACY_APP_KEY)) return 'app';
+  return 'none';
+}
+
+export function getLegacyAppKey() {
+  if (!isBrowser()) return '';
+  return readRaw(LEGACY_APP_KEY);
 }
 
 export function setKey(value) {

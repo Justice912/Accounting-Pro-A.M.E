@@ -16,9 +16,16 @@ There are **two ways** to provide the Anthropic API key — pick one or both:
    server proxy, which forwards it to Anthropic. Usage goes on that user's
    billing.
 
-If a user has saved a BYOK key, that key is used. Otherwise the server
-falls back to `ANTHROPIC_API_KEY`. If neither is set, the sidebar shows a
-clear error explaining the user needs to paste a key or set the env var.
+**Key precedence on every request:**
+
+1. Sidebar Settings panel key (localStorage `claude-sidebar-byok-key-v1`)
+2. Existing app header dropdown key (localStorage `anthropic-api-key`) —
+   the sidebar transparently reuses this so users who already configured
+   the app's AI features don't have to paste the key twice.
+3. Server `ANTHROPIC_API_KEY` env var.
+
+If none of the three are present, the sidebar shows a clear error
+explaining how to fix it.
 
 ---
 

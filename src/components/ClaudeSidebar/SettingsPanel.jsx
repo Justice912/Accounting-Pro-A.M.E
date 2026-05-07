@@ -1,6 +1,14 @@
 import React, { useState } from 'react';
-import { X, Eye, EyeOff, ExternalLink, Check, AlertCircle } from 'lucide-react';
-import { getKey, setKey, clearKey, looksLikeAnthropicKey, maskKey } from './keyStore.js';
+import { X, Eye, EyeOff, ExternalLink, Check, AlertCircle, Link2 } from 'lucide-react';
+import {
+  getKey,
+  setKey,
+  clearKey,
+  looksLikeAnthropicKey,
+  maskKey,
+  getKeySource,
+  getLegacyAppKey,
+} from './keyStore.js';
 
 // In-sidebar settings overlay. Opens above the message list when the user
 // clicks the cog icon. Lets the user paste a personal Anthropic API key
@@ -10,10 +18,13 @@ export default function SettingsPanel({ onClose }) {
   const [draft, setDraft] = useState(() => getKey());
   const [reveal, setReveal] = useState(false);
   const [status, setStatus] = useState(null); // { kind: 'ok'|'err', message }
+  const [source, setSource] = useState(() => getKeySource());
 
   const stored = getKey();
   const hasStored = !!stored;
   const draftValid = looksLikeAnthropicKey(draft);
+  const legacyAppKey = getLegacyAppKey();
+  const canImportLegacy = source !== 'sidebar' && !!legacyAppKey;
 
   const handleSave = () => {
     if (!draft.trim()) {
@@ -25,13 +36,36 @@ export default function SettingsPanel({ onClose }) {
       return;
     }
     setKey(draft.trim());
+    setSource('sidebar');
     setStatus({ kind: 'ok', message: 'Key saved to this browser.' });
   };
 
   const handleClear = () => {
     clearKey();
     setDraft('');
-    setStatus({ kind: 'ok', message: 'Key removed. The server env var (if set) will be used.' });
+    setSource(getKeySource());
+    setStatus({
+      kind: 'ok',
+      message:
+        getKeySource() === 'app'
+          ? 'Sidebar key removed. Falling back to the existing app key.'
+          : 'Key removed. The server env var (if set) will be used.',
+    });
+  };
+
+  const handleImportLegacy = () => {
+    if (!legacyAppKey) return;
+    if (!looksLikeAnthropicKey(legacyAppKey)) {
+      setStatus({
+        kind: 'err',
+        message: 'The existing app key looks malformed. Please paste a fresh one.',
+      });
+      return;
+    }
+    setKey(legacyAppKey);
+    setDraft(legacyAppKey);
+    setSource('sidebar');
+    setStatus({ kind: 'ok', message: 'Linked the existing app key to the sidebar.' });
   };
 
   return (
@@ -49,6 +83,56 @@ export default function SettingsPanel({ onClose }) {
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 text-sm">
+        {/* Active-key banner */}
+        <div
+          className={`rounded-lg border px-3 py-2 text-xs flex items-start gap-2 ${
+            source === 'sidebar'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : source === 'app'
+                ? 'bg-sky-50 border-sky-200 text-sky-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800'
+          }`}
+        >
+          {source === 'sidebar' && (
+            <>
+              <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                Using a sidebar-saved key (<span className="font-mono">{maskKey(stored)}</span>).
+              </span>
+            </>
+          )}
+          {source === 'app' && (
+            <>
+              <Link2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                Using the existing app key from the header dropdown
+                (<span className="font-mono">{maskKey(stored)}</span>). Save your own below to
+                override.
+              </span>
+            </>
+          )}
+          {source === 'none' && (
+            <>
+              <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                No key on this device. Paste one below or set
+                <span className="font-mono"> ANTHROPIC_API_KEY</span> on the server.
+              </span>
+            </>
+          )}
+        </div>
+
+        {canImportLegacy && (
+          <button
+            type="button"
+            onClick={handleImportLegacy}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-800 text-xs font-semibold px-3 py-2"
+          >
+            <Link2 className="w-3.5 h-3.5" />
+            Use existing app key (<span className="font-mono">{maskKey(legacyAppKey)}</span>)
+          </button>
+        )}
+
         <section className="space-y-2">
           <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wide">
             Anthropic API Key
@@ -141,10 +225,14 @@ export default function SettingsPanel({ onClose }) {
           </p>
           <p>
             Your key is kept in this browser&apos;s localStorage under
-            <span className="font-mono"> claude-sidebar-byok-key-v1</span>. It never leaves
-            your device except as the bearer of a single request to the server proxy at
+            <span className="font-mono"> claude-sidebar-byok-key-v1</span>. If no sidebar key is
+            saved, the sidebar transparently reuses the existing app key at
+            <span className="font-mono"> anthropic-api-key</span> (set via the AI dropdown in
+            the app header). Either way, the key never leaves your device except as the bearer of
+            a single request to the server proxy at
             <span className="font-mono"> /api/claude</span>, which forwards it to Anthropic.
-            Clearing your browser data or clicking <strong>Clear</strong> removes it.
+            Clearing your browser data or clicking <strong>Clear</strong> removes the
+            sidebar-saved key.
           </p>
         </section>
       </div>
