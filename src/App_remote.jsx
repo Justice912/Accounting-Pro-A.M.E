@@ -3,6 +3,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, L
 import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield, Filter, SortAsc, TrendingUp, DollarSign, Clock, Settings, Receipt } from 'lucide-react';
 import AuditModule from './AuditModule';
 import VATCapture from './pages/VATCapture';
+import { ClaudeSidebar, ClaudeAppBridge } from './components/ClaudeSidebar/index.js';
 
 // VAT Rate Options (South African VAT rates)
 const VAT_RATES = [
@@ -699,6 +700,37 @@ const AccountingDashboard = () => {
           />
         )}
       </main>
+
+      {/* Claude AI Assistant sidebar — see src/components/ClaudeSidebar/ */}
+      <ClaudeAppBridge
+        state={{
+          activeTab,
+          activeCompanyId,
+          activeCompany,
+          clients,
+          customers,
+          suppliers,
+          invoices,
+          bankStatements,
+          vatTransactions,
+          accounts,
+          employees,
+          payslips,
+        }}
+        actions={{
+          setActiveTab,
+          setActiveCompanyId,
+          setShowInvoiceForm,
+          setShowClientForm,
+          setShowSupplierForm,
+          setSelectedInvoice,
+          saveInvoices,
+          saveCustomers,
+          saveClients,
+          saveSuppliers,
+        }}
+      />
+      <ClaudeSidebar />
     </div>
   );
 };
