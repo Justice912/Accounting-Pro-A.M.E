@@ -13,6 +13,7 @@
 
 import { SYSTEM_PROMPT } from './systemPrompt.js';
 import { getAnthropicTools, findTool } from './toolRegistry.js';
+import { getKey } from './keyStore.js';
 
 const MAX_TOOL_ITERATIONS = 5;
 
@@ -38,9 +39,16 @@ function parseSseChunk(chunk) {
 // One streaming round-trip with Anthropic via the proxy. Returns the assembled
 // assistant message: { role: 'assistant', content: [ {type:'text',text}, {type:'tool_use',id,name,input}, ... ] }
 async function streamOnce({ messages, onDelta, signal }) {
+  // If the user pasted their own Anthropic key into the sidebar Settings
+  // panel, forward it on a header. Otherwise the server falls back to its
+  // own ANTHROPIC_API_KEY env var.
+  const headers = { 'Content-Type': 'application/json' };
+  const byok = getKey();
+  if (byok) headers['x-anthropic-api-key'] = byok;
+
   const res = await fetch('/api/claude', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     signal,
     body: JSON.stringify({
       messages,

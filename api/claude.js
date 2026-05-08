@@ -1,14 +1,18 @@
 // Vercel serverless proxy for the Anthropic Messages API.
 //
-// IMPORTANT (security):
-//   - The Anthropic API key is read ONLY from process.env.ANTHROPIC_API_KEY on
-//     the server. It is never accepted from the client and is never returned
-//     in a response body. Configure it in Vercel:
-//       Project -> Settings -> Environment Variables -> ANTHROPIC_API_KEY.
-//   - The model is fixed server-side (claude-sonnet-4-6). The client cannot
-//     override it.
-//   - Only `messages`, `system`, `tools` and `tool_choice` are forwarded from
-//     the request body.
+// Key resolution (in order):
+//   1. The `x-anthropic-api-key` request header — user-supplied "BYOK" key
+//      pasted into the sidebar Settings panel, kept in their browser's
+//      localStorage. Used when individual users want to put usage on their
+//      own Anthropic billing.
+//   2. `process.env.ANTHROPIC_API_KEY` — the server env var. The default for
+//      production deploys where the operator pays. Configure it in Vercel:
+//        Project -> Settings -> Environment Variables -> ANTHROPIC_API_KEY.
+//   If neither is present the request is rejected.
+//
+// The model is fixed server-side (claude-sonnet-4-6). The client cannot
+// override it. Only `messages`, `system`, `tools` and `tool_choice` are
+// forwarded from the request body.
 //
 // Streaming: this route uses the Vercel Edge runtime so it can stream the
 // raw Server-Sent Event body straight from Anthropic to the browser without
@@ -49,12 +53,27 @@ export default async function handler(req) {
     return jsonResponse({ error: 'Method not allowed' }, 405);
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  // Prefer a user-supplied key from the request header (BYOK), otherwise
+  // fall back to the server env var. Header keys are validated to look like
+  // an Anthropic key so a stray client can't smuggle arbitrary values.
+  const headerKey = req.headers.get('x-anthropic-api-key')?.trim();
+  let apiKey;
+  if (headerKey) {
+    if (!/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(headerKey)) {
+      return jsonResponse(
+        { error: 'The supplied Anthropic API key looks malformed. It should start with "sk-ant-".' },
+        400,
+      );
+    }
+    apiKey = headerKey;
+  } else {
+    apiKey = process.env.ANTHROPIC_API_KEY;
+  }
   if (!apiKey) {
     return jsonResponse(
       {
         error:
-          'Server is missing ANTHROPIC_API_KEY. Add it in Vercel -> Project Settings -> Environment Variables.',
+          'No Anthropic API key available. Either paste a key in the sidebar Settings panel, or add ANTHROPIC_API_KEY in Vercel -> Project Settings -> Environment Variables.',
       },
       500,
     );
