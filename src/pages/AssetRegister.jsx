@@ -4,6 +4,7 @@ import {
   Trash2,
   Search,
   Download,
+  FileDown,
   X,
   Edit2,
   ArrowDown,
@@ -14,6 +15,7 @@ import {
   FileText,
   Filter,
 } from 'lucide-react';
+import { exportTablePdf } from '../utils/pdfReports.js';
 import {
   TAX_SECTIONS,
   ASSET_CATEGORIES,
@@ -1226,6 +1228,71 @@ function ReportsTab({ assets, company }) {
     }
   };
 
+  // PDF export. Builds column metadata from the same data shape Excel uses;
+  // any column whose first row is numeric is right-aligned and ZAR-formatted.
+  // For numeric columns we add a totals row except for the movement report,
+  // which already presents pre-aggregated lines (Opening / Additions / etc).
+  const handleExportPdf = async () => {
+    try {
+      const reportLabel = REPORTS.find((r) => r.id === reportType)?.label || 'Report';
+      const safeName = (company?.name || 'Asset Register').replace(/[^a-z0-9-]+/gi, '_');
+      const filename = `${safeName}_${reportType}_${toDate}.pdf`;
+
+      // Build column metadata.
+      const headers = data.length > 0 ? Object.keys(data[0]) : [];
+      const numericByKey = {};
+      for (const h of headers) numericByKey[h] = typeof data[0][h] === 'number';
+
+      const columns = headers.map((h) => {
+        const isNum = numericByKey[h];
+        return {
+          key: h,
+          header: h,
+          align: isNum ? 'right' : 'left',
+          format: isNum ? (v) => fmtZAR(v) : (v) => (v == null ? '' : String(v)),
+          // Slightly wider weight on the first text column so names/codes don't truncate.
+          weight: isNum ? 1 : h.toLowerCase().includes('name') || h.toLowerCase().includes('description') ? 2.2 : 1.3,
+        };
+      });
+
+      // Totals row for reports where summing makes sense.
+      const showTotals = ['listing', 'depreciation', 'disposals', 'deferred', 'category'].includes(reportType);
+      let totals = null;
+      if (showTotals && data.length > 0) {
+        totals = {};
+        const firstNum = headers.find((h) => numericByKey[h]);
+        for (const h of headers) {
+          if (numericByKey[h]) {
+            totals[h] = data.reduce((s, r) => s + (Number(r[h]) || 0), 0);
+          } else {
+            totals[h] = h === headers[0] || h === firstNum ? 'Total' : '';
+          }
+        }
+      }
+
+      const period =
+        reportType === 'movement' ||
+        reportType === 'depreciation' ||
+        reportType === 'disposals'
+          ? `${fromDate}  →  ${toDate}`
+          : null;
+
+      await exportTablePdf({
+        filename,
+        title: `Asset Register — ${reportLabel}`,
+        subtitle: undefined,
+        company: company?.name || '',
+        period,
+        asof: !period ? toDate : undefined,
+        columns,
+        rows: data,
+        totals,
+      });
+    } catch (err) {
+      alert(`PDF export failed: ${err.message || err}`);
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-3 flex flex-wrap items-end gap-3">
@@ -1258,13 +1325,23 @@ function ReportsTab({ assets, company }) {
             className="border border-slate-300 rounded-md text-sm px-2 py-1.5"
           />
         </Field>
-        <button
-          onClick={handleExport}
-          className="ml-auto inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold"
-        >
-          <Download className="w-4 h-4" />
-          Export to Excel
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={handleExportPdf}
+            disabled={data.length === 0}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 text-white text-sm font-semibold"
+          >
+            <FileDown className="w-4 h-4" />
+            Export to PDF
+          </button>
+          <button
+            onClick={handleExport}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold"
+          >
+            <Download className="w-4 h-4" />
+            Export to Excel
+          </button>
+        </div>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-x-auto">
