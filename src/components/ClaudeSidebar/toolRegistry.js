@@ -9,6 +9,21 @@
 // chat loop in claudeClient.js will pick it up automatically.
 
 import { requireBridge } from './appBridge.js';
+import {
+  ASSET_CATEGORIES,
+  TAX_SECTIONS,
+  netBookValue,
+  accumulatedDepreciation,
+  taxBase,
+  deferredTax,
+  temporaryDifference,
+  disposalGainLoss,
+  taxRecoupment,
+  movementSchedule,
+  registerSnapshot,
+  depreciationInPeriod,
+  COMPANY_TAX_RATE,
+} from '../../utils/assetCalculations.js';
 
 const KNOWN_TABS = [
   'dashboard',
@@ -21,6 +36,7 @@ const KNOWN_TABS = [
   'vatrecon',
   'forecast',
   'payroll',
+  'assets',
   'reports',
   'audit',
 ];
@@ -658,6 +674,342 @@ export const TOOLS = [
           status: 'Paid',
         },
       };
+    },
+  },
+
+  // ===================== Asset register tools =====================
+  // Read + write tools for the fixed-asset register. Claude can list/get,
+  // add a new asset, dispose an asset, and run any of the canned reports.
+
+  {
+    name: 'list_assets',
+    description:
+      'Return the asset register for the active company. Optional filters by status (active/disposed/written-off), category, and acquisition date range. Each row includes id (pass verbatim to other asset tools), code, name, category, cost, current NBV and current tax base.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['active', 'disposed', 'written-off'] },
+        category: { type: 'string' },
+        acquired_from: { type: 'string', description: 'YYYY-MM-DD inclusive.' },
+        acquired_to: { type: 'string', description: 'YYYY-MM-DD inclusive.' },
+        limit: { type: 'number' },
+      },
+    },
+    execute: ({ status, category, acquired_from, acquired_to, limit } = {}) => {
+      const { state } = requireBridge();
+      const companyId = state.activeCompanyId;
+      let rows = (state.assets || []).filter((a) => !companyId || a.companyId === companyId);
+      if (status) rows = rows.filter((a) => a.status === status);
+      if (category) rows = rows.filter((a) => a.category === category);
+      if (acquired_from) rows = rows.filter((a) => (a.acquisitionDate || '') >= acquired_from);
+      if (acquired_to) rows = rows.filter((a) => (a.acquisitionDate || '') <= acquired_to);
+      const today = new Date().toISOString().slice(0, 10);
+      const cap = Math.min(Math.max(Number(limit) || 100, 1), 500);
+      return {
+        count: rows.length,
+        assets: rows.slice(0, cap).map((a) => ({
+          id: a.id,
+          code: a.code,
+          name: a.name,
+          category: a.category,
+          status: a.status,
+          acquisition_date: a.acquisitionDate,
+          cost_excl_vat: Number(a.costExclVat) || 0,
+          nbv_today: netBookValue(a, today),
+          tax_base_today: taxBase(a, today),
+          tax_section: a.taxSection,
+        })),
+      };
+    },
+  },
+
+  {
+    name: 'get_asset',
+    description:
+      'Return the full record for one asset including depreciation method, tax section, GL accounts, and disposal info if applicable.',
+    input_schema: {
+      type: 'object',
+      properties: { asset_id: { type: ['string', 'number'] } },
+      required: ['asset_id'],
+    },
+    execute: ({ asset_id }) => {
+      const { state } = requireBridge();
+      const a = (state.assets || []).find((x) => String(x.id) === String(asset_id));
+      if (!a) return { ok: false, error: `No asset with id ${asset_id}` };
+      const today = new Date().toISOString().slice(0, 10);
+      return {
+        ok: true,
+        asset: {
+          ...a,
+          computed: {
+            nbv_today: netBookValue(a, today),
+            accumulated_depreciation: accumulatedDepreciation(a, today),
+            tax_base_today: taxBase(a, today),
+            temporary_difference: temporaryDifference(a, today),
+            deferred_tax: deferredTax(a, today),
+          },
+        },
+      };
+    },
+  },
+
+  {
+    name: 'add_asset',
+    description:
+      'Create a new fixed asset on the active company\'s register. The minimum fields are name, acquisition_date and cost_excl_vat — the rest fall back to sensible defaults (5-year straight-line, s11(e) general wear & tear, no residual). The asset is persisted immediately.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        code: { type: 'string', description: 'Optional asset code, e.g. "MV-001". Auto-generated if omitted.' },
+        category: { type: 'string', enum: ASSET_CATEGORIES },
+        description: { type: 'string' },
+        location: { type: 'string' },
+        serial_number: { type: 'string' },
+        acquisition_date: { type: 'string', description: 'YYYY-MM-DD' },
+        cost_excl_vat: { type: 'number' },
+        vat_amount: { type: 'number' },
+        supplier_name: { type: 'string' },
+        invoice_ref: { type: 'string' },
+        depreciation_method: { type: 'string', enum: ['straight-line', 'reducing-balance'] },
+        useful_life_months: { type: 'number' },
+        residual_value: { type: 'number' },
+        tax_section: { type: 'string', enum: Object.keys(TAX_SECTIONS) },
+        notes: { type: 'string' },
+      },
+      required: ['name', 'acquisition_date', 'cost_excl_vat'],
+    },
+    execute: (input) => {
+      const { state, actions } = requireBridge();
+      const companyId = state.activeCompanyId;
+      if (!companyId) return { ok: false, error: 'No active company. Use set_active_company first.' };
+      const cost = Number(input.cost_excl_vat) || 0;
+      const vat = Number(input.vat_amount) || 0;
+      const newAsset = {
+        id: `AST${Date.now()}${Math.floor(Math.random() * 1000)}`,
+        companyId,
+        code: input.code || '',
+        name: input.name,
+        description: input.description || '',
+        category: input.category || ASSET_CATEGORIES[0],
+        location: input.location || '',
+        serialNumber: input.serial_number || '',
+        acquisitionDate: input.acquisition_date,
+        costExclVat: cost,
+        vatAmount: vat,
+        costInclVat: cost + vat,
+        supplierName: input.supplier_name || '',
+        invoiceRef: input.invoice_ref || '',
+        depreciationMethod: input.depreciation_method || 'straight-line',
+        usefulLifeMonths: Number(input.useful_life_months) || 60,
+        residualValue: Number(input.residual_value) || 0,
+        depreciationStartDate: '',
+        taxSection: input.tax_section || 's11e_general_5yr',
+        glAssetAccount: '',
+        glAccumDepAccount: '',
+        glDepExpenseAccount: 'Depreciation',
+        status: 'active',
+        disposalDate: null,
+        disposalProceeds: null,
+        disposalNotes: '',
+        notes: input.notes || '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      actions.saveAssets([...(state.assets || []), newAsset]);
+      actions.setActiveTab('assets');
+      return {
+        ok: true,
+        asset: {
+          id: newAsset.id,
+          code: newAsset.code,
+          name: newAsset.name,
+          cost: newAsset.costExclVat,
+          tax_section: newAsset.taxSection,
+        },
+      };
+    },
+  },
+
+  {
+    name: 'dispose_asset',
+    description:
+      'Mark an asset as disposed. Records the disposal date, proceeds, and computes the IFRS gain/loss plus SARS tax recoupment, capital gain and scrapping allowance. The asset stays on the register flagged as disposed.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        asset_id: { type: ['string', 'number'] },
+        disposal_date: { type: 'string', description: 'YYYY-MM-DD' },
+        proceeds: { type: 'number', description: 'Disposal proceeds excluding VAT.' },
+        notes: { type: 'string' },
+      },
+      required: ['asset_id', 'disposal_date'],
+    },
+    execute: ({ asset_id, disposal_date, proceeds, notes }) => {
+      const { state, actions } = requireBridge();
+      const target = (state.assets || []).find((a) => String(a.id) === String(asset_id));
+      if (!target) return { ok: false, error: `No asset with id ${asset_id}` };
+      const updated = {
+        ...target,
+        status: 'disposed',
+        disposalDate: disposal_date,
+        disposalProceeds: Number(proceeds) || 0,
+        disposalNotes: notes || '',
+        updatedAt: new Date().toISOString(),
+      };
+      actions.saveAssets((state.assets || []).map((a) => (a.id === target.id ? updated : a)));
+      const tax = taxRecoupment(updated);
+      return {
+        ok: true,
+        disposal: {
+          asset_id: updated.id,
+          name: updated.name,
+          disposal_date: updated.disposalDate,
+          proceeds: updated.disposalProceeds,
+          nbv_at_disposal: netBookValue(updated, updated.disposalDate),
+          ifrs_gain_loss: disposalGainLoss(updated),
+          tax_recoupment: tax.recoupment,
+          capital_gain: tax.capitalGain,
+          scrapping_allowance: tax.scrappingAllowance,
+        },
+      };
+    },
+  },
+
+  {
+    name: 'unset_disposal',
+    description:
+      'Re-instate a disposed asset (clears the disposal fields and sets status back to active). Useful for correcting a wrong disposal entry.',
+    input_schema: {
+      type: 'object',
+      properties: { asset_id: { type: ['string', 'number'] } },
+      required: ['asset_id'],
+    },
+    execute: ({ asset_id }) => {
+      const { state, actions } = requireBridge();
+      const target = (state.assets || []).find((a) => String(a.id) === String(asset_id));
+      if (!target) return { ok: false, error: `No asset with id ${asset_id}` };
+      const updated = {
+        ...target,
+        status: 'active',
+        disposalDate: null,
+        disposalProceeds: null,
+        disposalNotes: '',
+        updatedAt: new Date().toISOString(),
+      };
+      actions.saveAssets((state.assets || []).map((a) => (a.id === target.id ? updated : a)));
+      return { ok: true, asset_id: target.id };
+    },
+  },
+
+  {
+    name: 'run_asset_report',
+    description:
+      'Compute one of the canned asset register reports for the active company. Reports: "snapshot" (current totals), "movement" (opening/additions/depreciation/disposals/closing for a period), "depreciation_period" (depreciation per asset between two dates), "disposals_period" (gain/loss + recoupment for disposals in period), "deferred_tax" (deferred tax per asset as at to_date), "category_rollup" (totals per category).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        report: {
+          type: 'string',
+          enum: [
+            'snapshot',
+            'movement',
+            'depreciation_period',
+            'disposals_period',
+            'deferred_tax',
+            'category_rollup',
+          ],
+        },
+        from_date: { type: 'string', description: 'YYYY-MM-DD inclusive (period start).' },
+        to_date: { type: 'string', description: 'YYYY-MM-DD inclusive (period end / asof).' },
+      },
+      required: ['report'],
+    },
+    execute: ({ report, from_date, to_date }) => {
+      const { state } = requireBridge();
+      const companyId = state.activeCompanyId;
+      const all = (state.assets || []).filter((a) => !companyId || a.companyId === companyId);
+      const today = new Date().toISOString().slice(0, 10);
+      const to = to_date || today;
+      const from = from_date || `${new Date(to).getFullYear()}-01-01`;
+      switch (report) {
+        case 'snapshot':
+          return registerSnapshot(all, to);
+        case 'movement': {
+          const ms = movementSchedule(all, from, to);
+          return { period: { from, to }, movement: ms };
+        }
+        case 'depreciation_period':
+          return {
+            period: { from, to },
+            rows: all
+              .map((a) => ({
+                id: a.id,
+                code: a.code,
+                name: a.name,
+                category: a.category,
+                period_depreciation: depreciationInPeriod(a, from, to),
+                cumulative_to_end: accumulatedDepreciation(a, to),
+                nbv_at_end: netBookValue(a, to),
+              }))
+              .filter((r) => r.period_depreciation > 0),
+          };
+        case 'disposals_period':
+          return {
+            period: { from, to },
+            rows: all
+              .filter(
+                (a) =>
+                  a.status === 'disposed' &&
+                  a.disposalDate &&
+                  a.disposalDate >= from &&
+                  a.disposalDate <= to,
+              )
+              .map((a) => {
+                const t = taxRecoupment(a);
+                return {
+                  id: a.id,
+                  name: a.name,
+                  disposal_date: a.disposalDate,
+                  cost: Number(a.costExclVat) || 0,
+                  nbv_at_disposal: netBookValue(a, a.disposalDate),
+                  proceeds: Number(a.disposalProceeds) || 0,
+                  ifrs_gain_loss: disposalGainLoss(a),
+                  tax_recoupment: t.recoupment,
+                  capital_gain: t.capitalGain,
+                  scrapping_allowance: t.scrappingAllowance,
+                };
+              }),
+          };
+        case 'deferred_tax':
+          return {
+            asof: to,
+            tax_rate: COMPANY_TAX_RATE,
+            rows: all.map((a) => ({
+              id: a.id,
+              name: a.name,
+              nbv: netBookValue(a, to),
+              tax_base: taxBase(a, to),
+              temporary_difference: temporaryDifference(a, to),
+              deferred_tax: deferredTax(a, to),
+            })),
+          };
+        case 'category_rollup': {
+          const map = new Map();
+          for (const a of all) {
+            const k = a.category || 'Other';
+            const acc = map.get(k) || { category: k, count: 0, cost: 0, nbv: 0, tax_base: 0 };
+            acc.count += 1;
+            acc.cost += Number(a.costExclVat) || 0;
+            acc.nbv += netBookValue(a, to);
+            acc.tax_base += taxBase(a, to);
+            map.set(k, acc);
+          }
+          return { asof: to, rollup: Array.from(map.values()) };
+        }
+        default:
+          return { error: `Unknown report: ${report}` };
+      }
     },
   },
 ];
