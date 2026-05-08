@@ -3,6 +3,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, L
 import { Home, FileText, Users, Building2, Landmark, BarChart3, Plus, Trash2, Upload, Download, Printer, Mail, Eye, ChevronDown, AlertCircle, Check, X, Search, Calendar, ArrowRight, Calculator, Edit2, Save, Wallet, Shield, Filter, SortAsc, TrendingUp, DollarSign, Clock, Settings, Receipt } from 'lucide-react';
 import AuditModule from './AuditModule';
 import VATCapture from './pages/VATCapture';
+import AssetRegister from './pages/AssetRegister';
 import { ClaudeSidebar, ClaudeAppBridge } from './components/ClaudeSidebar/index.js';
 
 // VAT Rate Options (South African VAT rates)
@@ -274,6 +275,7 @@ const AccountingDashboard = () => {
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
   const [employees, setEmployees] = useState([]);
   const [payslips, setPayslips] = useState([]);
+  const [assets, setAssets] = useState([]);
 
   // Load data on mount
   useEffect(() => {
@@ -298,7 +300,7 @@ const AccountingDashboard = () => {
         return;
       }
 
-      const [invRes, clientRes, customerRes, suppRes, bankRes, vatRes, accRes, empRes, payRes] = await Promise.all([
+      const [invRes, clientRes, customerRes, suppRes, bankRes, vatRes, accRes, empRes, payRes, assetRes] = await Promise.all([
         Promise.resolve({ value: localStorage.getItem('accounting-invoices') }),
         Promise.resolve({ value: localStorage.getItem('accounting-clients') }),
         Promise.resolve({ value: localStorage.getItem('accounting-customers') }),
@@ -308,6 +310,7 @@ const AccountingDashboard = () => {
         Promise.resolve({ value: localStorage.getItem('accounting-accounts') }),
         Promise.resolve({ value: localStorage.getItem('accounting-employees') }),
         Promise.resolve({ value: localStorage.getItem('accounting-payslips') }),
+        Promise.resolve({ value: localStorage.getItem('accounting-assets') }),
       ]);
 
       if (invRes?.value) setInvoices(JSON.parse(invRes.value));
@@ -318,6 +321,7 @@ const AccountingDashboard = () => {
       if (vatRes?.value) setVatTransactions(JSON.parse(vatRes.value));
       if (empRes?.value) setEmployees(JSON.parse(empRes.value));
       if (payRes?.value) setPayslips(JSON.parse(payRes.value));
+      if (assetRes?.value) setAssets(JSON.parse(assetRes.value));
 
       // Load API key
       const savedApiKey = localStorage.getItem('anthropic-api-key');
@@ -393,6 +397,11 @@ const AccountingDashboard = () => {
     localStorage.setItem('accounting-payslips', JSON.stringify(data));
   };
 
+  const saveAssets = (data) => {
+    setAssets(data);
+    localStorage.setItem('accounting-assets', JSON.stringify(data));
+  };
+
   // Calculate totals - filtered by active company
   const activeCompanyStatements = activeCompanyId ? bankStatements.filter(s => s.companyId === activeCompanyId) : bankStatements;
   const activeCompanyInvoices = activeCompanyId ? invoices.filter(inv => inv.companyId === activeCompanyId) : invoices;
@@ -438,6 +447,7 @@ const AccountingDashboard = () => {
     { id: 'vatrecon', label: 'VAT Recon', icon: Calculator },
     { id: 'forecast', label: 'Cash Flow', icon: TrendingUp },
     { id: 'payroll', label: 'Payroll', icon: Users },
+    { id: 'assets', label: 'Asset Register', icon: Wallet },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
     { id: 'audit', label: 'Audit Module', icon: Shield }
   ];
@@ -691,6 +701,15 @@ const AccountingDashboard = () => {
             company={activeCompany}
           />
         )}
+        {activeTab === 'assets' && (
+          <AssetRegister
+            assets={assets}
+            saveAssets={saveAssets}
+            suppliers={suppliers}
+            accounts={accounts}
+            company={activeCompany}
+          />
+        )}
         {activeTab === 'reports' && (
           <ReportsView
             bankStatements={bankStatements}
@@ -716,6 +735,7 @@ const AccountingDashboard = () => {
           accounts,
           employees,
           payslips,
+          assets,
         }}
         actions={{
           setActiveTab,
@@ -729,6 +749,7 @@ const AccountingDashboard = () => {
           saveClients,
           saveSuppliers,
           saveBankStatements,
+          saveAssets,
         }}
       />
       <ClaudeSidebar />
