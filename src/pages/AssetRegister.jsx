@@ -1274,7 +1274,7 @@ function ReportsTab({ assets, company }) {
         reportType === 'movement' ||
         reportType === 'depreciation' ||
         reportType === 'disposals'
-          ? `${fromDate}  →  ${toDate}`
+          ? `${fromDate} to ${toDate}`
           : null;
 
       await exportTablePdf({

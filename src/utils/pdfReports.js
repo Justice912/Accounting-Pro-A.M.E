@@ -40,15 +40,48 @@ async function buildDoc() {
   return { pdf, font, fontBold };
 }
 
+// pdf-lib's StandardFonts use WinAnsi (CP1252) which can't encode arrows,
+// CJK, emoji, math symbols, etc. Drawing such a character throws. Map the
+// common offenders to ASCII; anything else outside CP1252 becomes '?'.
+const WINANSI_EXTRA = new Set([
+  0x20ac, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021,
+  0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x017d, 0x2018,
+  0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc,
+  0x2122, 0x0161, 0x203a, 0x0153, 0x017e, 0x0178,
+]);
+
+function sanitizeText(str) {
+  const s = String(str ?? '')
+    .replace(/→/g, '->')
+    .replace(/←/g, '<-')
+    .replace(/↔/g, '<->')
+    .replace(/⇒/g, '=>')
+    .replace(/⇐/g, '<=')
+    .replace(/↑/g, '^')
+    .replace(/↓/g, 'v')
+    .replace(/✓/g, 'v')
+    .replace(/✗/g, 'x')
+    .replace(/ /g, ' ')
+    .replace(/′/g, "'")
+    .replace(/″/g, '"');
+  let out = '';
+  for (const ch of s) {
+    const code = ch.codePointAt(0);
+    if (code <= 0xff || WINANSI_EXTRA.has(code)) out += ch;
+    else out += '?';
+  }
+  return out;
+}
+
 // Width of a string in points at a given font size. pdf-lib gives us the
 // font metric directly.
 function widthOf(str, font, size) {
-  return font.widthOfTextAtSize(String(str ?? ''), size);
+  return font.widthOfTextAtSize(sanitizeText(str), size);
 }
 
 // Truncate a string with an ellipsis so it fits within maxWidth at fontSize.
 function fitText(str, font, size, maxWidth) {
-  const s = String(str ?? '');
+  const s = sanitizeText(str);
   if (widthOf(s, font, size) <= maxWidth) return s;
   // Binary-trim
   let lo = 0;
@@ -81,7 +114,7 @@ function layoutColumns(columns, availableWidth) {
 }
 
 function drawText(page, text, x, y, opts = {}) {
-  page.drawText(String(text ?? ''), {
+  page.drawText(sanitizeText(text), {
     x,
     y,
     size: opts.size || FONT_SIZE_BODY,
