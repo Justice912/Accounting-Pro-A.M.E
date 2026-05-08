@@ -244,27 +244,36 @@ export const TOOLS = [
   {
     name: 'list_bank_transactions',
     description:
-      'Return bank transactions for the active company, optionally filtered by date range or unallocated status.',
+      'Return bank transactions for the active company, optionally filtered by date range or unallocated status. Each row includes its `id` — pass that id verbatim to allocate_bank_transaction or bulk_allocate_bank_transactions.',
     input_schema: {
       type: 'object',
       properties: {
         unallocated_only: { type: 'boolean' },
         from_date: { type: 'string', description: 'ISO date YYYY-MM-DD inclusive.' },
         to_date: { type: 'string', description: 'ISO date YYYY-MM-DD inclusive.' },
-        limit: { type: 'number', description: 'Cap on rows returned. Defaults to 25.' },
+        limit: { type: 'number', description: 'Cap on rows returned. Defaults to 50 (bumped from 25 so a typical month fits in one call).' },
       },
     },
     execute: ({ unallocated_only, from_date, to_date, limit } = {}) => {
       const { state } = requireBridge();
       let rows = activeCompanyBank(state);
-      if (unallocated_only) rows = rows.filter((s) => s.selection === 'Unallocated Expen' || !s.selection);
+      if (unallocated_only) {
+        rows = rows.filter(
+          (s) =>
+            !s.selection ||
+            s.selection === 'Unallocated Expen' ||
+            s.selection === 'Unallocated Income',
+        );
+      }
       if (from_date) rows = rows.filter((s) => (s.date || '') >= from_date);
       if (to_date) rows = rows.filter((s) => (s.date || '') <= to_date);
-      const cap = Math.min(Math.max(Number(limit) || 25, 1), 100);
+      const cap = Math.min(Math.max(Number(limit) || 50, 1), 200);
       return {
         count: rows.length,
         transactions: rows.slice(0, cap).map((s) => ({
+          id: s.id,
           date: s.date,
+          payee: s.payee,
           description: s.description,
           received: s.received,
           spent: s.spent,
