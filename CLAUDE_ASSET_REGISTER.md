@@ -70,7 +70,7 @@ The disposal modal shows live previews of all four. After confirmation the asset
 
 ## Reports
 
-All reports filter by a from/to date range and export to `.xlsx` via the existing ExcelJS dependency.
+All reports filter by a from/to date range and export to **`.xlsx`** (via ExcelJS) and **`.pdf`** (via pdf-lib). The PDF is laid out as a multi-page A4 landscape document with a company header, report title, period, generated timestamp, zebra-striped data rows, automatic column widths, page-break-aware re-printed column headers, and a bold totals row on the final page (where applicable).
 
 1. **Asset listing (snapshot)** — current state of every asset with cost, NBV, tax base, status.
 2. **Movement schedule (period)** — opening NBV → additions → depreciation → disposals → closing NBV. AFS note 8.
@@ -108,7 +108,8 @@ Assets persist to `localStorage["accounting-assets"]` as a JSON array. Each asse
 
 ```
 src/utils/assetCalculations.js                  ← Pure calc engine (no React)
-src/pages/AssetRegister.jsx                     ← Page with 5 sub-tabs + modals
+src/utils/pdfReports.js                         ← Generic PDF table renderer (pdf-lib)
+src/pages/AssetRegister.jsx                     ← Page with 5 sub-tabs + modals + PDF/Excel export
 src/components/ClaudeSidebar/toolRegistry.js    ← +6 asset tools
 src/components/ClaudeSidebar/systemPrompt.js    ← Updated tool list
 CLAUDE_ASSET_REGISTER.md                        ← This guide
