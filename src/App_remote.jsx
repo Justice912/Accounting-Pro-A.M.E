@@ -2534,17 +2534,22 @@ const PrintPreview = ({ invoice, onClose, company }) => {
 const SuppliersView = ({ suppliers, saveSuppliers, invoices, saveInvoices, clients, showSupplierForm, setShowSupplierForm, showPrintPreview, setShowPrintPreview, selectedInvoice, setSelectedInvoice, accounts = [], company, apiKey }) => {
   const [formData, setFormData] = useState({ name: '', company: '', email: '', phone: '' });
   const [activeTab, setActiveTab] = useState('invoices');
+  const [reviewSubTab, setReviewSubTab] = useState('pending');
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState([]);
   const pdfInvoiceInputRef = React.useRef(null);
   const [showPdfInvoiceExtractor, setShowPdfInvoiceExtractor] = useState(false);
   const [extractedInvoices, setExtractedInvoices] = useState([]);
   const [pdfProcessing, setPdfProcessing] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
-  
+
   // Use accounts prop or default accounts
   const accountsList = accounts.length > 0 ? accounts : DEFAULT_ACCOUNTS;
-  
+
   // Filter supplier invoices by type and company
   const supplierInvoices = invoices.filter(inv => inv.invoiceType === 'supplier' && (!company?.id || inv.companyId === company.id));
+  const pendingInvoices = supplierInvoices.filter(inv => !inv.reviewed);
+  const reviewedInvoices = supplierInvoices.filter(inv => inv.reviewed);
+  const visibleInvoices = reviewSubTab === 'reviewed' ? reviewedInvoices : pendingInvoices;
 
   // Purchase orders for linking (mock data - you can expand this)
   const purchaseOrders = [
@@ -2810,13 +2815,48 @@ Rules:
   const deleteSupplier = (id) => {
     saveSuppliers(suppliers.filter(s => s.id !== id));
   };
-  
+
   const markAsPaid = (id) => {
     saveInvoices(invoices.map(inv => inv.id === id ? { ...inv, status: 'Paid' } : inv));
   };
 
   const deleteInvoice = (id) => {
     saveInvoices(invoices.filter(inv => inv.id !== id));
+    setSelectedInvoiceIds(prev => prev.filter(i => i !== id));
+  };
+
+  const toggleInvoiceSelected = (id) => {
+    setSelectedInvoiceIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
+
+  const toggleSelectAllVisible = () => {
+    const visibleIds = visibleInvoices.map(i => i.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedInvoiceIds.includes(id));
+    if (allSelected) {
+      setSelectedInvoiceIds(prev => prev.filter(id => !visibleIds.includes(id)));
+    } else {
+      setSelectedInvoiceIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+    }
+  };
+
+  const markSelectedAsReviewed = () => {
+    if (selectedInvoiceIds.length === 0) return;
+    const now = new Date().toISOString();
+    saveInvoices(invoices.map(inv =>
+      selectedInvoiceIds.includes(inv.id) && inv.invoiceType === 'supplier'
+        ? { ...inv, reviewed: true, reviewedAt: now }
+        : inv
+    ));
+    const count = selectedInvoiceIds.length;
+    setSelectedInvoiceIds([]);
+    setSaveMessage(`${count} invoice(s) marked as reviewed.`);
+    setTimeout(() => setSaveMessage(''), 3000);
+  };
+
+  const unmarkReviewed = (id) => {
+    saveInvoices(invoices.map(inv =>
+      inv.id === id ? { ...inv, reviewed: false, reviewedAt: null } : inv
+    ));
   };
 
   // Handle CSV bulk upload of supplier invoices
@@ -3331,6 +3371,11 @@ Rules:
             <span className={`px-2 py-0.5 rounded-full text-xs ${activeTab === 'invoices' ? 'bg-orange-200 text-orange-800' : 'bg-slate-200 text-slate-600'}`}>
               {supplierInvoices.length}
             </span>
+            {pendingInvoices.length > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-700 border border-amber-300" title="Awaiting review">
+                {pendingInvoices.length} pending
+              </span>
+            )}
           </div>
         </button>
         <button
@@ -3394,14 +3439,86 @@ Rules:
       {/* Supplier Invoices Tab */}
       {activeTab === 'invoices' && (
         <>
-          {supplierInvoices.length > 0 ? (
+          {/* Review sub-tabs */}
+          <div className="flex items-center justify-between bg-white rounded-lg border p-2">
+            <div className="flex gap-1">
+              <button
+                onClick={() => { setReviewSubTab('pending'); setSelectedInvoiceIds([]); }}
+                className={`px-3 py-1.5 rounded text-sm font-medium ${
+                  reviewSubTab === 'pending'
+                    ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Pending Review
+                <span className="ml-2 px-1.5 py-0.5 rounded-full text-xs bg-amber-200 text-amber-900">
+                  {pendingInvoices.length}
+                </span>
+              </button>
+              <button
+                onClick={() => { setReviewSubTab('reviewed'); setSelectedInvoiceIds([]); }}
+                className={`px-3 py-1.5 rounded text-sm font-medium ${
+                  reviewSubTab === 'reviewed'
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Reviewed
+                <span className="ml-2 px-1.5 py-0.5 rounded-full text-xs bg-emerald-200 text-emerald-900">
+                  {reviewedInvoices.length}
+                </span>
+              </button>
+            </div>
+            {visibleInvoices.length > 0 && (
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={visibleInvoices.length > 0 && visibleInvoices.every(i => selectedInvoiceIds.includes(i.id))}
+                    onChange={toggleSelectAllVisible}
+                    className="w-4 h-4"
+                  />
+                  Select all ({visibleInvoices.length})
+                </label>
+                {reviewSubTab === 'pending' && (
+                  <button
+                    onClick={markSelectedAsReviewed}
+                    disabled={selectedInvoiceIds.length === 0}
+                    className={`flex items-center gap-2 px-4 py-1.5 rounded text-sm font-medium ${
+                      selectedInvoiceIds.length === 0
+                        ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                        : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    }`}
+                  >
+                    <Check className="w-4 h-4" /> Mark {selectedInvoiceIds.length || ''} as Reviewed
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {visibleInvoices.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {supplierInvoices.map(invoice => (
-                <div key={invoice.id} className="bg-white rounded-lg border shadow-sm p-5 border-l-4 border-l-orange-500">
+              {visibleInvoices.map(invoice => {
+                const isSelected = selectedInvoiceIds.includes(invoice.id);
+                return (
+                <div key={invoice.id} className={`bg-white rounded-lg border shadow-sm p-5 border-l-4 ${
+                  invoice.reviewed ? 'border-l-emerald-500' : 'border-l-orange-500'
+                } ${isSelected ? 'ring-2 ring-emerald-400' : ''}`}>
                   <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <h4 className="font-semibold text-slate-800">{invoice.documentNo}</h4>
-                      <p className="text-sm text-slate-600">{invoice.supplier || invoice.customer || 'No supplier'}</p>
+                    <div className="flex items-start gap-2">
+                      {reviewSubTab === 'pending' && (
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleInvoiceSelected(invoice.id)}
+                          className="w-4 h-4 mt-1"
+                        />
+                      )}
+                      <div>
+                        <h4 className="font-semibold text-slate-800">{invoice.documentNo}</h4>
+                        <p className="text-sm text-slate-600">{invoice.supplier || invoice.customer || 'No supplier'}</p>
+                      </div>
                     </div>
                     <div className="flex flex-col items-end gap-1">
                       <span className={`px-2 py-1 rounded text-xs font-medium ${
@@ -3411,6 +3528,11 @@ Rules:
                       }`}>
                         {invoice.status}
                       </span>
+                      {invoice.reviewed && (
+                        <span className="px-2 py-0.5 rounded text-xs bg-emerald-100 text-emerald-700 font-medium flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Reviewed
+                        </span>
+                      )}
                       {invoice.createdFromBank && (
                         <span className="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-600">From Bank</span>
                       )}
@@ -3421,23 +3543,35 @@ Rules:
                   </div>
                   <div className="text-xs text-slate-500 mb-4">
                     Date: {invoice.date} • Due: {invoice.dueDate}
+                    {invoice.reviewedAt && (
+                      <> • Reviewed: {invoice.reviewedAt.split('T')[0]}</>
+                    )}
                   </div>
                   <div className="flex gap-2">
-                    <button 
+                    <button
                       onClick={() => { setSelectedInvoice(invoice); setShowPrintPreview(true); }}
                       className="flex-1 text-sm py-2 border rounded hover:bg-slate-50"
                     >
                       <Eye className="w-4 h-4 inline mr-1" /> View
                     </button>
                     {invoice.status !== 'Paid' && (
-                      <button 
+                      <button
                         onClick={() => markAsPaid(invoice.id)}
                         className="flex-1 text-sm py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700"
                       >
                         <Check className="w-4 h-4 inline mr-1" /> Paid
                       </button>
                     )}
-                    <button 
+                    {invoice.reviewed && (
+                      <button
+                        onClick={() => unmarkReviewed(invoice.id)}
+                        className="px-3 py-2 text-amber-600 border border-amber-200 rounded hover:bg-amber-50 text-xs"
+                        title="Move back to Pending Review"
+                      >
+                        Reopen
+                      </button>
+                    )}
+                    <button
                       onClick={() => deleteInvoice(invoice.id)}
                       className="px-3 py-2 text-red-600 border border-red-200 rounded hover:bg-red-50"
                     >
@@ -3445,13 +3579,28 @@ Rules:
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="text-center py-12 bg-white rounded-lg border">
               <FileText className="w-12 h-12 text-orange-300 mx-auto mb-3" />
-              <p className="text-slate-500">No supplier invoices yet.</p>
-              <p className="text-sm text-slate-400 mt-1">Convert a bank payment to create a supplier invoice.</p>
+              {reviewSubTab === 'reviewed' ? (
+                <>
+                  <p className="text-slate-500">No reviewed invoices yet.</p>
+                  <p className="text-sm text-slate-400 mt-1">Select invoices on the Pending Review tab and mark them as reviewed.</p>
+                </>
+              ) : supplierInvoices.length === 0 ? (
+                <>
+                  <p className="text-slate-500">No supplier invoices yet.</p>
+                  <p className="text-sm text-slate-400 mt-1">Upload a CSV, PDF or image, or convert a bank payment to create a supplier invoice.</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-slate-500">All invoices have been reviewed.</p>
+                  <p className="text-sm text-slate-400 mt-1">Switch to the Reviewed tab to see them.</p>
+                </>
+              )}
             </div>
           )}
         </>
