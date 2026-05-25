@@ -7683,7 +7683,9 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
       standardInput: { vat: 0, transactions: [] },
       zeroInput: { vat: 0, transactions: [] },
       exemptInput: { vat: 0, transactions: [] },
-      capitalInput: { vat: 0, transactions: [] }
+      capitalInput: { vat: 0, transactions: [] },
+      unreviewedSupplierCount: 0,
+      unreviewedSupplierInclusive: 0
     };
 
     // Process CUSTOMER invoices only as Output VAT (revenue)
@@ -7722,8 +7724,15 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
       }
     });
 
-    // Process SUPPLIER invoices as Input VAT
-    const supplierInvoices = filteredInvoices.filter(inv => inv.invoiceType === 'supplier');
+    // Process SUPPLIER invoices as Input VAT — only reviewed invoices are
+    // included in the VAT return. Unreviewed ones are surfaced as a count
+    // so the practitioner can see what's still pending sign-off.
+    const allSupplierInvoices = filteredInvoices.filter(inv => inv.invoiceType === 'supplier');
+    const supplierInvoices = allSupplierInvoices.filter(inv => inv.reviewed === true);
+    const unreviewedSupplierInvoices = allSupplierInvoices.filter(inv => inv.reviewed !== true);
+    vatData.unreviewedSupplierCount = unreviewedSupplierInvoices.length;
+    vatData.unreviewedSupplierInclusive = unreviewedSupplierInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
+
     supplierInvoices.forEach(inv => {
       if (inv.items) {
         inv.items.forEach(item => {
@@ -8300,7 +8309,20 @@ const ReportsView = ({ bankStatements, invoices, company, accounts = [] }) => {
             {reportType === 'vat' && (
               <>
                 <h1 className="text-2xl font-bold text-emerald-700 mb-1">VAT REPORT</h1>
-                <p className="text-slate-600 mb-6">Period: {startDate} to {endDate}</p>
+                <p className="text-slate-600 mb-2">Period: {startDate} to {endDate}</p>
+                {vatReport.unreviewedSupplierCount > 0 && (
+                  <div className="mb-6 p-3 bg-amber-50 border border-amber-300 rounded text-amber-800 text-sm flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    <span>
+                      <strong>{vatReport.unreviewedSupplierCount}</strong> supplier invoice(s) in this period are awaiting review
+                      ({formatAmount(vatReport.unreviewedSupplierInclusive)} incl. VAT) and are <strong>excluded</strong> from this return.
+                      Mark them as reviewed under <em>Suppliers → Pending Review</em> to include them.
+                    </span>
+                  </div>
+                )}
+                {vatReport.unreviewedSupplierCount === 0 && (
+                  <p className="text-xs text-slate-500 mb-6">Includes all reviewed supplier invoices and customer invoices dated in this period.</p>
+                )}
 
                 {/* VAT Summary */}
                 {(() => {
