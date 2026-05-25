@@ -2819,6 +2819,159 @@ Rules:
     saveInvoices(invoices.filter(inv => inv.id !== id));
   };
 
+  // Handle CSV bulk upload of supplier invoices
+  const csvInvoiceInputRef = React.useRef(null);
+
+  // Parse a single CSV line handling quoted fields and escaped quotes
+  const parseCsvLine = (line) => {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"' && line[i + 1] === '"') { current += '"'; i++; }
+        else if (ch === '"') { inQuotes = false; }
+        else { current += ch; }
+      } else {
+        if (ch === '"') { inQuotes = true; }
+        else if (ch === ',') { result.push(current); current = ''; }
+        else { current += ch; }
+      }
+    }
+    result.push(current);
+    return result.map(v => v.trim());
+  };
+
+  // Normalise a date string to YYYY-MM-DD (accepts YYYY-MM-DD, YYYY/MM/DD, DD/MM/YYYY, DD-MM-YYYY)
+  const normaliseDate = (raw) => {
+    if (!raw) return new Date().toISOString().split('T')[0];
+    const s = String(raw).trim();
+    let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+    m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (m) return `${m[3]}-${String(m[2]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+    return new Date().toISOString().split('T')[0];
+  };
+
+  // Strip currency symbols / thousand separators from a numeric string
+  const parseAmount = (raw) => {
+    if (raw === undefined || raw === null || raw === '') return '';
+    const cleaned = String(raw).replace(/[Rr$\s,]/g, '').replace(/[^0-9.\-]/g, '');
+    if (cleaned === '' || cleaned === '-' || cleaned === '.') return '';
+    const n = parseFloat(cleaned);
+    return isNaN(n) ? '' : n.toFixed(2);
+  };
+
+  const downloadCsvTemplate = () => {
+    const header = 'supplier name,invoice number,date,description,amount excluding vat,vat amount,amount including vat';
+    const sample = 'ABC Suppliers,INV-001,2026-03-15,Office stationery,1000.00,150.00,1150.00';
+    const blob = new Blob([`${header}\n${sample}\n`], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'supplier-invoices-template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCsvInvoiceUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+      if (lines.length === 0) {
+        alert('CSV file is empty.');
+        return;
+      }
+
+      // Detect header by looking for "supplier" keyword in first row
+      const firstCells = parseCsvLine(lines[0]).map(c => c.toLowerCase());
+      const hasHeader = firstCells.some(c => c.includes('supplier')) && firstCells.some(c => c.includes('invoice'));
+      const dataLines = hasHeader ? lines.slice(1) : lines;
+
+      if (dataLines.length === 0) {
+        alert('CSV contains a header but no data rows.');
+        return;
+      }
+
+      const newRows = [];
+      const errors = [];
+
+      dataLines.forEach((line, idx) => {
+        const cells = parseCsvLine(line);
+        if (cells.length < 7) {
+          errors.push(`Row ${idx + 1}: expected 7 columns, found ${cells.length}`);
+          return;
+        }
+        const [supplierName, invoiceNumber, date, description, exVat, vat, incVat] = cells;
+        const exVatParsed = parseAmount(exVat);
+        const vatParsed = parseAmount(vat);
+        const incVatParsed = parseAmount(incVat);
+
+        // Validate VAT math within R0.02 tolerance if all three are present
+        if (exVatParsed && vatParsed && incVatParsed) {
+          const diff = Math.abs((parseFloat(exVatParsed) + parseFloat(vatParsed)) - parseFloat(incVatParsed));
+          if (diff > 0.02) {
+            errors.push(`Row ${idx + 1} (${supplierName} ${invoiceNumber}): VAT maths off by R${diff.toFixed(2)}`);
+          }
+        }
+
+        // Infer VAT rate: standard 15% when vat ≈ 15% of ex-vat, else No VAT
+        let vatRate = 'No VAT';
+        if (exVatParsed && vatParsed) {
+          const ex = parseFloat(exVatParsed);
+          const v = parseFloat(vatParsed);
+          if (ex > 0 && Math.abs(v / ex - 0.15) < 0.01) vatRate = 'Standard Rate (15.00%)';
+          else if (v === 0) vatRate = 'Zero Rate (0.00%)';
+        }
+
+        newRows.push({
+          id: Date.now() + idx,
+          fileName: file.name,
+          fileType: 'csv',
+          imagePreview: null,
+          date: normaliseDate(date),
+          supplierName: supplierName || '',
+          invoiceNumber: invoiceNumber || '',
+          supplierVatNo: '',
+          description: description || '',
+          amountExVat: exVatParsed,
+          vatAmount: vatParsed,
+          amountIncVat: incVatParsed,
+          account: '',
+          supplier: '',
+          purchaseOrder: '',
+          vatRate,
+          selected: true,
+          aiExtracted: true
+        });
+      });
+
+      if (newRows.length === 0) {
+        alert(`No valid rows found.\n\n${errors.join('\n')}`);
+        return;
+      }
+
+      setExtractedInvoices(prev => [...prev, ...newRows]);
+      setShowPdfInvoiceExtractor(true);
+
+      let msg = `${newRows.length} invoice(s) loaded from CSV. Please verify and assign accounts before importing.`;
+      if (errors.length > 0) msg += ` ${errors.length} row(s) had issues — check the warnings.`;
+      setSaveMessage(msg);
+      if (errors.length > 0) console.warn('CSV import warnings:', errors);
+      setTimeout(() => setSaveMessage(''), 7000);
+    } catch (err) {
+      console.error('CSV processing error:', err);
+      alert('Error reading CSV file: ' + err.message);
+    }
+  };
+
   // Handle image upload for invoices with AI extraction
   const imageInvoiceInputRef = React.useRef(null);
   
@@ -2921,6 +3074,21 @@ Rules:
         <div className="flex gap-2">
           <input type="file" ref={pdfInvoiceInputRef} onChange={handlePdfInvoiceUpload} accept=".pdf" multiple className="hidden" />
           <input type="file" ref={imageInvoiceInputRef} onChange={handleImageInvoiceUpload} accept="image/*" multiple className="hidden" />
+          <input type="file" ref={csvInvoiceInputRef} onChange={handleCsvInvoiceUpload} accept=".csv,text/csv" className="hidden" />
+          <button
+            onClick={downloadCsvTemplate}
+            className="flex items-center gap-2 border border-slate-300 text-slate-600 px-3 py-2 rounded-lg hover:bg-slate-50 text-sm font-medium"
+            title="Download CSV template"
+          >
+            <Download className="w-4 h-4" /> CSV Template
+          </button>
+          <button
+            onClick={() => csvInvoiceInputRef.current?.click()}
+            className="flex items-center gap-2 border border-emerald-300 text-emerald-700 px-4 py-2 rounded-lg hover:bg-emerald-50 text-sm font-medium"
+            title="Bulk upload supplier invoices via CSV"
+          >
+            <Upload className="w-4 h-4" /> Upload CSV
+          </button>
           <button
             onClick={() => imageInvoiceInputRef.current?.click()}
             className="flex items-center gap-2 border border-blue-300 text-blue-600 px-4 py-2 rounded-lg hover:bg-blue-50 text-sm font-medium"
