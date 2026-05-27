@@ -43,7 +43,13 @@ function computeFlags(data) {
 const webApi = {};
 export default webApi;
 
+// When Firebase isn't configured (no env vars set in Vercel), `db` is null.
+// Skip the call cleanly instead of letting Firestore throw a noisy error
+// that the existing try/catch would log on every read.
+const isFirebaseReady = () => db !== null;
+
 webApi.listClients = async () => {
+  if (!isFirebaseReady()) return [];
   try {
     const snap = await getDocs(query(collection(db, 'clients'), orderBy('name')));
     return docsToArray(snap);
@@ -54,6 +60,7 @@ webApi.listClients = async () => {
 };
 
 webApi.vatListReceipts = async (clientId, filters = {}) => {
+  if (!isFirebaseReady()) return [];
   try {
     const constraints = [where('client_id', '==', clientId)];
     if (filters.startDate) constraints.push(where('invoice_date', '>=', filters.startDate));
@@ -356,6 +363,7 @@ webApi.vatImportBank = (clientId) => new Promise((resolve) => {
 });
 
 webApi.vatListBankTxns = async (clientId, filters = {}) => {
+  if (!isFirebaseReady()) return [];
   try {
     const constraints = [where('client_id', '==', clientId)];
     if (filters.matched === true) constraints.push(where('is_matched', '==', true));
@@ -458,6 +466,7 @@ webApi.vatGenerateSchedule = async (clientId, period) => {
 };
 
 webApi.vatGetSchedule = async (clientId, period) => {
+  if (!isFirebaseReady()) return { schedule: null, receipts: [] };
   try {
     const scheduleId = `${clientId}_${period}`;
     const [scheduleSnap, receiptSnap] = await Promise.all([

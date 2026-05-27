@@ -11,16 +11,30 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+// When env vars are missing, skip Firebase init entirely. Otherwise Firestore
+// retries the backend forever and spams the console; webApi consumers wrap
+// every call in try/catch so they'll return [] / { success: false } cleanly.
+const isConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 
-// getAuth validates the API key immediately — guard against missing env vars
-// so a misconfigured deployment doesn't crash the whole app
+let app = null;
+let db = null;
+let storage = null;
 let auth = null;
-try {
-  auth = getAuth(app);
-} catch (e) {
-  console.warn('Firebase Auth unavailable (check VITE_FIREBASE_API_KEY):', e.message);
+
+if (isConfigured) {
+  app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  storage = getStorage(app);
+  try {
+    auth = getAuth(app);
+  } catch (e) {
+    console.warn('Firebase Auth unavailable (check VITE_FIREBASE_API_KEY):', e.message);
+  }
+} else if (typeof window !== 'undefined') {
+  console.warn(
+    '[firebase] Skipping initialization — VITE_FIREBASE_API_KEY / VITE_FIREBASE_PROJECT_ID not set. ' +
+    'VAT Capture and other Firestore-backed features will be unavailable until env vars are configured in Vercel.'
+  );
 }
-export { auth };
+
+export { db, storage, auth };
