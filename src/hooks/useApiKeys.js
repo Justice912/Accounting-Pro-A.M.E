@@ -3,6 +3,12 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../api/firebase';
 import { useAuth } from './useAuth';
 
+// Per-user API key storage in Firestore under users/{uid}/config/apiKeys.
+// Keys never leave the user's own tenant (see firestore.rules).
+//
+// The legacy /api/ai/validate-key endpoint was removed (no auth, no rate
+// limiting). Until a replacement is added, validation is shape-only on the
+// client. The Anthropic proxy still verifies the key format server-side.
 export function useApiKeys() {
   const { user } = useAuth();
   const [keys, setKeys] = useState({ anthropic: '', openai: '' });
@@ -28,14 +34,13 @@ export function useApiKeys() {
     [user, keys]
   );
 
+  // Shape-only validation. The server-side proxy enforces the same regex
+  // and will reject malformed keys at call time.
   const validateKey = useCallback(async (provider, value) => {
-    const r = await fetch('/api/ai/validate-key', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, apiKey: value }),
-    });
-    const data = await r.json();
-    return data.valid === true;
+    if (!value || typeof value !== 'string') return false;
+    if (provider === 'anthropic') return /^sk-ant-[A-Za-z0-9_-]{20,}$/.test(value.trim());
+    if (provider === 'openai')    return /^sk-[A-Za-z0-9_-]{20,}$/.test(value.trim());
+    return false;
   }, []);
 
   const hasKey = useCallback(

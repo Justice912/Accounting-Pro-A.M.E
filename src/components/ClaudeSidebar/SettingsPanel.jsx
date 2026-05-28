@@ -138,9 +138,14 @@ export default function SettingsPanel({ onClose }) {
             Anthropic API Key
           </label>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Paste your own key to put usage on your Anthropic billing. Stored only in this
-            browser&apos;s localStorage and sent in a header to the server proxy. Leave blank to
-            use the server&apos;s default key.
+            Paste your own key to put usage on your Anthropic billing. Stored only in this tab&apos;s
+            sessionStorage and cleared when the tab closes or after ~30 minutes of inactivity.
+            Leave blank to use the server&apos;s managed key.
+          </p>
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 leading-relaxed">
+            <strong>Heads up:</strong> a BYOK key pasted here can be read by any script that runs
+            in this app. Prefer the server-managed key when possible — only paste your personal
+            key on devices you trust.
           </p>
 
           <div className="flex items-stretch gap-2">
@@ -224,15 +229,12 @@ export default function SettingsPanel({ onClose }) {
             Where is my key stored?
           </p>
           <p>
-            Your key is kept in this browser&apos;s localStorage under
-            <span className="font-mono"> claude-sidebar-byok-key-v1</span>. If no sidebar key is
-            saved, the sidebar transparently reuses the existing app key at
-            <span className="font-mono"> anthropic-api-key</span> (set via the AI dropdown in
-            the app header). Either way, the key never leaves your device except as the bearer of
-            a single request to the server proxy at
+            Your key is kept in this tab&apos;s sessionStorage under
+            <span className="font-mono"> claude-sidebar-byok-key-v1</span> with a 30-minute TTL.
+            It is wiped when the tab closes, the TTL expires, or you click <strong>Clear</strong>.
+            Either way the key never leaves your device except as the bearer of a single
+            authenticated request to the server proxy at
             <span className="font-mono"> /api/claude</span>, which forwards it to Anthropic.
-            Clearing your browser data or clicking <strong>Clear</strong> removes the
-            sidebar-saved key.
           </p>
         </section>
       </div>

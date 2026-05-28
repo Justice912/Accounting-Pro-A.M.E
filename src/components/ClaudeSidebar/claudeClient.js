@@ -14,8 +14,17 @@
 import { SYSTEM_PROMPT } from './systemPrompt.js';
 import { getAnthropicTools, findTool } from './toolRegistry.js';
 import { getKey } from './keyStore.js';
+import { auth } from '../../api/firebase.js';
 
 const MAX_TOOL_ITERATIONS = 5;
+
+async function getFirebaseIdToken() {
+  try {
+    return (await auth?.currentUser?.getIdToken()) || null;
+  } catch {
+    return null;
+  }
+}
 
 // Parse a single SSE event line buffer into { event, data }.
 // Anthropic streams events like:
@@ -45,6 +54,11 @@ async function streamOnce({ messages, onDelta, signal }) {
   const headers = { 'Content-Type': 'application/json' };
   const byok = getKey();
   if (byok) headers['x-anthropic-api-key'] = byok;
+
+  // Required by /api/claude — Firebase ID token of the signed-in (possibly
+  // anonymous) user. No token = unauthenticated and the call will 401.
+  const idToken = await getFirebaseIdToken();
+  if (idToken) headers.Authorization = `Bearer ${idToken}`;
 
   const res = await fetch('/api/claude', {
     method: 'POST',

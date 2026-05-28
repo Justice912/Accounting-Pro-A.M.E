@@ -1,25 +1,41 @@
 import { useState, useCallback, useRef } from 'react';
+import { auth } from '../api/firebase';
 
+// Thin SSE client for /api/claude.
+//
+// The endpoint authenticates the caller with a Firebase ID token. If the
+// user has pasted their own Anthropic key (BYOK), it is sent in the
+// `x-anthropic-api-key` header so the server forwards it instead of using
+// the server-side default key.
 export function useStreamingChat() {
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState('');
   const abortRef = useRef(null);
 
-  const streamClaude = useCallback(async ({ apiKey, model, system, messages, onChunk, onDone, onError }) => {
+  const streamClaude = useCallback(async ({ apiKey, system, messages, onChunk, onDone, onError }) => {
     setStreaming(true);
     setStreamedText('');
     abortRef.current = new AbortController();
 
     try {
-      const response = await fetch('/api/ai/claude', {
+      const idToken = await auth?.currentUser?.getIdToken().catch(() => null);
+      if (!idToken) throw new Error('Not signed in. Reload and try again.');
+
+      const headers = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      };
+      if (apiKey) headers['x-anthropic-api-key'] = apiKey;
+
+      const response = await fetch('/api/claude', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey, model, system, messages }),
+        headers,
+        body: JSON.stringify({ system, messages }),
         signal: abortRef.current.signal,
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
+        const errorData = await response.json().catch(() => ({ error: 'request_failed' }));
         throw new Error(errorData.error || `HTTP ${response.status}`);
       }
 

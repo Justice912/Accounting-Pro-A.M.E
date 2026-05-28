@@ -1,21 +1,113 @@
 rules_version = '2';
+
+// Strict tenant isolation: every top-level collection is partitioned by
+// `owner_uid`, which must equal the authenticated user's uid for every read
+// or write. Anonymous (anon-sign-in) users are still considered authenticated
+// — that is required by webApi.js, which signs the user in anonymously on
+// first load. The token can still be replayed only by its owner, so each
+// device still has its own private tenant.
+//
+// Anything not explicitly matched below is denied by default.
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users can only read/write their own data
+
+    // ── helpers ──────────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    function isOwner(data) {
+      return isSignedIn() && data.owner_uid == request.auth.uid;
+    }
+
+    // For writes, the incoming document must declare ownership, and the
+    // owner_uid is locked: clients cannot rewrite it to someone else.
+    function incomingIsOwner() {
+      return isSignedIn()
+        && request.resource.data.owner_uid == request.auth.uid;
+    }
+
+    function ownerUnchanged() {
+      return request.resource.data.owner_uid == resource.data.owner_uid;
+    }
+
+    // ── per-user "users/{uid}/..." tree (existing) ───────────────────────
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
 
       match /config/{document=**} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
       }
 
       match /conversations/{conversationId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
 
         match /messages/{messageId} {
-          allow read, write: if request.auth != null && request.auth.uid == userId;
+          allow read, write: if isSignedIn() && request.auth.uid == userId;
         }
       }
     }
+
+    // ── top-level tenant-scoped collections ──────────────────────────────
+    // Pattern: read/update/delete by owner; create only if the new doc
+    // names you as owner. Updates may not change owner_uid.
+
+    match /clients/{docId} {
+      allow read:   if isOwner(resource.data);
+      allow create: if incomingIsOwner();
+      allow update: if isOwner(resource.data) && incomingIsOwner() && ownerUnchanged();
+      allow delete: if isOwner(resource.data);
+    }
+
+    match /vat_receipts/{docId} {
+      allow read:   if isOwner(resource.data);
+      allow create: if incomingIsOwner();
+      allow update: if isOwner(resource.data) && incomingIsOwner() && ownerUnchanged();
+      allow delete: if isOwner(resource.data);
+    }
+
+    match /vat_bank_transactions/{docId} {
+      allow read:   if isOwner(resource.data);
+      allow create: if incomingIsOwner();
+      allow update: if isOwner(resource.data) && incomingIsOwner() && ownerUnchanged();
+      allow delete: if isOwner(resource.data);
+    }
+
+    match /vat_schedules/{docId} {
+      allow read:   if isOwner(resource.data);
+      allow create: if incomingIsOwner();
+      allow update: if isOwner(resource.data) && incomingIsOwner() && ownerUnchanged();
+      allow delete: if isOwner(resource.data);
+    }
+
+    match /vat_reminder_state/{docId} {
+      allow read:   if isOwner(resource.data);
+      allow create: if incomingIsOwner();
+      allow update: if isOwner(resource.data) && incomingIsOwner() && ownerUnchanged();
+      allow delete: if isOwner(resource.data);
+    }
+
+    match /vat_document_overrides/{docId} {
+      allow read:   if isOwner(resource.data);
+      allow create: if incomingIsOwner();
+      allow update: if isOwner(resource.data) && incomingIsOwner() && ownerUnchanged();
+      allow delete: if isOwner(resource.data);
+    }
+
+    // VAT vendor verification cache: any signed-in user may read (cache is
+    // not sensitive PII — only the SARS-public vendor name + valid flag).
+    // Writes are still restricted to the user who first cached the record,
+    // so one tenant cannot poison another's cache lookup. New writes must
+    // declare an owner.
+    match /vat_verified_vendors/{vatNumber} {
+      allow read:   if isSignedIn();
+      allow create: if incomingIsOwner();
+      allow update: if isOwner(resource.data) && incomingIsOwner() && ownerUnchanged();
+      allow delete: if isOwner(resource.data);
+    }
+
+    // ── deny-by-default ──────────────────────────────────────────────────
+    // No further matches: anything else falls through and is denied.
   }
 }

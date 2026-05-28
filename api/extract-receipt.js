@@ -1,29 +1,56 @@
+import { requireAuth, AuthError } from './_lib/auth.js';
+import { rateLimit, clientIp } from './_lib/rateLimit.js';
+
 export const config = { maxDuration: 30 };
 
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf']);
+const MAX_BASE64_LEN = 6_990_000; // ~5 MB binary
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method not allowed' });
+    return res.status(405).json({ success: false, error: 'method_not_allowed' });
+  }
+
+  // Content-Type must be JSON. Vercel auto-parses req.body when this matches.
+  const contentType = (req.headers['content-type'] || '').toLowerCase();
+  if (!contentType.startsWith('application/json')) {
+    return res.status(415).json({ success: false, error: 'unsupported_media_type' });
+  }
+
+  // Authentication — Firebase ID token from the browser.
+  let auth;
+  try {
+    auth = await requireAuth(req);
+  } catch (e) {
+    const status = e instanceof AuthError ? e.status : 401;
+    return res.status(status).json({ success: false, error: 'unauthenticated' });
+  }
+
+  // Rate limiting — per-user (steady) and per-IP (back-stop against
+  // unauthenticated bursts before the auth check above gets to run).
+  const ip = clientIp(req);
+  if (!rateLimit(`extract:uid:${auth.uid}`, { max: 20, windowMs: 60_000 })) {
+    return res.status(429).json({ success: false, error: 'rate_limited' });
+  }
+  if (!rateLimit(`extract:ip:${ip}`, { max: 60, windowMs: 60_000 })) {
+    return res.status(429).json({ success: false, error: 'rate_limited' });
   }
 
   const { imageBase64, mimeType = 'image/jpeg' } = req.body || {};
 
   if (!ALLOWED_MIME.has(mimeType)) {
-    return res.status(400).json({ success: false, error: 'unsupported mimeType' });
+    return res.status(400).json({ success: false, error: 'unsupported_mime_type' });
   }
-
   if (!imageBase64) {
-    return res.status(400).json({ success: false, error: 'imageBase64 required' });
+    return res.status(400).json({ success: false, error: 'imageBase64_required' });
   }
-
-  if (typeof imageBase64 !== 'string' || imageBase64.length > 6_990_000) {
-    return res.status(400).json({ success: false, error: 'imageBase64 must be a string under ~5 MB binary' });
+  if (typeof imageBase64 !== 'string' || imageBase64.length > MAX_BASE64_LEN) {
+    return res.status(413).json({ success: false, error: 'payload_too_large' });
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ success: false, error: 'ANTHROPIC_API_KEY not configured' });
+    return res.status(500).json({ success: false, error: 'server_misconfigured' });
   }
 
   try {
@@ -71,8 +98,7 @@ export default async function handler(req, res) {
     }
 
     if (!response.ok) {
-      const err = await response.text();
-      console.error('Anthropic API error', response.status, err);
+      console.error('Anthropic API error', response.status);
       return res.status(502).json({ success: false, error: 'upstream_vision_error' });
     }
 
@@ -81,13 +107,13 @@ export default async function handler(req, res) {
     const jsonStart = text.indexOf('{');
     const jsonEnd = text.lastIndexOf('}');
     if (jsonStart === -1 || jsonEnd === -1) {
-      return res.status(502).json({ success: false, error: 'Could not parse AI response as JSON' });
+      return res.status(502).json({ success: false, error: 'unparseable_response' });
     }
     let extracted;
     try {
       extracted = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
     } catch {
-      return res.status(502).json({ success: false, error: 'Could not parse AI response as JSON' });
+      return res.status(502).json({ success: false, error: 'unparseable_response' });
     }
 
     const toNum = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -113,8 +139,8 @@ export default async function handler(req, res) {
       confidence,
     });
   } catch (e) {
-    console.error('extract-receipt failure', e);
-    const status = e.name === 'AbortError' ? 504 : 500;
+    console.error('extract-receipt failure', e?.name || 'error');
+    const status = e?.name === 'AbortError' ? 504 : 500;
     return res.status(status).json({ success: false, error: 'internal_error' });
   }
 }
