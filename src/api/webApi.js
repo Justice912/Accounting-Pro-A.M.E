@@ -3,10 +3,32 @@ import {
   query, where, orderBy, writeBatch,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from './firebase.js';
+import { db, storage, auth, authReady } from './firebase.js';
 import { v4 as uuidv4 } from 'uuid';
 
 let _pendingImageFile = null;
+
+// All tenant-scoped writes must stamp owner_uid = current user. The
+// Firestore rules reject writes that do not name the caller as owner, so
+// this layer mirrors that on the client to make the failure mode clear.
+//
+// Anonymous sign-in is bootstrapped eagerly in firebase.js (authReady).
+// requireUid awaits that promise so the very first write after a cold
+// page load does not race the sign-in handshake.
+async function requireUid() {
+  let uid = auth?.currentUser?.uid;
+  if (uid) return uid;
+  await authReady;
+  uid = auth?.currentUser?.uid;
+  if (!uid) throw new Error('Not signed in');
+  return uid;
+}
+
+async function getUidOrNull() {
+  if (auth?.currentUser?.uid) return auth.currentUser.uid;
+  await authReady;
+  return auth?.currentUser?.uid || null;
+}
 
 function docToData(snapshot) {
   if (!snapshot.exists()) return null;
@@ -45,7 +67,13 @@ export default webApi;
 
 webApi.listClients = async () => {
   try {
-    const snap = await getDocs(query(collection(db, 'clients'), orderBy('name')));
+    const uid = await getUidOrNull();
+    if (!uid) return [];
+    const snap = await getDocs(query(
+      collection(db, 'clients'),
+      where('owner_uid', '==', uid),
+      orderBy('name'),
+    ));
     return docsToArray(snap);
   } catch (e) {
     console.error('[webApi] listClients:', e);
@@ -55,7 +83,12 @@ webApi.listClients = async () => {
 
 webApi.vatListReceipts = async (clientId, filters = {}) => {
   try {
-    const constraints = [where('client_id', '==', clientId)];
+    const uid = await getUidOrNull();
+    if (!uid) return [];
+    const constraints = [
+      where('owner_uid', '==', uid),
+      where('client_id', '==', clientId),
+    ];
     if (filters.startDate) constraints.push(where('invoice_date', '>=', filters.startDate));
     if (filters.endDate) constraints.push(where('invoice_date', '<=', filters.endDate));
     if (filters.status && filters.status !== 'all') constraints.push(where('status', '==', filters.status));
@@ -89,12 +122,13 @@ webApi.vatGetReceiptCompliance = async (id) => {
 
 webApi.vatSaveReceipt = async (data) => {
   try {
+    const uid = await requireUid();
     const id = data.id || uuidv4();
     let imagePath = data.image_path || null;
 
     if (imagePath === 'web-blob' && _pendingImageFile) {
       const ext = _pendingImageFile.name.split('.').pop() || 'jpg';
-      const storageRef = ref(storage, `vat-receipts/${data.client_id || 'unknown'}/${id}.${ext}`);
+      const storageRef = ref(storage, `vat-receipts/${uid}/${data.client_id || 'unknown'}/${id}.${ext}`);
       await uploadBytes(storageRef, _pendingImageFile);
       imagePath = await getDownloadURL(storageRef);
     }
@@ -107,6 +141,9 @@ webApi.vatSaveReceipt = async (data) => {
     const record = {
       ...data,
       id,
+      // owner_uid is enforced by Firestore rules; the spread above cannot
+      // override our authoritative value because owner_uid follows it.
+      owner_uid: uid,
       image_path: imagePath,
       vat_period: vatPeriod,
       flags: flags,
@@ -187,6 +224,9 @@ webApi.vatExtractReceipt = async (_imagePath) => {
     const file = _pendingImageFile;
     if (!file) return { success: false, error: 'No image selected' };
 
+    const idToken = await auth?.currentUser?.getIdToken().catch(() => null);
+    if (!idToken) return { success: false, error: 'Not signed in' };
+
     const imageBase64 = await new Promise((res, rej) => {
       const reader = new FileReader();
       reader.onload = () => res(reader.result.split(',')[1]);
@@ -197,7 +237,10 @@ webApi.vatExtractReceipt = async (_imagePath) => {
 
     const res = await fetch('/api/extract-receipt', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      },
       body: JSON.stringify({ imageBase64, mimeType }),
     });
     return await res.json();
@@ -211,10 +254,12 @@ webApi.vatVerifyVatNumber = async (vatNumber) => {
   const clean = vatNumber.replace(/\s/g, '');
   if (!/^4\d{9}$/.test(clean)) return { valid: false, reason: 'Invalid format (must be 10 digits starting with 4)' };
 
+  // The vendor cache is readable by any signed-in user, so this works for
+  // unauthenticated calls only after anon sign-in has completed.
   try {
     const cached = docToData(await getDoc(doc(db, 'vat_verified_vendors', clean)));
     if (cached) return { valid: Boolean(cached.valid), vendorName: cached.vendor_name || null };
-  } catch { /* cache miss */ }
+  } catch { /* cache miss or rules deny */ }
 
   return { valid: null, reason: 'VAT verification not available in browser — format is valid' };
 };
@@ -283,9 +328,18 @@ function parseBankCSV(csv) {
 
 async function autoMatchTransactionsWeb(clientId) {
   try {
+    const uid = await getUidOrNull();
+    if (!uid) return;
     const [txnSnap, receiptSnap] = await Promise.all([
-      getDocs(query(collection(db, 'vat_bank_transactions'), where('client_id', '==', clientId), where('is_matched', '==', false))),
-      getDocs(query(collection(db, 'vat_receipts'), where('client_id', '==', clientId), where('is_reconciled', '==', false), where('status', 'in', ['pending', 'reviewed', 'approved']))),
+      getDocs(query(collection(db, 'vat_bank_transactions'),
+        where('owner_uid', '==', uid),
+        where('client_id', '==', clientId),
+        where('is_matched', '==', false))),
+      getDocs(query(collection(db, 'vat_receipts'),
+        where('owner_uid', '==', uid),
+        where('client_id', '==', clientId),
+        where('is_reconciled', '==', false),
+        where('status', 'in', ['pending', 'reviewed', 'approved']))),
     ]);
     const unmatched = docsToArray(txnSnap);
     const unreconciled = docsToArray(receiptSnap);
@@ -322,6 +376,7 @@ webApi.vatImportBank = (clientId) => new Promise((resolve) => {
     const file = e.target.files?.[0];
     if (!file) { resolve({ success: false, cancelled: true }); return; }
     try {
+      const uid = await requireUid();
       const csv = await file.text();
       const transactions = parseBankCSV(csv);
       const batch = writeBatch(db);
@@ -330,7 +385,7 @@ webApi.vatImportBank = (clientId) => new Promise((resolve) => {
       for (const txn of transactions) {
         const id = uuidv4();
         batch.set(doc(db, 'vat_bank_transactions', id), {
-          id, client_id: clientId,
+          id, owner_uid: uid, client_id: clientId,
           txn_date: txn.date, description: txn.description, amount: txn.amount,
           reference: txn.reference || null, bank_name: txn.bankName || 'Unknown',
           statement_period: txn.period || null, is_matched: false,
@@ -357,7 +412,12 @@ webApi.vatImportBank = (clientId) => new Promise((resolve) => {
 
 webApi.vatListBankTxns = async (clientId, filters = {}) => {
   try {
-    const constraints = [where('client_id', '==', clientId)];
+    const uid = await getUidOrNull();
+    if (!uid) return [];
+    const constraints = [
+      where('owner_uid', '==', uid),
+      where('client_id', '==', clientId),
+    ];
     if (filters.matched === true) constraints.push(where('is_matched', '==', true));
     if (filters.matched === false) constraints.push(where('is_matched', '==', false));
     const snap = await getDocs(query(collection(db, 'vat_bank_transactions'), ...constraints, orderBy('txn_date', 'desc')));
@@ -412,7 +472,12 @@ webApi.vatDeleteBankTxns = async (ids) => {
 
 webApi.vatDeleteUndatedBankTxns = async (clientId) => {
   try {
-    const snap = await getDocs(query(collection(db, 'vat_bank_transactions'), where('client_id', '==', clientId), where('txn_date', 'in', [null, ''])));
+    const uid = await getUidOrNull();
+    if (!uid) return { success: false, error: 'Not signed in' };
+    const snap = await getDocs(query(collection(db, 'vat_bank_transactions'),
+      where('owner_uid', '==', uid),
+      where('client_id', '==', clientId),
+      where('txn_date', 'in', [null, ''])));
     const batch = writeBatch(db);
     snap.docs.forEach(d => batch.delete(d.ref));
     await batch.commit();
@@ -424,10 +489,14 @@ webApi.vatDeleteUndatedBankTxns = async (clientId) => {
 
 webApi.vatGenerateSchedule = async (clientId, period) => {
   try {
+    const uid = await requireUid();
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
       return { success: false, error: `Invalid period format: ${period}` };
     }
-    const snap = await getDocs(query(collection(db, 'vat_receipts'), where('client_id', '==', clientId), where('vat_period', '==', period)));
+    const snap = await getDocs(query(collection(db, 'vat_receipts'),
+      where('owner_uid', '==', uid),
+      where('client_id', '==', clientId),
+      where('vat_period', '==', period)));
     const receipts = docsToArray(snap);
     const approved = receipts.filter(r => r.status === 'approved');
     const inputStandard = approved.filter(r => r.vat_type === 'standard' || r.vat_type === 'zero').reduce((s, r) => s + (Number(r.vat_amount) || 0), 0);
@@ -443,7 +512,8 @@ webApi.vatGenerateSchedule = async (clientId, period) => {
 
     const scheduleId = `${clientId}_${period}`;
     await setDoc(doc(db, 'vat_schedules', scheduleId), {
-      id: scheduleId, client_id: clientId, period, period_start: periodStart, period_end: periodEnd,
+      id: scheduleId, owner_uid: uid, client_id: clientId, period,
+      period_start: periodStart, period_end: periodEnd,
       status: 'draft', input_vat_standard: inputStandard, input_vat_capital: inputCapital,
       input_vat_total: inputTotal, output_vat_standard: 0, output_vat_total: 0, net_vat: -inputTotal,
       receipt_count: receipts.length, approved_count: approved.length,
@@ -459,10 +529,17 @@ webApi.vatGenerateSchedule = async (clientId, period) => {
 
 webApi.vatGetSchedule = async (clientId, period) => {
   try {
+    const uid = await getUidOrNull();
+    if (!uid) return { schedule: null, receipts: [] };
     const scheduleId = `${clientId}_${period}`;
     const [scheduleSnap, receiptSnap] = await Promise.all([
       getDoc(doc(db, 'vat_schedules', scheduleId)),
-      getDocs(query(collection(db, 'vat_receipts'), where('client_id', '==', clientId), where('vat_period', '==', period), orderBy('expense_category'), orderBy('invoice_date'))),
+      getDocs(query(collection(db, 'vat_receipts'),
+        where('owner_uid', '==', uid),
+        where('client_id', '==', clientId),
+        where('vat_period', '==', period),
+        orderBy('expense_category'),
+        orderBy('invoice_date'))),
     ]);
     return { schedule: docToData(scheduleSnap), receipts: docsToArray(receiptSnap) };
   } catch (e) {
@@ -521,8 +598,13 @@ webApi.vatGetReminders = async () => [];
 
 webApi.vatUpdateReminderState = async (payload) => {
   try {
+    const uid = await requireUid();
     const id = `${payload.clientId}_${payload.period}_${payload.ruleKey}`;
-    await setDoc(doc(db, 'vat_reminder_state', id), { ...payload, updated_at: new Date().toISOString() }, { merge: true });
+    await setDoc(
+      doc(db, 'vat_reminder_state', id),
+      { ...payload, owner_uid: uid, updated_at: new Date().toISOString() },
+      { merge: true },
+    );
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -531,8 +613,14 @@ webApi.vatUpdateReminderState = async (payload) => {
 
 webApi.vatSaveDocumentOverride = async (payload) => {
   try {
+    const uid = await requireUid();
     const id = uuidv4();
-    await setDoc(doc(db, 'vat_document_overrides', id), { ...payload, id, created_at: new Date().toISOString() });
+    await setDoc(doc(db, 'vat_document_overrides', id), {
+      ...payload,
+      id,
+      owner_uid: uid,
+      created_at: new Date().toISOString(),
+    });
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -541,7 +629,10 @@ webApi.vatSaveDocumentOverride = async (payload) => {
 
 webApi.vatClearDocumentOverride = async (payload) => {
   try {
+    const uid = await getUidOrNull();
+    if (!uid) return { success: false, error: 'Not signed in' };
     const snap = await getDocs(query(collection(db, 'vat_document_overrides'),
+      where('owner_uid', '==', uid),
       where('document_id', '==', payload.documentId),
       where('override_type', '==', payload.overrideType)));
     const batch = writeBatch(db);

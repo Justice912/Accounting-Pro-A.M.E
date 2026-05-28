@@ -323,8 +323,19 @@ const AccountingDashboard = () => {
       if (payRes?.value) setPayslips(JSON.parse(payRes.value));
       if (assetRes?.value) setAssets(JSON.parse(assetRes.value));
 
-      // Load API key
-      const savedApiKey = localStorage.getItem('anthropic-api-key');
+      // Load API key from sessionStorage (tab-scoped, wiped on tab close).
+      // Migrate any legacy localStorage value to sessionStorage and remove it
+      // from persistent storage so the BYOK key is no longer XSS-exfilable
+      // across browser restarts.
+      let savedApiKey = sessionStorage.getItem('anthropic-api-key');
+      if (!savedApiKey) {
+        const legacy = localStorage.getItem('anthropic-api-key');
+        if (legacy) {
+          sessionStorage.setItem('anthropic-api-key', legacy);
+          localStorage.removeItem('anthropic-api-key');
+          savedApiKey = legacy;
+        }
+      }
       if (savedApiKey) setApiKey(savedApiKey);
       
       // Load accounts or use defaults - always ensure we have accounts
@@ -535,6 +546,9 @@ const AccountingDashboard = () => {
                 <div className="absolute right-0 mt-2 w-96 bg-white text-slate-800 rounded-lg shadow-xl border z-50 p-4">
                   <h3 className="font-semibold text-sm mb-1">Claude API Key</h3>
                   <p className="text-xs text-slate-500 mb-3">Required for AI-powered features (bank statement extraction, transaction allocation). Get your key from <a href="https://console.anthropic.com/" target="_blank" rel="noreferrer" className="text-emerald-600 underline">console.anthropic.com</a></p>
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mb-2 leading-relaxed">
+                    Stored only in this tab&apos;s sessionStorage (wiped when the tab closes). Prefer the server-managed key on shared devices.
+                  </p>
                   <input
                     type="password"
                     value={apiKey}
@@ -546,6 +560,7 @@ const AccountingDashboard = () => {
                     <button
                       onClick={() => {
                         setApiKey('');
+                        sessionStorage.removeItem('anthropic-api-key');
                         localStorage.removeItem('anthropic-api-key');
                         setShowApiKeyInput(false);
                       }}
@@ -555,7 +570,11 @@ const AccountingDashboard = () => {
                     </button>
                     <button
                       onClick={() => {
-                        localStorage.setItem('anthropic-api-key', apiKey);
+                        // sessionStorage only — the key is wiped when the tab
+                        // closes. Recommend the server-managed key for shared
+                        // machines.
+                        sessionStorage.setItem('anthropic-api-key', apiKey);
+                        localStorage.removeItem('anthropic-api-key');
                         setShowApiKeyInput(false);
                       }}
                       className="px-3 py-1.5 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 font-medium"

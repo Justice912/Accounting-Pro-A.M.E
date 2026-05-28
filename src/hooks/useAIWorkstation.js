@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { db } from '../api/firebase';
 import { useAuth } from './useAuth';
@@ -6,6 +6,11 @@ import { useApiKeys } from './useApiKeys';
 import { useConversations } from './useConversations';
 import { useStreamingChat } from './useStreamingChat';
 import { PROVIDERS, DEFAULT_SYSTEM_PROMPT } from '../lib/aiProviders';
+
+// The OpenAI proxy endpoint (`/api/ai/openai`) was removed in the security
+// hardening pass because it accepted client-supplied keys without auth or
+// rate limiting. Until an authenticated replacement is added, this
+// workstation only supports the Claude provider.
 
 export function useAIWorkstation() {
   const { user } = useAuth();
@@ -56,12 +61,14 @@ export function useAIWorkstation() {
       const trimmed = text.trim();
       if (!trimmed) return;
 
-      const providerConfig = PROVIDERS[provider];
-      const apiKey = keys[providerConfig.keyField];
-      if (!apiKey) {
-        setError(`No ${providerConfig.name} API key set. Open settings to add one.`);
+      if (provider !== 'claude') {
+        setError('Only the Claude provider is available. The OpenAI proxy was disabled in the security hardening pass.');
         return;
       }
+
+      const providerConfig = PROVIDERS[provider];
+      const apiKey = keys[providerConfig.keyField];
+      // Empty apiKey is allowed — the server proxy falls back to its own key.
 
       let convId = conversations.activeId;
       if (!convId) {
@@ -76,37 +83,20 @@ export function useAIWorkstation() {
       ];
 
       try {
-        if (provider === 'claude') {
-          const fullText = await streaming.streamClaude({
-            apiKey,
-            model,
-            system: DEFAULT_SYSTEM_PROMPT,
-            messages: history,
-            onError: (e) => setError(e.message),
-          });
-          if (fullText) {
-            await conversations.addMessage(convId, 'assistant', fullText, provider);
-          }
-        } else {
-          const r = await fetch('/api/ai/openai', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              apiKey,
-              model,
-              system: DEFAULT_SYSTEM_PROMPT,
-              messages: history,
-            }),
-          });
-          const data = await r.json();
-          if (!r.ok) throw new Error(data.error || 'OpenAI request failed');
-          await conversations.addMessage(convId, 'assistant', data.content, provider);
+        const fullText = await streaming.streamClaude({
+          apiKey: apiKey || '',
+          system: DEFAULT_SYSTEM_PROMPT,
+          messages: history,
+          onError: (e) => setError(e.message),
+        });
+        if (fullText) {
+          await conversations.addMessage(convId, 'assistant', fullText, provider);
         }
       } catch (e) {
         if (e.name !== 'AbortError') setError(e.message);
       }
     },
-    [keys, provider, model, conversations, streaming]
+    [keys, provider, conversations, streaming]
   );
 
   return {

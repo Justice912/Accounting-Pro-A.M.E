@@ -14,20 +14,10 @@ export const PROVIDERS = {
     endpoint: '/api/ai/claude',
     supportsStreaming: true,
   },
-  openai: {
-    id: 'openai',
-    name: 'ChatGPT',
-    models: [
-      { id: 'gpt-4o', label: 'GPT-4o (most capable)' },
-      { id: 'gpt-4o-mini', label: 'GPT-4o Mini (fast/cheap)' },
-    ],
-    defaultModel: 'gpt-4o',
-    keyField: 'openai',
-    keyPattern: /^sk-/,
-    keyHint: 'Starts with sk-',
-    endpoint: '/api/ai/openai',
-    supportsStreaming: false,
-  },
+  // OpenAI provider temporarily disabled — the legacy /api/ai/openai proxy
+  // was removed in the security hardening pass (it accepted client-supplied
+  // keys without auth or rate limiting). Re-enable once an authenticated
+  // server endpoint exists.
 };
 
 export const DEFAULT_SYSTEM_PROMPT = `You are AME Pro AI Assistant, an expert in South African accounting, tax, VAT, payroll, and business advisory. You assist accountants and tax practitioners with technical questions, calculations, and document drafting. You are precise, professional, and grounded in current SARS guidance and IFRS for SMEs.`;

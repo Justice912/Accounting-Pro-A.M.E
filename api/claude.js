@@ -1,105 +1,93 @@
 // Vercel serverless proxy for the Anthropic Messages API.
 //
+// Auth: requires a Firebase ID token in Authorization: Bearer <token>.
+// Anonymous Firebase sign-in counts — anyone who has loaded the app and
+// completed an anon sign-in can call this endpoint, but unauthenticated
+// callers cannot.
+//
 // Key resolution (in order):
-//   1. The `x-anthropic-api-key` request header — user-supplied "BYOK" key
-//      pasted into the sidebar Settings panel, kept in their browser's
-//      localStorage. Used when individual users want to put usage on their
-//      own Anthropic billing.
-//   2. `process.env.ANTHROPIC_API_KEY` — the server env var. The default for
-//      production deploys where the operator pays. Configure it in Vercel:
-//        Project -> Settings -> Environment Variables -> ANTHROPIC_API_KEY.
-//   If neither is present the request is rejected.
+//   1. `x-anthropic-api-key` request header — user-supplied "BYOK" key
+//      pasted into the sidebar Settings panel. Held in sessionStorage with
+//      a short TTL on the client; sent on a single header per request.
+//   2. `process.env.ANTHROPIC_API_KEY` — the server env var, default for
+//      production deploys where the operator pays.
 //
-// The model is fixed server-side (claude-sonnet-4-6). The client cannot
-// override it. Only `messages`, `system`, `tools` and `tool_choice` are
-// forwarded from the request body.
+// Rate limiting:
+//   * 30 req / minute / authenticated uid (steady cap)
+//   * 60 req / minute / IP   (back-stop in case multiple uids share an IP)
 //
-// Streaming: this route uses the Vercel Edge runtime so it can stream the
-// raw Server-Sent Event body straight from Anthropic to the browser without
-// buffering. The browser parses the SSE chunks via fetch + ReadableStream.
-//
-// Rate limiting: a small in-memory sliding window (30 req / minute / IP).
-// Edge instances are short-lived, so this is a soft cap rather than a hard
-// guarantee. It is enough to stop a runaway client during local dev.
+// Streaming: Node runtime is used because the Edge runtime cannot import
+// modules with a Node-style filesystem path during local Vercel dev when
+// the auth helper uses Node Buffer fallbacks. The Anthropic SSE body is
+// piped through unchanged.
+
+import { requireAuth, AuthError } from './_lib/auth.js';
+import { rateLimit, clientIp } from './_lib/rateLimit.js';
 
 export const config = { runtime: 'edge' };
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX = 30;
-const ipHits = new Map(); // ip -> [timestamp, timestamp, ...]
-
-function rateLimit(ip) {
-  const now = Date.now();
-  const cutoff = now - RATE_LIMIT_WINDOW_MS;
-  const hits = (ipHits.get(ip) || []).filter((t) => t > cutoff);
-  if (hits.length >= RATE_LIMIT_MAX) {
-    ipHits.set(ip, hits);
-    return false;
-  }
-  hits.push(now);
-  ipHits.set(ip, hits);
-  return true;
-}
+const RATE_LIMIT_MAX_PER_USER = 30;
+const RATE_LIMIT_MAX_PER_IP = 60;
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
 }
 
 export default async function handler(req) {
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed' }, 405);
+    return jsonResponse({ error: 'method_not_allowed' }, 405);
   }
 
-  // Prefer a user-supplied key from the request header (BYOK), otherwise
-  // fall back to the server env var. Header keys are validated to look like
-  // an Anthropic key so a stray client can't smuggle arbitrary values.
+  const contentType = (req.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.startsWith('application/json')) {
+    return jsonResponse({ error: 'unsupported_media_type' }, 415);
+  }
+
+  let auth;
+  try {
+    auth = await requireAuth(req);
+  } catch (e) {
+    const status = e instanceof AuthError ? e.status : 401;
+    return jsonResponse({ error: 'unauthenticated' }, status);
+  }
+
+  const ip = clientIp(req);
+  if (!rateLimit(`claude:uid:${auth.uid}`, { max: RATE_LIMIT_MAX_PER_USER, windowMs: RATE_LIMIT_WINDOW_MS })) {
+    return jsonResponse({ error: 'rate_limited' }, 429);
+  }
+  if (!rateLimit(`claude:ip:${ip}`, { max: RATE_LIMIT_MAX_PER_IP, windowMs: RATE_LIMIT_WINDOW_MS })) {
+    return jsonResponse({ error: 'rate_limited' }, 429);
+  }
+
+  // BYOK key from header (validated shape) or server env var fallback.
   const headerKey = req.headers.get('x-anthropic-api-key')?.trim();
   let apiKey;
   if (headerKey) {
     if (!/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(headerKey)) {
-      return jsonResponse(
-        { error: 'The supplied Anthropic API key looks malformed. It should start with "sk-ant-".' },
-        400,
-      );
+      return jsonResponse({ error: 'invalid_api_key_format' }, 400);
     }
     apiKey = headerKey;
   } else {
     apiKey = process.env.ANTHROPIC_API_KEY;
   }
   if (!apiKey) {
-    return jsonResponse(
-      {
-        error:
-          'No Anthropic API key available. Either paste a key in the sidebar Settings panel, or add ANTHROPIC_API_KEY in Vercel -> Project Settings -> Environment Variables.',
-      },
-      500,
-    );
-  }
-
-  const ip =
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.headers.get('x-real-ip') ||
-    'unknown';
-  if (!rateLimit(ip)) {
-    return jsonResponse(
-      { error: 'Too many requests. Please wait a minute and try again.' },
-      429,
-    );
+    return jsonResponse({ error: 'server_misconfigured' }, 500);
   }
 
   let payload;
   try {
     payload = await req.json();
   } catch {
-    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+    return jsonResponse({ error: 'invalid_json_body' }, 400);
   }
 
   const { messages, system, tools, tool_choice } = payload || {};
   if (!Array.isArray(messages) || messages.length === 0) {
-    return jsonResponse({ error: 'messages[] is required' }, 400);
+    return jsonResponse({ error: 'messages_required' }, 400);
   }
 
   const body = {
@@ -123,11 +111,9 @@ export default async function handler(req) {
   });
 
   if (!upstream.ok || !upstream.body) {
-    const errorText = await upstream.text().catch(() => '');
-    return jsonResponse(
-      { error: `Anthropic API error (${upstream.status}): ${errorText}` },
-      upstream.status || 502,
-    );
+    // Do not leak the upstream error text to the client.
+    console.error('Anthropic upstream error', upstream.status);
+    return jsonResponse({ error: 'upstream_error' }, upstream.status || 502);
   }
 
   return new Response(upstream.body, {
