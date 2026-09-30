@@ -313,15 +313,45 @@ const AccountingDashboard = () => {
         Promise.resolve({ value: localStorage.getItem('accounting-assets') }),
       ]);
 
-      if (invRes?.value) setInvoices(JSON.parse(invRes.value));
-      if (clientRes?.value) setClients(JSON.parse(clientRes.value));
-      if (customerRes?.value) setCustomers(JSON.parse(customerRes.value));
-      if (suppRes?.value) setSuppliers(JSON.parse(suppRes.value));
-      if (bankRes?.value) setBankStatements(JSON.parse(bankRes.value));
-      if (vatRes?.value) setVatTransactions(JSON.parse(vatRes.value));
-      if (empRes?.value) setEmployees(JSON.parse(empRes.value));
-      if (payRes?.value) setPayslips(JSON.parse(payRes.value));
-      if (assetRes?.value) setAssets(JSON.parse(assetRes.value));
+      // Parse each key on its own. Previously one unreadable key threw and
+      // skipped every key after it; the next save then overwrote those keys
+      // with empty arrays. An unreadable value is copied aside before any
+      // save can replace it.
+      const safeParse = (key, raw) => {
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : null;
+        } catch (e) {
+          console.error(`Could not read ${key}; raw value preserved`, e);
+          try {
+            localStorage.setItem(`${key}-unreadable-${Date.now()}`, raw);
+          } catch (copyErr) {
+            console.error(`Could not preserve unreadable ${key}`, copyErr);
+          }
+          return null;
+        }
+      };
+
+      const inv = safeParse('accounting-invoices', invRes?.value);
+      const cli = safeParse('accounting-clients', clientRes?.value);
+      const cust = safeParse('accounting-customers', customerRes?.value);
+      const supp = safeParse('accounting-suppliers', suppRes?.value);
+      const bank = safeParse('accounting-bank-statements', bankRes?.value);
+      const vat = safeParse('accounting-vat-transactions', vatRes?.value);
+      const emp = safeParse('accounting-employees', empRes?.value);
+      const pay = safeParse('accounting-payslips', payRes?.value);
+      const ast = safeParse('accounting-assets', assetRes?.value);
+
+      if (inv) setInvoices(inv);
+      if (cli) setClients(cli);
+      if (cust) setCustomers(cust);
+      if (supp) setSuppliers(supp);
+      if (bank) setBankStatements(bank);
+      if (vat) setVatTransactions(vat);
+      if (emp) setEmployees(emp);
+      if (pay) setPayslips(pay);
+      if (ast) setAssets(ast);
 
       // Load API key
       const savedApiKey = localStorage.getItem('anthropic-api-key');
@@ -3743,6 +3773,8 @@ const CompaniesView = ({ clients, saveClients, showClientForm, setShowClientForm
   };
 
   const deleteClient = (id) => {
+    const target = clients.find(c => c.id === id);
+    if (!window.confirm(`Delete client "${target?.name || 'Unnamed Company'}"? This cannot be undone.`)) return;
     const remaining = clients.filter(c => c.id !== id);
     saveClients(remaining);
     if (remaining.length) {
@@ -7058,8 +7090,12 @@ const VATReconView = ({ vatTransactions, saveVatTransactions, company, accounts 
 
   // Clear all transactions for the current company
   const clearAll = () => {
+    // Without an active company, companyVatTransactions is every company's
+    // data, so clearing here would wipe all clients' VAT transactions.
+    if (!company?.id) return;
     if (companyVatTransactions.length > 0) {
-      const remaining = company?.id ? vatTransactions.filter(t => t.companyId !== company.id) : [];
+      if (!window.confirm(`Delete all ${companyVatTransactions.length} VAT transaction(s) for ${company.name || 'this company'}? This cannot be undone.`)) return;
+      const remaining = vatTransactions.filter(t => t.companyId !== company.id);
       saveVatTransactions(remaining);
       setSaveMessage('All transactions cleared');
       setTimeout(() => setSaveMessage(''), 3000);
